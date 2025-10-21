@@ -1,0 +1,507 @@
+//! Main application state and message handling for TC GUI frontend.
+//!
+//! This module contains the refactored application logic following the Elm architecture
+//! pattern used by Iced. The functionality has been broken down into smaller, more
+//! manageable modules for better maintainability.
+
+use iced::{Element, Subscription, Task};
+use tcgui_shared::ZenohConfig;
+
+use crate::backend_manager::BackendManager;
+use crate::message_handlers::*;
+use crate::messages::{TcGuiMessage, ZenohEvent};
+use crate::query_manager::QueryManager;
+use crate::scenario_manager::ScenarioManager;
+use crate::ui_state::UiStateManager;
+use crate::view::render_main_view;
+use crate::zenoh_manager::ZenohManager;
+
+/// Main application state for the TC GUI frontend with modular architecture.
+///
+/// This struct represents the refactored application state following the Elm architecture.
+/// The functionality has been broken down into specialized managers for better
+/// maintainability and separation of concerns.
+///
+/// # Modular Architecture
+///
+/// * **Backend Management**: Handled by `BackendManager`
+/// * **Query Operations**: Managed by `QueryManager`
+/// * **UI State**: Controlled by `UiStateManager`
+/// * **View Rendering**: Delegated to `view` module
+/// * **Message Handling**: Processed by `message_handlers` module
+///
+/// # Message Flow
+///
+/// ```text
+/// Zenoh Events → TcGui → Specialized Handlers → Managers → UI Updates
+///       ↓           ↓            ↓               ↓         ↓
+///   Raw Events   Routing    Processing      State     View
+/// ```
+pub struct TcGui {
+    /// Backend management and state
+    backend_manager: BackendManager,
+    /// Query channel management for TC and interface operations
+    query_manager: QueryManager,
+    /// Scenario management and operations
+    scenario_manager: ScenarioManager,
+    /// UI state and visibility management
+    ui_state: UiStateManager,
+    /// Zenoh session management
+    zenoh_manager: ZenohManager,
+}
+
+impl TcGui {
+    /// Creates a new TcGui application instance with modular architecture.
+    pub fn new() -> (Self, Task<TcGuiMessage>) {
+        let app = Self {
+            backend_manager: BackendManager::new(),
+            query_manager: QueryManager::new(),
+            scenario_manager: ScenarioManager::new(),
+            ui_state: UiStateManager::new(),
+            zenoh_manager: ZenohManager::new(ZenohConfig::default()),
+        };
+
+        (app, Task::none())
+    }
+
+    /// Creates a new TcGui application instance with custom Zenoh configuration.
+    pub fn new_with_config(zenoh_config: ZenohConfig) -> (Self, Task<TcGuiMessage>) {
+        let app = Self {
+            backend_manager: BackendManager::new(),
+            query_manager: QueryManager::new(),
+            scenario_manager: ScenarioManager::new(),
+            ui_state: UiStateManager::new(),
+            zenoh_manager: ZenohManager::new(zenoh_config),
+        };
+
+        (app, Task::none())
+    }
+
+    /// Updates application state in response to messages (Elm architecture update function).
+    ///
+    /// This simplified update function delegates to specialized message handlers,
+    /// making the code much more maintainable and focused.
+    pub fn update(&mut self, message: TcGuiMessage) -> Task<TcGuiMessage> {
+        match message {
+            // Backend-related messages
+            TcGuiMessage::InterfaceListUpdate(interface_update) => {
+                self.backend_manager
+                    .handle_interface_list_update(interface_update);
+                Task::none()
+            }
+            TcGuiMessage::BackendHealthUpdate(health_status) => {
+                self.backend_manager
+                    .handle_backend_health_update(health_status);
+                Task::none()
+            }
+            TcGuiMessage::BackendLiveliness {
+                backend_name,
+                alive,
+            } => {
+                self.backend_manager
+                    .handle_backend_liveliness(backend_name, alive);
+                Task::none()
+            }
+            TcGuiMessage::InterfaceStateEvent(state_event) => {
+                self.backend_manager
+                    .handle_interface_state_event(state_event);
+                Task::none()
+            }
+            TcGuiMessage::TcConfigUpdate(tc_config_update) => {
+                handle_tc_config_update(&mut self.backend_manager, tc_config_update)
+            }
+            TcGuiMessage::BackendConnectionStatus {
+                backend_name,
+                connected,
+            } => handle_backend_connection_status(
+                &mut self.backend_manager,
+                &mut self.query_manager,
+                backend_name,
+                connected,
+            ),
+
+            // Bandwidth updates
+            TcGuiMessage::BandwidthUpdate(bandwidth_update) => {
+                handle_bandwidth_update(&mut self.backend_manager, bandwidth_update)
+            }
+
+            // Interface messages
+            TcGuiMessage::TcInterfaceMessage(
+                backend_name,
+                namespace,
+                interface_name,
+                tc_message,
+            ) => handle_tc_interface_message(
+                &mut self.backend_manager,
+                backend_name,
+                namespace,
+                interface_name,
+                tc_message,
+            ),
+
+            // Query channel setup
+            TcGuiMessage::SetupTcQueryChannel(sender) => {
+                self.query_manager.setup_tc_query_channel(sender);
+                Task::none()
+            }
+            TcGuiMessage::SetupInterfaceQueryChannel(sender) => {
+                self.query_manager.setup_interface_query_channel(sender);
+                Task::none()
+            }
+            TcGuiMessage::SetupScenarioQueryChannel(sender) => {
+                self.scenario_manager.setup_scenario_query_channel(sender);
+                Task::none()
+            }
+            TcGuiMessage::SetupScenarioExecutionQueryChannel(sender) => {
+                self.scenario_manager.setup_execution_query_channel(sender);
+                Task::none()
+            }
+
+            // Scenario events
+            TcGuiMessage::ScenarioExecutionUpdate(update) => {
+                self.scenario_manager.handle_execution_update(
+                    update.backend_name,
+                    update.namespace,
+                    update.interface,
+                    update.execution,
+                );
+                Task::none()
+            }
+
+            // TC operations
+            TcGuiMessage::ApplyTc {
+                backend_name,
+                namespace,
+                interface,
+                loss,
+                correlation,
+                delay_ms,
+                delay_jitter_ms,
+                delay_correlation,
+                duplicate_percent,
+                duplicate_correlation,
+                reorder_percent,
+                reorder_correlation,
+                reorder_gap,
+                corrupt_percent,
+                corrupt_correlation,
+                rate_limit_kbps,
+            } => handle_apply_tc(
+                &self.query_manager,
+                backend_name,
+                namespace,
+                interface,
+                loss,
+                correlation,
+                delay_ms,
+                delay_jitter_ms,
+                delay_correlation,
+                duplicate_percent,
+                duplicate_correlation,
+                reorder_percent,
+                reorder_correlation,
+                reorder_gap,
+                corrupt_percent,
+                corrupt_correlation,
+                rate_limit_kbps,
+            ),
+
+            // Interface operations
+            TcGuiMessage::EnableInterface {
+                backend_name,
+                namespace,
+                interface,
+            } => handle_enable_interface(&self.query_manager, backend_name, namespace, interface),
+            TcGuiMessage::DisableInterface {
+                backend_name,
+                namespace,
+                interface,
+            } => handle_disable_interface(&self.query_manager, backend_name, namespace, interface),
+
+            // Scenario operations
+            TcGuiMessage::ListScenarios { backend_name } => {
+                if let Err(e) = self.scenario_manager.request_scenarios(&backend_name) {
+                    tracing::error!("Failed to request scenarios: {}", e);
+                }
+                Task::none()
+            }
+            TcGuiMessage::GetScenarioTemplates { backend_name } => {
+                if let Err(e) = self.scenario_manager.request_templates(&backend_name) {
+                    tracing::error!("Failed to request templates: {}", e);
+                }
+                Task::none()
+            }
+            TcGuiMessage::StopScenarioExecution {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                if let Err(e) =
+                    self.scenario_manager
+                        .stop_execution(&backend_name, &namespace, &interface)
+                {
+                    tracing::error!("Failed to stop scenario execution: {}", e);
+                }
+                Task::none()
+            }
+            TcGuiMessage::PauseScenarioExecution {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                if let Err(e) =
+                    self.scenario_manager
+                        .pause_execution(&backend_name, &namespace, &interface)
+                {
+                    tracing::error!("Failed to pause scenario execution: {}", e);
+                }
+                Task::none()
+            }
+            TcGuiMessage::ResumeScenarioExecution {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                if let Err(e) =
+                    self.scenario_manager
+                        .resume_execution(&backend_name, &namespace, &interface)
+                {
+                    tracing::error!("Failed to resume scenario execution: {}", e);
+                }
+                Task::none()
+            }
+            TcGuiMessage::GetExecutionStatus {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                // Status is handled via subscription updates, so just log for now
+                tracing::debug!(
+                    "Execution status requested for {}:{}:{}",
+                    backend_name,
+                    namespace,
+                    interface
+                );
+                Task::none()
+            }
+            TcGuiMessage::ShowScenarioDetails { scenario } => {
+                self.scenario_manager.show_scenario_details(scenario);
+                Task::none()
+            }
+            TcGuiMessage::HideScenarioDetails => {
+                self.scenario_manager.hide_scenario_details();
+                Task::none()
+            }
+            // Interface selection dialog messages
+            TcGuiMessage::ShowInterfaceSelectionDialog {
+                backend_name,
+                scenario_id,
+            } => {
+                self.ui_state
+                    .show_interface_selection_dialog(backend_name, scenario_id);
+                Task::none()
+            }
+            TcGuiMessage::HideInterfaceSelectionDialog => {
+                self.ui_state.hide_interface_selection_dialog();
+                Task::none()
+            }
+            TcGuiMessage::SelectExecutionNamespace(namespace) => {
+                self.ui_state.select_execution_namespace(namespace);
+                Task::none()
+            }
+            TcGuiMessage::SelectExecutionInterface(interface) => {
+                self.ui_state.select_execution_interface(interface);
+                Task::none()
+            }
+            TcGuiMessage::ConfirmScenarioExecution => {
+                let dialog = self.ui_state.interface_selection_dialog();
+                if let (Some(namespace), Some(interface)) =
+                    (&dialog.selected_namespace, &dialog.selected_interface)
+                {
+                    if let Err(e) = self.scenario_manager.start_execution(
+                        &dialog.backend_name,
+                        &dialog.scenario_id,
+                        namespace,
+                        interface,
+                    ) {
+                        tracing::error!("Failed to start scenario execution: {}", e);
+                    }
+                    // Hide the dialog after starting execution
+                    self.ui_state.hide_interface_selection_dialog();
+                }
+                Task::none()
+            }
+            TcGuiMessage::ScenarioListResponse {
+                backend_name,
+                response,
+            } => {
+                use tcgui_shared::scenario::ScenarioResponse;
+                match response {
+                    ScenarioResponse::Listed { scenarios } => {
+                        self.scenario_manager
+                            .handle_scenario_list_response(backend_name, scenarios);
+                    }
+                    ScenarioResponse::Templates { templates } => {
+                        self.scenario_manager
+                            .handle_templates_response(backend_name, templates);
+                    }
+                    ScenarioResponse::Error { message } => {
+                        tracing::error!("Scenario query error from {}: {}", backend_name, message);
+                    }
+                    _ => {
+                        tracing::debug!(
+                            "Unhandled scenario response from {}: {:?}",
+                            backend_name,
+                            response
+                        );
+                    }
+                }
+                Task::none()
+            }
+            TcGuiMessage::ScenarioExecutionResponse {
+                backend_name,
+                response,
+            } => {
+                use tcgui_shared::scenario::ScenarioExecutionResponse;
+                match response {
+                    ScenarioExecutionResponse::Error { message } => {
+                        tracing::error!(
+                            "Scenario execution error from {}: {}",
+                            backend_name,
+                            message
+                        );
+                    }
+                    _ => {
+                        tracing::debug!(
+                            "Scenario execution response from {}: {:?}",
+                            backend_name,
+                            response
+                        );
+                    }
+                }
+                Task::none()
+            }
+
+            // UI operations
+            TcGuiMessage::ToggleNamespaceVisibility(backend_name, namespace_name) => {
+                handle_toggle_namespace_visibility(&mut self.ui_state, backend_name, namespace_name)
+            }
+            TcGuiMessage::ShowAllNamespaces => handle_show_all_namespaces(&mut self.ui_state),
+            TcGuiMessage::ResetUiState => handle_reset_ui_state(&mut self.ui_state),
+            TcGuiMessage::ShowAllBackends => handle_show_all_backends(&mut self.ui_state),
+            TcGuiMessage::SwitchTab(tab) => {
+                self.ui_state.set_current_tab(tab);
+
+                // Auto-refresh scenarios and templates when switching to Scenarios tab
+                if matches!(tab, crate::ui_state::AppTab::Scenarios) {
+                    // Request scenarios and templates from all connected backends
+                    for backend_name in self.backend_manager.backends().keys() {
+                        // Request scenarios
+                        if let Err(e) = self.scenario_manager.request_scenarios(backend_name) {
+                            tracing::warn!(
+                                "Failed to auto-refresh scenarios from {}: {}",
+                                backend_name,
+                                e
+                            );
+                        }
+
+                        // Request templates
+                        if let Err(e) = self.scenario_manager.request_templates(backend_name) {
+                            tracing::warn!(
+                                "Failed to auto-refresh templates from {}: {}",
+                                backend_name,
+                                e
+                            );
+                        }
+                    }
+                }
+
+                Task::none()
+            }
+
+            // Maintenance operations
+            TcGuiMessage::CleanupStaleBackends => handle_cleanup_stale_backends(
+                &mut self.backend_manager,
+                &mut self.query_manager,
+                &mut self.ui_state,
+            ),
+        }
+    }
+
+    /// Renders the application view using the modular view system.
+    pub fn view(&self) -> Element<'_, TcGuiMessage> {
+        render_main_view(
+            &self.backend_manager,
+            &self.ui_state,
+            &self.query_manager,
+            &self.scenario_manager,
+        )
+    }
+
+    /// Sets up subscriptions for Zenoh events and periodic cleanup.
+    pub fn subscription(&self) -> Subscription<TcGuiMessage> {
+        Subscription::batch(vec![
+            // Zenoh events subscription
+            self.zenoh_manager.subscription().map(|event| match event {
+                ZenohEvent::InterfaceListUpdate(interface_update) => {
+                    TcGuiMessage::InterfaceListUpdate(interface_update)
+                }
+                ZenohEvent::BandwidthUpdate(bandwidth_update) => {
+                    TcGuiMessage::BandwidthUpdate(bandwidth_update)
+                }
+                ZenohEvent::InterfaceStateEvent(state_event) => {
+                    TcGuiMessage::InterfaceStateEvent(state_event)
+                }
+                ZenohEvent::BackendHealthUpdate(health_status) => {
+                    TcGuiMessage::BackendHealthUpdate(health_status)
+                }
+                ZenohEvent::BackendLiveliness {
+                    backend_name,
+                    alive,
+                } => TcGuiMessage::BackendLiveliness {
+                    backend_name,
+                    alive,
+                },
+                ZenohEvent::TcConfigUpdate(tc_config_update) => {
+                    TcGuiMessage::TcConfigUpdate(tc_config_update)
+                }
+                ZenohEvent::ScenarioExecutionUpdate(execution_update) => {
+                    TcGuiMessage::ScenarioExecutionUpdate(execution_update)
+                }
+                ZenohEvent::ConnectionStatus(connected) => TcGuiMessage::BackendConnectionStatus {
+                    backend_name: "unknown".to_string(),
+                    connected,
+                },
+                ZenohEvent::TcQueryChannelReady(sender) => {
+                    TcGuiMessage::SetupTcQueryChannel(sender)
+                }
+                ZenohEvent::InterfaceQueryChannelReady(sender) => {
+                    TcGuiMessage::SetupInterfaceQueryChannel(sender)
+                }
+                ZenohEvent::ScenarioQueryChannelReady(sender) => {
+                    TcGuiMessage::SetupScenarioQueryChannel(sender)
+                }
+                ZenohEvent::ScenarioExecutionQueryChannelReady(sender) => {
+                    TcGuiMessage::SetupScenarioExecutionQueryChannel(sender)
+                }
+                ZenohEvent::ScenarioResponse {
+                    backend_name,
+                    response,
+                } => TcGuiMessage::ScenarioListResponse {
+                    backend_name,
+                    response,
+                },
+            }),
+            // Timer for periodic backend cleanup (every 3 seconds)
+            iced::time::every(std::time::Duration::from_secs(3))
+                .map(|_| TcGuiMessage::CleanupStaleBackends),
+        ])
+    }
+}
+
+impl Default for TcGui {
+    fn default() -> Self {
+        let (gui, _) = Self::new();
+        gui
+    }
+}

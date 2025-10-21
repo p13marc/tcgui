@@ -1,0 +1,22 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TC GUI
+GenericName=Traffic Control GUI
+Comment=Graphical interface for Linux traffic control (tc) with network namespace support
+Keywords=network;traffic;control;tc;bandwidth;linux;namespaces;
+Icon=tcgui
+Exec=tcgui-frontend
+Terminal=false
+Categories=Network;System;
+StartupNotify=true
+StartupWMClass=tcgui-frontend
+MimeType=
+
+# Translations
+Comment[en_US]=Graphical interface for Linux traffic control (tc) with network namespace support
+Name[en_US]=TC GUI
+
+# Application properties
+SingleMainWindow=true
+X-GNOME-UsesNotifications=false

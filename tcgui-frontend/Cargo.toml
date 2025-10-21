@@ -1,0 +1,81 @@
+[package]
+name = "tcgui-frontend"
+version = "0.1.0"
+edition = "2021"
+description = "GUI frontend for tcgui traffic control application"
+authors = ["Your Name <you@example.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/tcgui"
+homepage = "https://github.com/yourusername/tcgui"
+keywords = ["gui", "traffic-control", "networking", "iced", "linux"]
+categories = ["gui", "network-programming"]
+
+[[bin]]
+name = "tcgui-frontend"
+path = "src/main.rs"
+
+[dependencies]
+tcgui-shared = { path = "../tcgui-shared" }
+
+# GUI framework
+iced = { workspace = true }
+
+# Communication
+zenoh = { workspace = true }
+zenoh-ext = { workspace = true }
+serde_json = { workspace = true }
+
+# Async runtime and utilities
+tokio = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Process management
+ctrlc = "3.4"
+
+# Package metadata for DEB/RPM generation
+[package.metadata.deb]
+name = "tcgui-frontend"
+maintainer = "Your Name <you@example.com>"
+copyright = "2024, Your Name <you@example.com>"
+license-file = ["../LICENSE-MIT", "2"]
+changelog = "../debian/changelog"
+depends = "libssl3, ca-certificates"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/tcgui-frontend", "usr/bin/", "755"],
+    ["../packaging/desktop/tcgui.desktop", "usr/share/applications/", "644"],
+    ["../packaging/icons/tcgui.png", "usr/share/pixmaps/", "644"],
+    ["../README.md", "usr/share/doc/tcgui-frontend/", "644"],
+]
+maintainer-scripts = "../packaging/debian/frontend/"
+
+[package.metadata.generate-rpm]
+summary = "GUI frontend for tcgui traffic control application"
+license = "MIT OR Apache-2.0"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../target/release/tcgui-frontend"
+dest = "/usr/bin/tcgui-frontend"
+mode = "755"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../packaging/desktop/tcgui.desktop"
+dest = "/usr/share/applications/tcgui.desktop"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../packaging/icons/tcgui.png"
+dest = "/usr/share/pixmaps/tcgui.png"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../README.md"
+dest = "/usr/share/doc/tcgui-frontend/README.md"
+mode = "644"

@@ -1,0 +1,54 @@
+[Unit]
+Description=TC GUI Backend Service
+Documentation=https://github.com/yourusername/tcgui
+After=network-online.target
+Wants=network-online.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/tcgui-backend --verbose
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Security settings
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictNamespaces=false
+
+# Network capabilities required for tc and namespace operations
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+# Environment
+Environment=RUST_LOG=info
+Environment=RUST_BACKTRACE=1
+
+# Working directory
+WorkingDirectory=/var/lib/tcgui
+
+# Create working directory if it doesn't exist
+ExecStartPre=/usr/bin/mkdir -p /var/lib/tcgui
+ExecStartPre=/usr/bin/chown root:root /var/lib/tcgui
+ExecStartPre=/usr/bin/chmod 755 /var/lib/tcgui
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tcgui-backend
+
+[Install]
+WantedBy=multi-user.target

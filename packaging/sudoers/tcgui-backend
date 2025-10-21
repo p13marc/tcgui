@@ -1,0 +1,31 @@
+# TC GUI Backend - Allow specific tc and ip netns commands
+# This file allows the tcgui-backend service to execute network commands
+# with appropriate restrictions for security
+
+# User alias for tcgui service operations
+User_Alias TCGUI_USERS = root
+
+# Command aliases for network operations
+Cmnd_Alias TC_COMMANDS = \
+    /usr/sbin/tc qdisc add *, \
+    /usr/sbin/tc qdisc del *, \
+    /usr/sbin/tc qdisc replace *, \
+    /usr/sbin/tc qdisc show *, \
+    /usr/sbin/tc -json qdisc show *
+
+Cmnd_Alias IP_NETNS_COMMANDS = \
+    /usr/sbin/ip netns exec * /usr/sbin/tc qdisc add *, \
+    /usr/sbin/ip netns exec * /usr/sbin/tc qdisc del *, \
+    /usr/sbin/ip netns exec * /usr/sbin/tc qdisc replace *, \
+    /usr/sbin/ip netns exec * /usr/sbin/tc qdisc show *, \
+    /usr/sbin/ip netns exec * /usr/sbin/tc -json qdisc show *, \
+    /usr/sbin/ip -json netns list, \
+    /usr/sbin/ip -json link show
+
+# Allow tcgui service to run network commands without password
+TCGUI_USERS ALL=(root) NOPASSWD: TC_COMMANDS, IP_NETNS_COMMANDS
+
+# Secure defaults
+Defaults:TCGUI_USERS !requiretty
+Defaults:TCGUI_USERS env_reset
+Defaults:TCGUI_USERS secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

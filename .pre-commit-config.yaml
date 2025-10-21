@@ -1,0 +1,99 @@
+# Pre-commit hooks configuration
+# Automatic quality checks before each commit
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Rust-specific hooks
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        name: Rust Format
+        description: Format Rust code with rustfmt
+        entry: cargo fmt --all -- --check
+        language: system
+        files: \.rs$
+        pass_filenames: false
+      
+      - id: clippy
+        name: Rust Clippy
+        description: Lint Rust code with clippy
+        entry: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-check
+        name: Cargo Check
+        description: Check Rust code compiles
+        entry: cargo check --workspace --all-targets --all-features
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+  # Security and dependency checks
+  - repo: local
+    hooks:
+      - id: cargo-audit
+        name: Security Audit
+        description: Check for known security vulnerabilities
+        entry: cargo audit
+        language: system
+        files: Cargo\.(toml|lock)$
+        pass_filenames: false
+
+      - id: cargo-deny
+        name: Dependency Analysis
+        description: Check dependencies and licenses
+        entry: cargo deny check advisories
+        language: system
+        files: Cargo\.(toml|lock)$
+        pass_filenames: false
+
+  # General quality checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace
+        exclude: \.md$
+      
+      - id: end-of-file-fixer
+        name: Fix End of Files
+        
+      - id: check-yaml
+        name: Check YAML
+        
+      - id: check-toml
+        name: Check TOML
+        
+      - id: check-json
+        name: Check JSON
+        
+      - id: check-merge-conflict
+        name: Check for Merge Conflicts
+        
+      - id: mixed-line-ending
+        name: Check Line Endings
+        args: ['--fix=lf']
+
+  # Documentation and spelling
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.16.23
+    hooks:
+      - id: typos
+        name: Check Spelling
+        exclude: Cargo\.lock$
+
+# Configuration for individual hooks
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

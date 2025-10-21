@@ -1,0 +1,23 @@
+# Configuration for act (GitHub Actions local runner)
+# https://github.com/nektos/act
+
+# Use Docker images that closely match GitHub Actions runners
+--platform ubuntu-latest=catthehacker/ubuntu:act-latest
+--platform ubuntu-22.04=catthehacker/ubuntu:act-22.04
+--platform ubuntu-20.04=catthehacker/ubuntu:act-20.04
+
+# Reuse existing Docker containers for faster testing
+--reuse
+
+# Set reasonable resource limits
+--memory 4g
+
+# Environment variables for local testing
+--env CARGO_TERM_COLOR=always
+--env RUST_BACKTRACE=1
+
+# Use host networking for faster operations
+--use-gitignore=false
+
+# Default Docker image for jobs without explicit platform
+-P ubuntu-latest=catthehacker/ubuntu:act-latest

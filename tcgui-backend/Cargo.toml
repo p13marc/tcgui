@@ -1,0 +1,103 @@
+[package]
+name = "tcgui-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Privileged backend service for tcgui network operations"
+authors = ["Your Name <you@example.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/tcgui"
+homepage = "https://github.com/yourusername/tcgui"
+keywords = ["networking", "traffic-control", "tc", "linux", "network-namespaces"]
+categories = ["network-programming", "command-line-utilities"]
+
+[[bin]]
+name = "tcgui-backend"
+path = "src/main.rs"
+
+[lib]
+name = "tcgui_backend"
+path = "src/lib.rs"
+
+[dependencies]
+tcgui-shared = { path = "../tcgui-shared" }
+
+# Network operations
+futures-util = { workspace = true }
+netlink-packet-route = { workspace = true }
+rtnetlink = { workspace = true }
+
+# Communication
+zenoh = { workspace = true }
+zenoh-ext = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async runtime and utilities
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+fastrand = "2"
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = "1.0"
+
+# CLI
+clap = { workspace = true }
+
+# Regex for pattern matching
+regex = { workspace = true }
+
+[dev-dependencies]
+rand = "0.8"
+tempfile = "3.0"
+
+# Package metadata for DEB/RPM generation
+[package.metadata.deb]
+name = "tcgui-backend"
+maintainer = "Your Name <you@example.com>"
+copyright = "2024, Your Name <you@example.com>"
+license-file = ["../LICENSE-MIT", "2"]
+changelog = "../debian/changelog"
+depends = "iproute2, sudo"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/tcgui-backend", "usr/bin/", "755"],
+    ["../packaging/systemd/tcgui-backend.service", "etc/systemd/system/", "644"],
+    ["../packaging/sudoers/tcgui-backend", "etc/sudoers.d/", "440"],
+    ["../README.md", "usr/share/doc/tcgui-backend/", "644"],
+]
+conf-files = [
+    "/etc/systemd/system/tcgui-backend.service",
+    "/etc/sudoers.d/tcgui-backend",
+]
+maintainer-scripts = "../packaging/debian/backend/"
+
+[package.metadata.generate-rpm]
+summary = "Privileged backend service for tcgui network operations"
+license = "MIT OR Apache-2.0"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../target/release/tcgui-backend"
+dest = "/usr/bin/tcgui-backend"
+mode = "755"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../packaging/systemd/tcgui-backend.service"
+dest = "/etc/systemd/system/tcgui-backend.service"
+mode = "644"
+config = true
+
+[[package.metadata.generate-rpm.assets]]
+source = "../packaging/sudoers/tcgui-backend"
+dest = "/etc/sudoers.d/tcgui-backend"
+mode = "440"
+config = true
+
+[[package.metadata.generate-rpm.assets]]
+source = "../README.md"
+dest = "/usr/share/doc/tcgui-backend/README.md"
+mode = "644"

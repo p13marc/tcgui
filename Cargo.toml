@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "tcgui-shared",
+    "tcgui-backend", 
+    "tcgui-frontend"
+]
+
+[workspace.dependencies]
+# Shared dependencies
+zenoh = { version = "1.5.1", features = ["unstable"] }
+zenoh-ext = { version = "1.5.1", features = ["unstable"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.47.1", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
+clap = { version = "4.0", features = ["derive"] }
+thiserror = "2.0"
+anyhow = "1.0"
+regex = "1.10"
+
+# Backend-specific dependencies
+futures-util = "0.3"
+netlink-packet-route = "0.25.1"
+rtnetlink = "0.18.1"
+
+# Frontend-specific dependencies  
+iced = { git = "https://github.com/iced-rs/iced.git", version = "0.14.0-dev", features = ["tokio", "debug", "time-travel", "advanced", "sipper"] }
+
+[workspace.metadata]
+rust-version = "1.70"

@@ -1,0 +1,13 @@
+[package]
+name = "tcgui-shared"
+version = "0.1.0"
+edition = "2021"
+description = "Shared types and utilities for tcgui frontend and backend"
+
+[dependencies]
+zenoh = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+rtnetlink = { workspace = true }

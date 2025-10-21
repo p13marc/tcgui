@@ -1,0 +1,11 @@
+# Build artifacts
+/target
+**/target/
+
+# Package build artifacts
+*.deb
+*.rpm
+debian/
+
+# Temporary packaging files
+LICENSE-MIT
