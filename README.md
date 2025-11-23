@@ -133,9 +133,16 @@ If you prefer manual control:
 3. **Run frontend** (separate terminal):
    ```bash
    ./target/debug/tcgui-frontend --verbose
-   # OR with automatic backend spawning:
-   ./target/debug/tcgui-frontend --backend trefze3 --verbose
    ```
+
+**OR use the justfile recipes:**
+```bash
+# Terminal 1
+just run-backend    # Runs backend with sudo
+
+# Terminal 2
+just run-frontend   # Runs frontend
+```
 
 ### Available Just Commands
 
@@ -177,8 +184,10 @@ just local-check        # Fast local quality checks
 just validate-workflows # Validate GitHub Actions workflows
 
 # Run Commands
-just run                # Run frontend with auto backend
-just run-backend        # Run backend manually
+just run-backend        # Run backend (debug, requires sudo)
+just run-frontend       # Run frontend (debug, expects backend running)
+just run-backend-release # Run backend (release, requires sudo)
+just run-frontend-release # Run frontend (release, expects backend running)
 
 # Setup and Maintenance
 just setup-tools        # Install all quality tools
@@ -321,7 +330,7 @@ cargo doc --workspace --open
 - **Backend**: Uses Linux capabilities (`CAP_NET_ADMIN`) instead of root
 - **Communication**: Secure pub-sub messaging via Zenoh
 - **Read-Only Frontend**: Cannot create/modify network namespaces
-- **Automatic Cleanup**: Frontend manages backend lifecycle when using `--backend`
+- **Separate Processes**: Backend and frontend run independently for better security isolation
 
 ### Capabilities-Based Security
 
@@ -417,13 +426,13 @@ The backend handles all privileged operations:
 Enable detailed logging for troubleshooting:
 
 ```bash
-# Easy debugging with just
-just run                    # Frontend with auto-backend (verbose)
-just run-backend           # Backend only (verbose)
+# Easy debugging with just (two terminals required)
+just run-backend           # Backend (verbose, requires sudo)
+just run-frontend          # Frontend (verbose)
 
-# Manual debugging
-RUST_LOG=debug ./target/release/tcgui-backend --verbose --name trefze3
-RUST_LOG=debug ./target/debug/tcgui-frontend --backend trefze3 --verbose
+# Manual debugging with custom log levels
+RUST_LOG=debug sudo ./target/debug/tcgui-backend --verbose --name trefze3
+RUST_LOG=debug ./target/debug/tcgui-frontend --verbose
 ```
 
 ### Capabilities Troubleshooting

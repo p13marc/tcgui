@@ -47,7 +47,7 @@ clean:
 setup-tools:
     @echo "🔧 Installing quality assurance tools..."
     cargo install cargo-tarpaulin  # Code coverage analysis
-    cargo install cargo-audit      # Security vulnerability scanning  
+    cargo install cargo-audit      # Security vulnerability scanning
     cargo install cargo-deny       # Dependency license and security checks
     cargo install cargo-udeps      # Unused dependency detection
     cargo install cargo-machete    # Dead code analysis across workspace
@@ -80,7 +80,7 @@ dev-minimal: fmt test-fast
 dev-backend: fmt check-backend clippy-backend test-backend
     @echo "🔧 Backend development cycle complete"
 
-# Frontend-only development cycle  
+# Frontend-only development cycle
 dev-frontend: fmt check-frontend clippy-frontend test-frontend
     @echo "🎨 Frontend development cycle complete"
 
@@ -88,7 +88,7 @@ dev-frontend: fmt check-frontend clippy-frontend test-frontend
 quality: fmt check clippy test coverage security unused-deps outdated-deps deadcode
     @echo "🎉 COMPLETE QUALITY VERIFICATION PASSED"
     @echo "  ✅ Zero compiler warnings"
-    @echo "  ✅ Zero clippy issues" 
+    @echo "  ✅ Zero clippy issues"
     @echo "  ✅ Consistent formatting"
     @echo "  ✅ Full test coverage"
     @echo "  ✅ No security vulnerabilities"
@@ -399,7 +399,7 @@ backend:
     cargo clippy -p tcgui-backend --all-targets -- -D warnings
     @echo "✅ Backend workflow complete"
 
-# Frontend development workflow  
+# Frontend development workflow
 frontend:
     @echo "🎨 Frontend development workflow..."
     cargo check -p tcgui-frontend --all-targets
@@ -433,25 +433,25 @@ prepare-release: quality coverage docs
 hotfix: fmt check test-fast
     @echo "🚨 Emergency hotfix verification complete"
 
-# Run the frontend with automatic backend spawning (debug mode)
-run: build
-    @echo "Starting tcgui-frontend (debug) with backend trefze3..."
-    ./target/debug/tcgui-frontend --backend trefze3 --verbose
-
-# Run backend manually (debug mode) - requires sudo
+# Run backend (debug mode) - requires sudo
 run-backend: build-backend
-    @echo "Starting tcgui-backend (debug) manually with sudo..."
+    @echo "Starting tcgui-backend (debug) with sudo..."
     sudo ./target/debug/tcgui-backend --exclude-loopback --verbose --name trefze3
 
-# Run the frontend with automatic backend spawning (release mode)
-run-release: build-release
-    @echo "Starting tcgui-frontend (release) with backend trefze3..."
-    ./target/release/tcgui-frontend --backend trefze3 --verbose
+# Run frontend (debug mode) - expects backend to be running
+run-frontend: build-frontend
+    @echo "Starting tcgui-frontend (debug) - backend should be running..."
+    ./target/debug/tcgui-frontend --verbose
 
-# Run backend manually (release mode) - requires sudo
+# Run backend (release mode) - requires sudo
 run-backend-release: build-backend-release
-    @echo "Starting tcgui-backend (release) manually with sudo..."
+    @echo "Starting tcgui-backend (release) with sudo..."
     sudo ./target/release/tcgui-backend --exclude-loopback --verbose --name trefze3
+
+# Run frontend (release mode) - expects backend to be running
+run-frontend-release: build-frontend-release
+    @echo "Starting tcgui-frontend (release) - backend should be running..."
+    ./target/release/tcgui-frontend --verbose
 
 # Show help
 help:
@@ -459,7 +459,7 @@ help:
     @echo ""
     @echo "📈 QUALITY WORKFLOWS (NEW!):"
     @echo "  just quality      - Full quality verification pipeline"
-    @echo "  just dev          - Fast development iteration cycle"  
+    @echo "  just dev          - Fast development iteration cycle"
     @echo "  just dev-fast     - Ultra-fast cycle (skip full compilation)"
     @echo "  just dev-minimal  - Minimal cycle (format + tests only)"
     @echo "  just dev-backend  - Backend-only development cycle"
@@ -502,7 +502,7 @@ help:
     @echo "  just local-ci-all       - Act-based complete workflow"
     @echo "  just list-ci-jobs       - Show available CI jobs"
     @echo ""
-    @echo "🎯 PROJECT-SPECIFIC:"  
+    @echo "🎯 PROJECT-SPECIFIC:"
     @echo "  just backend      - Backend-focused workflow"
     @echo "  just frontend     - Frontend-focused workflow"
     @echo "  just shared       - Shared library workflow"
@@ -526,11 +526,11 @@ help:
     @echo "  just build-backend-release # Build backend only (release mode)"
     @echo "  just build-frontend-release # Build frontend only (release mode)"
     @echo ""
-    @echo "▶️  RUN COMMANDS (EXISTING):"
-    @echo "  just run           # Run frontend with auto backend (debug, uses sudo)"
-    @echo "  just run-backend   # Run backend manually (debug, requires sudo)"
-    @echo "  just run-release   # Run frontend with auto backend (release, uses sudo)"
-    @echo "  just run-backend-release # Run backend manually (release, requires sudo)"
+    @echo "▶️  RUN COMMANDS:"
+    @echo "  just run-backend   # Run backend (debug, requires sudo)"
+    @echo "  just run-frontend  # Run frontend (debug, expects backend running)"
+    @echo "  just run-backend-release # Run backend (release, requires sudo)"
+    @echo "  just run-frontend-release # Run frontend (release, expects backend running)"
     @echo ""
     @echo "🧹 MAINTENANCE:"
     @echo "  just clean         # Clean build artifacts"
