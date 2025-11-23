@@ -49,6 +49,12 @@ pub fn main() -> iced::Result {
                 .help("Zenoh listen endpoints (comma-separated, e.g., tcp/0.0.0.0:7447)")
                 .required(false),
         )
+        .arg(
+            Arg::new("no-multicast")
+                .long("no-multicast")
+                .action(clap::ArgAction::SetTrue)
+                .help("Disable multicast scouting for peer discovery"),
+        )
         .get_matches();
 
     // Initialize logging with component prefixes and appropriate levels
@@ -83,6 +89,7 @@ pub fn main() -> iced::Result {
     // Check if any zenoh-specific options are provided
     let has_zenoh_config = matches.contains_id("zenoh-connect")
         || matches.contains_id("zenoh-listen")
+        || matches.get_flag("no-multicast")
         || (matches
             .get_one::<String>("zenoh-mode")
             .is_some_and(|mode| mode != "peer"));
@@ -119,6 +126,11 @@ pub fn main() -> iced::Result {
             for endpoint in listen_endpoints.split(',') {
                 zenoh_config = zenoh_config.add_listen_endpoint(endpoint.trim());
             }
+        }
+
+        // Disable multicast scouting if requested
+        if matches.get_flag("no-multicast") {
+            zenoh_config = zenoh_config.disable_multicast_scouting();
         }
 
         // Validate zenoh configuration

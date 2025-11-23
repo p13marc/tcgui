@@ -8,7 +8,7 @@
 //! # New Architecture
 //!
 //! The communication uses separate topics and query/reply patterns with Zenoh:
-//! - **Pub/Sub**: Interface discovery, bandwidth updates, health status  
+//! - **Pub/Sub**: Interface discovery, bandwidth updates, health status
 //! - **Query/Reply**: TC operations, interface control (request/reply pattern)
 //!
 //! # Key Components
@@ -196,7 +196,7 @@ pub mod topics {
 }
 
 /// Interface list update message (pub/sub)
-/// Topic: tcgui/{backend_name}/interfaces/list  
+/// Topic: tcgui/{backend_name}/interfaces/list
 /// QoS: Reliable delivery, history depth=1
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterfaceListUpdate {
@@ -215,7 +215,7 @@ pub struct InterfaceListUpdate {
 pub struct BandwidthUpdate {
     /// Network namespace name
     pub namespace: String,
-    /// Interface name  
+    /// Interface name
     pub interface: String,
     /// Current bandwidth statistics
     pub stats: NetworkBandwidthStats,
@@ -309,7 +309,7 @@ pub struct TcLossConfig {
     pub correlation: f32, // 0.0-100.0
 }
 
-/// Network delay configuration  
+/// Network delay configuration
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TcDelayConfig {
     pub enabled: bool,
@@ -888,7 +888,7 @@ pub struct TcResponse {
     pub error_code: Option<i32>,
 }
 
-/// Interface control request (enable/disable) (Query)  
+/// Interface control request (enable/disable) (Query)
 /// Query Service: tcgui/{backend_name}/query/interface
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterfaceControlRequest {
@@ -905,7 +905,7 @@ pub struct InterfaceControlRequest {
 pub enum InterfaceControlOperation {
     /// Bring interface UP
     Enable,
-    /// Bring interface DOWN  
+    /// Bring interface DOWN
     Disable,
 }
 
@@ -996,6 +996,22 @@ impl ZenohConfig {
             endpoints: vec![],
             properties: HashMap::new(),
         }
+    }
+
+    /// Disable multicast scouting discovery
+    pub fn disable_multicast_scouting(mut self) -> Self {
+        self.properties.insert(
+            "scouting/multicast/enabled".to_string(),
+            "false".to_string(),
+        );
+        self
+    }
+
+    /// Enable multicast scouting discovery (enabled by default in Zenoh)
+    pub fn enable_multicast_scouting(mut self) -> Self {
+        self.properties
+            .insert("scouting/multicast/enabled".to_string(), "true".to_string());
+        self
     }
 
     /// Add a listen endpoint (for peer mode)

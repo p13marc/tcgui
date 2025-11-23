@@ -16,6 +16,7 @@ pub struct CliConfig {
     pub zenoh_mode: String,
     pub zenoh_connect: Option<String>,
     pub zenoh_listen: Option<String>,
+    pub no_multicast: bool,
 }
 
 impl CliConfig {
@@ -29,6 +30,7 @@ impl CliConfig {
     pub fn from_matches(matches: &ArgMatches) -> Result<Self> {
         let verbose = matches.get_flag("verbose");
         let exclude_loopback = matches.get_flag("exclude-loopback");
+        let no_multicast = matches.get_flag("no-multicast");
 
         let backend_name = matches
             .get_one::<String>("name")
@@ -50,6 +52,7 @@ impl CliConfig {
             zenoh_mode,
             zenoh_connect,
             zenoh_listen,
+            no_multicast,
         })
     }
 
@@ -119,6 +122,15 @@ impl CliConfig {
                               Examples: tcp/0.0.0.0:7447, udp/0.0.0.0:7447")
                     .required(false),
             )
+            .arg(
+                Arg::new("no-multicast")
+                    .long("no-multicast")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Disable multicast scouting for peer discovery")
+                    .long_help("Disable multicast scouting for automatic peer discovery. \
+                              When disabled, you must explicitly specify connect endpoints. \
+                              Useful in environments where multicast is not available or desired."),
+            )
     }
 
     /// Validate CLI configuration
@@ -168,6 +180,7 @@ mod tests {
 
         assert!(!config.verbose);
         assert!(!config.exclude_loopback);
+        assert!(!config.no_multicast);
         assert_eq!(config.backend_name, "default");
         assert_eq!(config.zenoh_mode, "peer");
         assert!(config.zenoh_connect.is_none());
@@ -214,6 +227,7 @@ mod tests {
             zenoh_mode: "peer".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         assert!(config.validate().is_ok());
@@ -228,6 +242,7 @@ mod tests {
             zenoh_mode: "peer".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         assert!(config.validate().is_err());
@@ -242,6 +257,7 @@ mod tests {
             zenoh_mode: "peer".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         assert!(config.validate().is_err());
@@ -256,6 +272,7 @@ mod tests {
             zenoh_mode: "invalid-mode".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         assert!(config.validate().is_err());

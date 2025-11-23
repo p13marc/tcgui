@@ -75,6 +75,7 @@ mod tests {
             zenoh_mode: "peer".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();

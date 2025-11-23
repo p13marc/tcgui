@@ -449,6 +449,54 @@ just set-caps
 ./target/release/tcgui-backend --help
 ```
 
+### Advanced Zenoh Configuration
+
+Both the backend and frontend support advanced Zenoh configuration options for network discovery and connectivity:
+
+#### Disable Multicast Discovery
+
+By default, Zenoh uses multicast scouting for automatic peer discovery. In environments where multicast is not available or desired (e.g., cloud deployments, containers, strict firewall rules), you can disable it:
+
+```bash
+# Backend with multicast disabled
+sudo ./target/debug/tcgui-backend --no-multicast --zenoh-connect tcp/192.168.1.100:7447 --name backend1
+
+# Frontend with multicast disabled
+./target/debug/tcgui-frontend --no-multicast --zenoh-connect tcp/192.168.1.100:7447
+```
+
+**Note**: When disabling multicast, you must explicitly specify connect endpoints using `--zenoh-connect`, otherwise peers won't be able to discover each other.
+
+#### Zenoh Mode Options
+
+- **Peer mode** (default): Can both connect to and accept connections from other peers
+- **Client mode**: Only connects to existing routers, cannot accept incoming connections
+
+```bash
+# Run as client connecting to a router
+./target/debug/tcgui-backend --zenoh-mode client --zenoh-connect tcp/router.example.com:7447
+
+# Run as peer with custom endpoints
+./target/debug/tcgui-backend --zenoh-mode peer --zenoh-listen tcp/0.0.0.0:7447
+```
+
+#### Complete Example: Cloud Deployment
+
+```bash
+# Backend on server (with specific listen address)
+sudo ./target/debug/tcgui-backend \
+    --no-multicast \
+    --zenoh-listen tcp/0.0.0.0:7447 \
+    --name cloud-backend \
+    --verbose
+
+# Frontend connecting from workstation
+./target/debug/tcgui-frontend \
+    --no-multicast \
+    --zenoh-connect tcp/server.example.com:7447 \
+    --verbose
+```
+
 ## 📦 Distribution & Packaging
 
 ### Package Installation

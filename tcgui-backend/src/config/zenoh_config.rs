@@ -46,6 +46,11 @@ impl ZenohConfigManager {
             }
         }
 
+        // Disable multicast scouting if requested
+        if cli_config.no_multicast {
+            zenoh_config = zenoh_config.disable_multicast_scouting();
+        }
+
         Ok(zenoh_config)
     }
 
@@ -171,6 +176,7 @@ mod tests {
             zenoh_mode: "peer".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -187,6 +193,7 @@ mod tests {
             zenoh_mode: "client".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -202,6 +209,7 @@ mod tests {
             zenoh_mode: "peer".to_string(),
             zenoh_connect: Some("tcp/192.168.1.1:7447,udp/192.168.1.2:7447".to_string()),
             zenoh_listen: Some("tcp/0.0.0.0:7447".to_string()),
+            no_multicast: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -217,10 +225,30 @@ mod tests {
             zenoh_mode: "invalid-mode".to_string(),
             zenoh_connect: None,
             zenoh_listen: None,
+            no_multicast: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
         assert!(matches!(zenoh_config.mode, ZenohMode::Peer)); // Should fallback to peer
+    }
+
+    #[test]
+    fn test_zenoh_config_no_multicast() {
+        let cli_config = CliConfig {
+            verbose: false,
+            exclude_loopback: false,
+            backend_name: "test".to_string(),
+            zenoh_mode: "peer".to_string(),
+            zenoh_connect: None,
+            zenoh_listen: None,
+            no_multicast: true,
+        };
+
+        let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
+        assert_eq!(
+            zenoh_config.properties.get("scouting/multicast/enabled"),
+            Some(&"false".to_string())
+        );
     }
 
     #[test]
