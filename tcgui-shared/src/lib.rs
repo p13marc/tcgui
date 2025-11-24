@@ -950,7 +950,7 @@ pub mod qos {
 }
 
 /// Zenoh session configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ZenohConfig {
     /// Session mode (Peer or Client)
     pub mode: ZenohMode,
@@ -960,8 +960,22 @@ pub struct ZenohConfig {
     pub properties: HashMap<String, String>,
 }
 
+impl std::hash::Hash for ZenohConfig {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.mode.hash(state);
+        self.endpoints.hash(state);
+        // Hash properties by sorting keys to ensure consistent ordering
+        let mut sorted_props: Vec<_> = self.properties.iter().collect();
+        sorted_props.sort_by(|a, b| a.0.cmp(b.0));
+        for (k, v) in sorted_props {
+            k.hash(state);
+            v.hash(state);
+        }
+    }
+}
+
 /// Zenoh session modes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ZenohMode {
     /// Peer mode - can connect to and be connected from other nodes
     Peer,
@@ -1285,8 +1299,17 @@ impl ZenohConfig {
 
         // Set additional properties
         for (key, value) in &self.properties {
+            // Don't quote boolean values or numbers, only strings
+            let json_value = if value == "true" || value == "false" {
+                value.to_string() // Boolean without quotes
+            } else if value.parse::<f64>().is_ok() {
+                value.to_string() // Number without quotes
+            } else {
+                format!("\"{}\"", value) // String with quotes
+            };
+
             config
-                .insert_json5(key, &format!("\"{}\"", value))
+                .insert_json5(key, &json_value)
                 .map_err(|e| ZenohConfigError::PropertyError {
                     key: key.clone(),
                     value: value.clone(),

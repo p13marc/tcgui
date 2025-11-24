@@ -231,20 +231,13 @@ impl ZenohManager {
 
     /// Create an Iced subscription for zenoh events with dependency-injected configuration
     ///
-    /// Note: Due to Iced's subscription system requiring function pointers (not closures),
-    /// we currently fall back to the global zenoh_manager function. The configuration
-    /// is still properly managed through the ZenohManager instance, but the subscription
-    /// creation uses the backward-compatible approach.
-    ///
-    /// TODO: Investigate Iced's subscription system to find a way to pass configuration
-    /// without global state while respecting the function pointer requirement.
+    /// Creates a subscription that uses the configured Zenoh settings.
+    /// This properly respects the configuration passed during ZenohManager construction.
     pub fn subscription(&self) -> Subscription<ZenohEvent> {
-        // For now, use the backward-compatible function
-        // The architecture improvement is still significant:
-        // - No global state in ZenohManager struct itself
-        // - Proper dependency injection for ZenohManager creation
-        // - Configuration validation happens at construction time
-        Subscription::run(zenoh_manager)
+        let config = Arc::clone(&self.config);
+        Subscription::run_with((*config).clone(), |config| {
+            zenoh_manager_with_arc(Arc::new(config.clone()))
+        })
     }
 
     /// Create the zenoh sipper with the configured settings
@@ -738,11 +731,9 @@ impl ZenohManager {
     }
 }
 
-/// Backward-compatible zenoh_manager function using default configuration
-/// @deprecated - Use ZenohManager::new(config).create_sipper() instead
-pub fn zenoh_manager() -> impl Sipper<Never, ZenohEvent> {
-    // Use default configuration for backward compatibility
-    let manager = ZenohManager::new(ZenohConfig::default());
+/// Creates a zenoh manager sipper with the provided configuration (takes Arc)
+pub fn zenoh_manager_with_arc(config: Arc<ZenohConfig>) -> impl Sipper<Never, ZenohEvent> {
+    let manager = ZenohManager { config };
     manager.create_sipper()
 }
 
