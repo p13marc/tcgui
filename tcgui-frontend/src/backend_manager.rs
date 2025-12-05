@@ -5,7 +5,7 @@
 //! track their health, and route messages appropriately.
 
 use crate::interface::TcInterface;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tcgui_shared::{
     BackendHealthStatus, InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent,
     NetworkNamespace,
@@ -89,6 +89,22 @@ impl BackendManager {
         backend_group.last_seen = current_time;
         backend_group.disconnected_at = None;
 
+        // Remove namespaces that are no longer in the update
+        let current_namespaces: HashSet<String> =
+            backend_group.namespaces.keys().cloned().collect();
+        let updated_namespaces: HashSet<String> = interface_update
+            .namespaces
+            .iter()
+            .map(|ns| ns.name.clone())
+            .collect();
+        for removed_namespace in current_namespaces.difference(&updated_namespaces) {
+            info!(
+                "Removing namespace '{}' from backend '{}' (no longer present)",
+                removed_namespace, backend_name
+            );
+            backend_group.namespaces.remove(removed_namespace);
+        }
+
         // Update namespaces
         for namespace in &interface_update.namespaces {
             let namespace_group = backend_group
@@ -101,6 +117,22 @@ impl BackendManager {
 
             // Update the namespace metadata
             namespace_group.namespace = namespace.clone();
+
+            // Remove interfaces that are no longer in the update
+            let current_interfaces: HashSet<String> =
+                namespace_group.tc_interfaces.keys().cloned().collect();
+            let updated_interfaces: HashSet<String> = namespace
+                .interfaces
+                .iter()
+                .map(|i| i.name.clone())
+                .collect();
+            for removed_interface in current_interfaces.difference(&updated_interfaces) {
+                info!(
+                    "Removing interface '{}' from namespace '{}' of backend '{}' (no longer present)",
+                    removed_interface, namespace.name, backend_name
+                );
+                namespace_group.tc_interfaces.remove(removed_interface);
+            }
 
             // Update interfaces in this namespace
             for interface in &namespace.interfaces {
