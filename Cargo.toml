@@ -26,7 +26,7 @@ netlink-packet-route = "0.25.1"
 rtnetlink = "0.18.1"
 
 # Frontend-specific dependencies  
-iced = { git = "https://github.com/iced-rs/iced.git", version = "0.14.0-dev", features = ["tokio", "debug", "time-travel", "advanced", "sipper"] }
+iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper"] }
 
 [workspace.metadata]
 rust-version = "1.70"

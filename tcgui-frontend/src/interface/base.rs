@@ -328,7 +328,8 @@ impl TcInterface {
             });
 
         // Core checkboxes
-        let interface_checkbox = checkbox("ON", self.state.interface_enabled)
+        let interface_checkbox = checkbox(self.state.interface_enabled)
+            .label("ON")
             .on_toggle(TcInterfaceMessage::InterfaceToggled)
             .text_size(12);
 
@@ -357,22 +358,28 @@ impl TcInterface {
     fn render_feature_toggles(&self) -> Element<'_, TcInterfaceMessage> {
         row![
             // Loss is always visible as it was in the original main row
-            checkbox("LSS", self.state.features.loss.enabled)
+            checkbox(self.state.features.loss.enabled)
+                .label("LSS")
                 .text_size(12)
                 .on_toggle(TcInterfaceMessage::LossToggled),
-            checkbox("DLY", self.state.features.delay.enabled)
+            checkbox(self.state.features.delay.enabled)
+                .label("DLY")
                 .text_size(12)
                 .on_toggle(TcInterfaceMessage::DelayToggled),
-            checkbox("DUP", self.state.features.duplicate.enabled)
+            checkbox(self.state.features.duplicate.enabled)
+                .label("DUP")
                 .text_size(12)
                 .on_toggle(|_| TcInterfaceMessage::DuplicateToggled(())),
-            checkbox("RO", self.state.features.reorder.enabled)
+            checkbox(self.state.features.reorder.enabled)
+                .label("RO")
                 .text_size(12)
                 .on_toggle(|_| TcInterfaceMessage::ReorderToggled(())),
-            checkbox("CR", self.state.features.corrupt.enabled)
+            checkbox(self.state.features.corrupt.enabled)
+                .label("CR")
                 .text_size(12)
                 .on_toggle(|_| TcInterfaceMessage::CorruptToggled(())),
-            checkbox("RL", self.state.features.rate_limit.enabled)
+            checkbox(self.state.features.rate_limit.enabled)
+                .label("RL")
                 .text_size(12)
                 .on_toggle(|_| TcInterfaceMessage::RateLimitToggled(())),
         ]
@@ -499,7 +506,7 @@ impl TcInterface {
         .into()
     }
 
-    /// Render reorder feature controls with sliders  
+    /// Render reorder feature controls with sliders
     fn render_reorder_controls(&self) -> Element<'_, TcInterfaceMessage> {
         let reorder_config = &self.state.features.reorder.config;
 
@@ -592,7 +599,7 @@ impl TcInterface {
         .into()
     }
 
-    /// Render delay feature controls with sliders  
+    /// Render delay feature controls with sliders
     fn render_delay_controls(&self) -> Element<'_, TcInterfaceMessage> {
         let delay_config = &self.state.features.delay.config;
 
