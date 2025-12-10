@@ -99,7 +99,15 @@ impl TcGui {
                 alive,
             } => {
                 self.backend_manager
-                    .handle_backend_liveliness(backend_name, alive);
+                    .handle_backend_liveliness(backend_name.clone(), alive);
+                // Auto-refresh scenarios when backend reconnects
+                if alive {
+                    self.scenario_manager.set_loading(&backend_name, true);
+                    if let Err(e) = self.scenario_manager.request_scenarios(&backend_name) {
+                        tracing::error!("Failed to auto-refresh scenarios on reconnect: {}", e);
+                        self.scenario_manager.set_loading(&backend_name, false);
+                    }
+                }
                 Task::none()
             }
             TcGuiMessage::InterfaceStateEvent(state_event) => {
@@ -235,8 +243,10 @@ impl TcGui {
 
             // Scenario operations
             TcGuiMessage::ListScenarios { backend_name } => {
+                self.scenario_manager.set_loading(&backend_name, true);
                 if let Err(e) = self.scenario_manager.request_scenarios(&backend_name) {
                     tracing::error!("Failed to request scenarios: {}", e);
+                    self.scenario_manager.set_loading(&backend_name, false);
                 }
                 Task::none()
             }
@@ -299,6 +309,14 @@ impl TcGui {
             }
             TcGuiMessage::HideScenarioDetails => {
                 self.scenario_manager.hide_scenario_details();
+                Task::none()
+            }
+            TcGuiMessage::ScenarioSearchFilterChanged(filter) => {
+                self.scenario_manager.set_search_filter(filter);
+                Task::none()
+            }
+            TcGuiMessage::ScenarioSortOptionChanged(option) => {
+                self.scenario_manager.set_sort_option(option);
                 Task::none()
             }
             // Interface selection dialog messages

@@ -47,11 +47,13 @@ struct TcBackend {
 }
 
 impl TcBackend {
-    #[instrument(skip(zenoh_config), fields(backend_name = %backend_name, exclude_loopback))]
+    #[instrument(skip(zenoh_config, scenario_dirs), fields(backend_name = %backend_name, exclude_loopback))]
     async fn new(
         exclude_loopback: bool,
         backend_name: String,
         zenoh_config: ZenohConfig,
+        scenario_dirs: Vec<String>,
+        no_default_scenarios: bool,
     ) -> Result<Self> {
         // Initialize Zenoh session
         let config = zenoh_config
@@ -101,10 +103,16 @@ impl TcBackend {
 
         // Initialize scenario management
         let session_arc = std::sync::Arc::new(session.clone());
-        let scenario_manager = std::sync::Arc::new(ScenarioManager::new(
+        let scenario_dirs_paths: Vec<std::path::PathBuf> = scenario_dirs
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let scenario_manager = std::sync::Arc::new(ScenarioManager::with_options(
             session_arc.clone(),
             backend_name.clone(),
             tc_manager.clone(),
+            scenario_dirs_paths,
+            no_default_scenarios,
         ));
 
         // Initialize scenario Zenoh handlers
@@ -1203,6 +1211,8 @@ async fn main() -> Result<()> {
         config_manager.app.exclude_loopback,
         config_manager.app.backend_name.clone(),
         config_manager.zenoh,
+        config_manager.app.scenario_dirs.clone(),
+        config_manager.app.no_default_scenarios,
     )
     .await?;
     backend.run().await?;

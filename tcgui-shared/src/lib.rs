@@ -1301,10 +1301,9 @@ impl ZenohConfig {
         // Set additional properties
         for (key, value) in &self.properties {
             // Don't quote boolean values or numbers, only strings
-            let json_value = if value == "true" || value == "false" {
-                value.to_string() // Boolean without quotes
-            } else if value.parse::<f64>().is_ok() {
-                value.to_string() // Number without quotes
+            let json_value = if value == "true" || value == "false" || value.parse::<f64>().is_ok()
+            {
+                value.to_string() // Boolean or number without quotes
             } else {
                 format!("\"{}\"", value) // String with quotes
             };

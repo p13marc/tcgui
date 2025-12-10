@@ -133,6 +133,9 @@ pub enum TcGuiMessage {
         scenario: NetworkScenario,
     },
     HideScenarioDetails,
+    // Scenario list filter/sort messages
+    ScenarioSearchFilterChanged(String),
+    ScenarioSortOptionChanged(crate::scenario_manager::ScenarioSortOption),
     // Interface selection dialog messages
     ShowInterfaceSelectionDialog {
         backend_name: String,

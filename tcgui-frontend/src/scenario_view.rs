@@ -3,14 +3,14 @@
 //! This module provides UI components for displaying and managing scenarios,
 //! including scenario lists, details view, and execution controls.
 
-use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
 use iced::{Color, Element, Length};
 
 use tcgui_shared::scenario::{ExecutionState, NetworkScenario, ScenarioExecution};
 
 use crate::backend_manager::BackendManager;
 use crate::messages::TcGuiMessage;
-use crate::scenario_manager::ScenarioManager;
+use crate::scenario_manager::{ScenarioManager, ScenarioSortOption};
 
 /// Format a duration in milliseconds to a human-readable string
 fn format_duration(duration_ms: u64) -> String {
@@ -171,8 +171,19 @@ fn render_backend_scenarios<'a>(
     colors: ScenarioColorPalette,
 ) -> Element<'a, TcGuiMessage> {
     let mut backend_content = column![];
+    let is_loading = scenario_manager.is_loading(backend_name);
 
-    // Backend header
+    // Backend header with refresh button
+    let refresh_button = if is_loading {
+        button(text("⏳ Loading...").size(12)).style(button::secondary)
+    } else {
+        button(text("🔄 Refresh").size(12))
+            .on_press(TcGuiMessage::ListScenarios {
+                backend_name: backend_name.to_string(),
+            })
+            .style(button::secondary)
+    };
+
     backend_content = backend_content.push(
         row![
             text(format!("🖥️ Backend: {}", backend_name))
@@ -181,22 +192,77 @@ fn render_backend_scenarios<'a>(
                     color: Some(colors.text_primary)
                 }),
             space().width(Length::Fill),
-            button(text("🔄 Refresh Scenarios").size(12))
-                .on_press(TcGuiMessage::ListScenarios {
-                    backend_name: backend_name.to_string()
-                })
-                .style(button::secondary)
+            refresh_button
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
     );
 
+    // Search and sort controls
+    let raw_count = scenario_manager.get_raw_scenario_count(backend_name);
+    if raw_count > 0 || !scenario_manager.get_search_filter().is_empty() {
+        let current_sort = scenario_manager.get_sort_option();
+        let sort_ascending = scenario_manager.is_sort_ascending();
+
+        // Sort buttons
+        let mut sort_buttons = row![text("Sort:").size(12).style(move |_| text::Style {
+            color: Some(colors.text_secondary)
+        })]
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
+
+        for option in ScenarioSortOption::all() {
+            let is_active = current_sort == *option;
+            let label = if is_active {
+                let arrow = if sort_ascending { "↑" } else { "↓" };
+                format!("{} {}", option.label(), arrow)
+            } else {
+                option.label().to_string()
+            };
+
+            let btn = button(text(label).size(11))
+                .on_press(TcGuiMessage::ScenarioSortOptionChanged(*option))
+                .style(if is_active {
+                    button::primary
+                } else {
+                    button::secondary
+                });
+            sort_buttons = sort_buttons.push(btn);
+        }
+
+        // Search input
+        let search_filter = scenario_manager.get_search_filter().to_string();
+        let search_input = text_input("Search scenarios...", &search_filter)
+            .on_input(TcGuiMessage::ScenarioSearchFilterChanged)
+            .size(13)
+            .width(200);
+
+        backend_content = backend_content.push(
+            row![search_input, space().width(Length::Fill), sort_buttons]
+                .spacing(12)
+                .align_y(iced::Alignment::Center),
+        );
+    }
+
     // Available scenarios section
     let available_scenarios = scenario_manager.get_available_scenarios(backend_name);
+    let raw_scenario_count = scenario_manager.get_raw_scenario_count(backend_name);
+
     if !available_scenarios.is_empty() {
+        // Show count info if filtering
+        let header_text = if !scenario_manager.get_search_filter().is_empty() {
+            format!(
+                "📋 Scenarios ({} of {})",
+                available_scenarios.len(),
+                raw_scenario_count
+            )
+        } else {
+            format!("📋 Scenarios ({})", available_scenarios.len())
+        };
+
         backend_content = backend_content.push(
             column![
-                text("📋 Scenarios").size(16).style(move |_| text::Style {
+                text(header_text).size(16).style(move |_| text::Style {
                     color: Some(colors.text_primary)
                 }),
                 render_scenario_list(&available_scenarios, backend_name, colors.clone())
@@ -221,16 +287,20 @@ fn render_backend_scenarios<'a>(
         );
     }
 
-    // If no scenarios available, show loading message
+    // Show appropriate message when no scenarios
     if available_scenarios.is_empty() {
+        let message = if is_loading {
+            "Loading scenarios..."
+        } else if !scenario_manager.get_search_filter().is_empty() && raw_scenario_count > 0 {
+            "No scenarios match your search"
+        } else {
+            "Click 'Refresh' to load scenarios"
+        };
+
         backend_content = backend_content.push(
-            container(
-                text("Click 'Refresh Scenarios' to load scenarios")
-                    .size(14)
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_secondary),
-                    }),
-            )
+            container(text(message).size(14).style(move |_| text::Style {
+                color: Some(colors.text_secondary),
+            }))
             .padding(16)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(colors.background_light)),

@@ -21,6 +21,33 @@ struct TrackedExecution {
     timestamp: u64,
 }
 
+/// Sort options for scenario list
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScenarioSortOption {
+    #[default]
+    Name,
+    Duration,
+    StepCount,
+}
+
+impl ScenarioSortOption {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ScenarioSortOption::Name => "Name",
+            ScenarioSortOption::Duration => "Duration",
+            ScenarioSortOption::StepCount => "Steps",
+        }
+    }
+
+    pub fn all() -> &'static [ScenarioSortOption] {
+        &[
+            ScenarioSortOption::Name,
+            ScenarioSortOption::Duration,
+            ScenarioSortOption::StepCount,
+        ]
+    }
+}
+
 /// Manages scenario state and operations for the frontend
 #[derive(Clone, Default)]
 pub struct ScenarioManager {
@@ -35,6 +62,14 @@ pub struct ScenarioManager {
     /// Query channels for scenario operations
     scenario_query_sender: Option<mpsc::UnboundedSender<ScenarioQueryMessage>>,
     execution_query_sender: Option<mpsc::UnboundedSender<ScenarioExecutionQueryMessage>>,
+    /// Search/filter text for scenario list
+    search_filter: String,
+    /// Current sort option
+    sort_option: ScenarioSortOption,
+    /// Whether sort is ascending
+    sort_ascending: bool,
+    /// Backends currently loading scenarios
+    loading_backends: std::collections::HashSet<String>,
 }
 
 impl ScenarioManager {
@@ -61,12 +96,109 @@ impl ScenarioManager {
         self.execution_query_sender = Some(sender);
     }
 
-    /// Get all available scenarios for a backend
-    pub fn get_available_scenarios(&self, backend_name: &str) -> Vec<NetworkScenario> {
+    /// Get all available scenarios for a backend (raw, unfiltered)
+    fn get_raw_scenarios(&self, backend_name: &str) -> Vec<NetworkScenario> {
         self.available_scenarios
             .get(backend_name)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Get available scenarios for a backend, filtered and sorted
+    pub fn get_available_scenarios(&self, backend_name: &str) -> Vec<NetworkScenario> {
+        let mut scenarios = self.get_raw_scenarios(backend_name);
+
+        // Apply search filter
+        if !self.search_filter.is_empty() {
+            let filter_lower = self.search_filter.to_lowercase();
+            scenarios.retain(|s| {
+                s.name.to_lowercase().contains(&filter_lower)
+                    || s.id.to_lowercase().contains(&filter_lower)
+                    || s.description.to_lowercase().contains(&filter_lower)
+                    || s.metadata
+                        .tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&filter_lower))
+            });
+        }
+
+        // Apply sorting
+        match self.sort_option {
+            ScenarioSortOption::Name => {
+                scenarios.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+            ScenarioSortOption::Duration => {
+                scenarios.sort_by(|a, b| {
+                    a.estimated_total_duration_ms()
+                        .cmp(&b.estimated_total_duration_ms())
+                });
+            }
+            ScenarioSortOption::StepCount => {
+                scenarios.sort_by(|a, b| a.steps.len().cmp(&b.steps.len()));
+            }
+        }
+
+        // Reverse if descending
+        if !self.sort_ascending {
+            scenarios.reverse();
+        }
+
+        scenarios
+    }
+
+    /// Get the current search filter
+    pub fn get_search_filter(&self) -> &str {
+        &self.search_filter
+    }
+
+    /// Set the search filter
+    pub fn set_search_filter(&mut self, filter: String) {
+        debug!("Setting search filter to: {}", filter);
+        self.search_filter = filter;
+    }
+
+    /// Get the current sort option
+    pub fn get_sort_option(&self) -> ScenarioSortOption {
+        self.sort_option
+    }
+
+    /// Set the sort option
+    pub fn set_sort_option(&mut self, option: ScenarioSortOption) {
+        debug!("Setting sort option to: {:?}", option);
+        if self.sort_option == option {
+            // Toggle direction if same option
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_option = option;
+            self.sort_ascending = true;
+        }
+    }
+
+    /// Check if sort is ascending
+    pub fn is_sort_ascending(&self) -> bool {
+        self.sort_ascending
+    }
+
+    /// Check if a backend is currently loading scenarios
+    pub fn is_loading(&self, backend_name: &str) -> bool {
+        self.loading_backends.contains(backend_name)
+    }
+
+    /// Mark a backend as loading scenarios
+    pub fn set_loading(&mut self, backend_name: &str, loading: bool) {
+        if loading {
+            self.loading_backends.insert(backend_name.to_string());
+        } else {
+            self.loading_backends.remove(backend_name);
+        }
+    }
+
+    /// Get the count of raw (unfiltered) scenarios for a backend
+    pub fn get_raw_scenario_count(&self, backend_name: &str) -> usize {
+        self.available_scenarios
+            .get(backend_name)
+            .map(|s| s.len())
+            .unwrap_or(0)
     }
 
     /// Get active executions for a backend
@@ -302,6 +434,7 @@ impl ScenarioManager {
             scenarios.len(),
             backend_name
         );
+        self.loading_backends.remove(&backend_name);
         self.available_scenarios.insert(backend_name, scenarios);
     }
 
