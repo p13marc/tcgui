@@ -123,6 +123,11 @@ pub enum TcGuiMessage {
         namespace: String,
         interface: String,
     },
+    ToggleExecutionTimeline {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     #[allow(dead_code)] // TODO: Wire up scenario UI
     GetExecutionStatus {
         backend_name: String,

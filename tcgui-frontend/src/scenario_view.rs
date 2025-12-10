@@ -281,7 +281,12 @@ fn render_backend_scenarios<'a>(
                     .style(move |_| text::Style {
                         color: Some(colors.success_green)
                     }),
-                render_active_executions(&active_executions, backend_name, colors.clone())
+                render_active_executions(
+                    &active_executions,
+                    backend_name,
+                    scenario_manager,
+                    colors.clone()
+                )
             ]
             .spacing(8),
         );
@@ -436,14 +441,21 @@ fn render_scenario_card<'a>(
 fn render_active_executions<'a>(
     executions: &[ScenarioExecution],
     backend_name: &str,
+    scenario_manager: &ScenarioManager,
     colors: ScenarioColorPalette,
 ) -> Element<'a, TcGuiMessage> {
     let mut list_content = column![];
 
     for execution in executions {
+        let is_collapsed = scenario_manager.is_timeline_collapsed(
+            backend_name,
+            &execution.target_namespace,
+            &execution.target_interface,
+        );
         list_content = list_content.push(render_execution_card(
             execution,
             backend_name,
+            is_collapsed,
             colors.clone(),
         ));
     }
@@ -455,6 +467,7 @@ fn render_active_executions<'a>(
 fn render_execution_card<'a>(
     execution: &ScenarioExecution,
     backend_name: &str,
+    is_timeline_collapsed: bool,
     colors: ScenarioColorPalette,
 ) -> Element<'a, TcGuiMessage> {
     let (state_icon, state_color) = match &execution.state {
@@ -708,13 +721,44 @@ fn render_execution_card<'a>(
             }
         }));
 
-    // Step timeline header
-    card_content = card_content.push(text("Steps Timeline").size(12).style(move |_| text::Style {
-        color: Some(colors.text_secondary),
-    }));
+    // Collapsible step timeline header
+    let toggle_icon = if is_timeline_collapsed { "▶" } else { "▼" };
+    let step_count = execution.scenario.steps.len();
+    let timeline_header_text = if is_timeline_collapsed {
+        format!("{} Steps Timeline ({} steps)", toggle_icon, step_count)
+    } else {
+        format!("{} Steps Timeline", toggle_icon)
+    };
 
-    // Step timeline
-    card_content = card_content.push(timeline_content);
+    let backend_name_owned = backend_name.to_string();
+    let namespace_owned = execution.target_namespace.clone();
+    let interface_owned = execution.target_interface.clone();
+
+    card_content = card_content.push(
+        button(
+            text(timeline_header_text)
+                .size(12)
+                .style(move |_| text::Style {
+                    color: Some(colors.text_secondary),
+                }),
+        )
+        .padding([4, 0])
+        .style(move |_, _| button::Style {
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+            text_color: colors.text_secondary,
+            ..button::Style::default()
+        })
+        .on_press(TcGuiMessage::ToggleExecutionTimeline {
+            backend_name: backend_name_owned,
+            namespace: namespace_owned,
+            interface: interface_owned,
+        }),
+    );
+
+    // Step timeline (only show if not collapsed)
+    if !is_timeline_collapsed {
+        card_content = card_content.push(timeline_content);
+    }
 
     container(card_content)
         .padding(12)

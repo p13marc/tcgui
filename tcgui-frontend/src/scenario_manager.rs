@@ -70,6 +70,8 @@ pub struct ScenarioManager {
     sort_ascending: bool,
     /// Backends currently loading scenarios
     loading_backends: std::collections::HashSet<String>,
+    /// Execution timelines that are collapsed (key: "backend/namespace/interface")
+    collapsed_timelines: std::collections::HashSet<String>,
 }
 
 impl ScenarioManager {
@@ -265,6 +267,34 @@ impl ScenarioManager {
         debug!("Hiding scenario details");
         self.show_scenario_details = false;
         self.selected_scenario = None;
+    }
+
+    /// Toggle execution timeline visibility
+    pub fn toggle_execution_timeline(
+        &mut self,
+        backend_name: &str,
+        namespace: &str,
+        interface: &str,
+    ) {
+        let key = format!("{}/{}/{}", backend_name, namespace, interface);
+        if self.collapsed_timelines.contains(&key) {
+            self.collapsed_timelines.remove(&key);
+            debug!("Expanded timeline for {}", key);
+        } else {
+            self.collapsed_timelines.insert(key.clone());
+            debug!("Collapsed timeline for {}", key);
+        }
+    }
+
+    /// Check if execution timeline is collapsed
+    pub fn is_timeline_collapsed(
+        &self,
+        backend_name: &str,
+        namespace: &str,
+        interface: &str,
+    ) -> bool {
+        let key = format!("{}/{}/{}", backend_name, namespace, interface);
+        self.collapsed_timelines.contains(&key)
     }
 
     /// Request list of all scenarios from backend

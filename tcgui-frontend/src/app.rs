@@ -289,6 +289,18 @@ impl TcGui {
                 }
                 Task::none()
             }
+            TcGuiMessage::ToggleExecutionTimeline {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                self.scenario_manager.toggle_execution_timeline(
+                    &backend_name,
+                    &namespace,
+                    &interface,
+                );
+                Task::none()
+            }
             TcGuiMessage::GetExecutionStatus {
                 backend_name,
                 namespace,
