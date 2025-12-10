@@ -24,8 +24,8 @@ pub struct InterfaceSelectionDialog {
     pub scenario_id: String,
     /// Selected namespace for execution
     pub selected_namespace: Option<String>,
-    /// Selected interface for execution
-    pub selected_interface: Option<String>,
+    /// Selected interfaces for execution (multiple selection)
+    pub selected_interfaces: HashSet<String>,
     /// Whether to loop the scenario execution
     pub loop_execution: bool,
 }
@@ -156,7 +156,7 @@ impl UiStateManager {
             backend_name,
             scenario_id,
             selected_namespace: None,
-            selected_interface: None,
+            selected_interfaces: HashSet::new(),
             loop_execution: false,
         };
     }
@@ -175,18 +175,33 @@ impl UiStateManager {
     pub fn select_execution_namespace(&mut self, namespace: String) {
         self.interface_selection_dialog.selected_namespace = Some(namespace);
         // Reset interface selection when namespace changes
-        self.interface_selection_dialog.selected_interface = None;
+        self.interface_selection_dialog.selected_interfaces.clear();
     }
 
-    /// Select interface in the dialog
-    pub fn select_execution_interface(&mut self, interface: String) {
-        self.interface_selection_dialog.selected_interface = Some(interface);
+    /// Toggle interface selection in the dialog (for multi-select)
+    pub fn toggle_execution_interface(&mut self, interface: String) {
+        if self
+            .interface_selection_dialog
+            .selected_interfaces
+            .contains(&interface)
+        {
+            self.interface_selection_dialog
+                .selected_interfaces
+                .remove(&interface);
+        } else {
+            self.interface_selection_dialog
+                .selected_interfaces
+                .insert(interface);
+        }
     }
 
-    /// Check if execution can be confirmed (both namespace and interface selected)
+    /// Check if execution can be confirmed (namespace selected and at least one interface)
     pub fn can_confirm_execution(&self) -> bool {
         self.interface_selection_dialog.selected_namespace.is_some()
-            && self.interface_selection_dialog.selected_interface.is_some()
+            && !self
+                .interface_selection_dialog
+                .selected_interfaces
+                .is_empty()
     }
 
     /// Toggle loop execution in the dialog

@@ -1188,47 +1188,64 @@ fn render_interface_selection_dialog<'a>(
                 sorted_interfaces.sort_by_key(|(name, _)| *name);
 
                 for (interface_name, _) in sorted_interfaces {
-                    let is_selected_interface =
-                        dialog.selected_interface.as_ref() == Some(interface_name);
+                    let is_selected_interface = dialog.selected_interfaces.contains(interface_name);
 
-                    let interface_button = button(text(interface_name).size(12))
-                        .padding([6, 12])
-                        .on_press(TcGuiMessage::SelectExecutionInterface(
-                            interface_name.clone(),
-                        ))
-                        .style(move |_, _| button::Style {
-                            background: Some(iced::Background::Color(if is_selected_interface {
+                    let interface_button = button(
+                        row![
+                            text(if is_selected_interface { "☑" } else { "☐" }).size(14),
+                            text(interface_name).size(12)
+                        ]
+                        .spacing(6),
+                    )
+                    .padding([6, 12])
+                    .on_press(TcGuiMessage::ToggleExecutionInterface(
+                        interface_name.clone(),
+                    ))
+                    .style(move |_, _| button::Style {
+                        background: Some(iced::Background::Color(if is_selected_interface {
+                            colors.success_green
+                        } else {
+                            Color::from_rgb(0.95, 0.97, 1.0)
+                        })),
+                        text_color: if is_selected_interface {
+                            Color::WHITE
+                        } else {
+                            colors.text_primary
+                        },
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            width: 1.0,
+                            color: if is_selected_interface {
                                 colors.success_green
                             } else {
-                                Color::from_rgb(0.95, 0.97, 1.0)
-                            })),
-                            text_color: if is_selected_interface {
-                                Color::WHITE
-                            } else {
-                                colors.text_primary
+                                Color::from_rgb(0.9, 0.93, 0.98)
                             },
-                            border: iced::Border {
-                                radius: 4.0.into(),
-                                width: 1.0,
-                                color: if is_selected_interface {
-                                    colors.success_green
-                                } else {
-                                    Color::from_rgb(0.9, 0.93, 0.98)
-                                },
-                            },
-                            ..button::Style::default()
-                        });
+                        },
+                        ..button::Style::default()
+                    });
 
                     interfaces_row = interfaces_row.push(interface_button);
                 }
 
+                // Show selected count
+                let selected_count = dialog.selected_interfaces.len();
+                let selection_info = if selected_count == 0 {
+                    "Select one or more interfaces:".to_string()
+                } else {
+                    format!(
+                        "Selected {} interface{}:",
+                        selected_count,
+                        if selected_count == 1 { "" } else { "s" }
+                    )
+                };
+
                 namespaces_column = namespaces_column.push(
                     container(
                         column![
-                            text("Interfaces:").size(12).style(move |_| text::Style {
+                            text(selection_info).size(12).style(move |_| text::Style {
                                 color: Some(colors.text_secondary),
                             }),
-                            interfaces_row
+                            interfaces_row.wrap()
                         ]
                         .spacing(8),
                     )

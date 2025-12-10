@@ -336,8 +336,8 @@ impl TcGui {
                 self.ui_state.select_execution_namespace(namespace);
                 Task::none()
             }
-            TcGuiMessage::SelectExecutionInterface(interface) => {
-                self.ui_state.select_execution_interface(interface);
+            TcGuiMessage::ToggleExecutionInterface(interface) => {
+                self.ui_state.toggle_execution_interface(interface);
                 Task::none()
             }
             TcGuiMessage::ToggleLoopExecution => {
@@ -346,28 +346,36 @@ impl TcGui {
             }
             TcGuiMessage::ConfirmScenarioExecution => {
                 let dialog = self.ui_state.interface_selection_dialog();
-                if let (Some(namespace), Some(interface)) =
-                    (&dialog.selected_namespace, &dialog.selected_interface)
-                {
-                    // Check if there's already an execution running on this interface
-                    if self.scenario_manager.is_execution_active(
-                        &dialog.backend_name,
-                        namespace,
-                        interface,
-                    ) {
-                        tracing::warn!(
-                            "Scenario execution already active on {}:{}, ignoring request",
+                if let Some(namespace) = &dialog.selected_namespace {
+                    // Start execution on all selected interfaces
+                    for interface in &dialog.selected_interfaces {
+                        // Check if there's already an execution running on this interface
+                        if self.scenario_manager.is_execution_active(
+                            &dialog.backend_name,
                             namespace,
-                            interface
-                        );
-                    } else if let Err(e) = self.scenario_manager.start_execution(
-                        &dialog.backend_name,
-                        &dialog.scenario_id,
-                        namespace,
-                        interface,
-                        dialog.loop_execution,
-                    ) {
-                        tracing::error!("Failed to start scenario execution: {}", e);
+                            interface,
+                        ) {
+                            tracing::warn!(
+                                "Scenario execution already active on {}:{}, skipping",
+                                namespace,
+                                interface
+                            );
+                            continue;
+                        }
+
+                        if let Err(e) = self.scenario_manager.start_execution(
+                            &dialog.backend_name,
+                            &dialog.scenario_id,
+                            namespace,
+                            interface,
+                            dialog.loop_execution,
+                        ) {
+                            tracing::error!(
+                                "Failed to start scenario execution on {}: {}",
+                                interface,
+                                e
+                            );
+                        }
                     }
                     // Hide the dialog after attempting execution
                     self.ui_state.hide_interface_selection_dialog();

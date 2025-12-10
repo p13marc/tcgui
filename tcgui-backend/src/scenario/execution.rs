@@ -121,31 +121,27 @@ impl ScenarioExecutionEngine {
             scenario.id, namespace, interface, scenario.cleanup_on_failure
         );
 
-        // Capture pre-execution TC state for potential rollback
-        let pre_execution_state = if scenario.cleanup_on_failure {
-            match self
-                .tc_manager
-                .capture_tc_state(&namespace, &interface)
-                .await
-            {
-                Ok(state) => {
-                    info!(
-                        "Captured pre-execution TC state for rollback: had_netem={}",
-                        state.had_netem
-                    );
-                    Some(state)
-                }
-                Err(e) => {
-                    warn!(
-                        "Could not capture pre-execution TC state: {}, rollback will not be available",
-                        e
-                    );
-                    None
-                }
+        // Always capture pre-execution TC state for cleanup on stop
+        // (cleanup_on_failure only affects behavior on execution errors, not user stop)
+        let pre_execution_state = match self
+            .tc_manager
+            .capture_tc_state(&namespace, &interface)
+            .await
+        {
+            Ok(state) => {
+                info!(
+                    "Captured pre-execution TC state: had_netem={}",
+                    state.had_netem
+                );
+                Some(state)
             }
-        } else {
-            info!("Scenario has cleanup_on_failure=false, skipping state capture");
-            None
+            Err(e) => {
+                warn!(
+                    "Could not capture pre-execution TC state: {}, cleanup on stop will not be available",
+                    e
+                );
+                None
+            }
         };
 
         // Create execution state
@@ -475,14 +471,12 @@ impl ScenarioExecutionEngine {
                     .await)
                         .is_err()
                     {
-                        // Execution was stopped - perform rollback
-                        info!("Execution stopped, performing rollback");
-                        if cleanup_on_failure {
-                            if let Some(ref captured_state) = pre_execution_state {
-                                match tc_manager.restore_tc_state(captured_state).await {
-                                    Ok(msg) => info!("TC rollback successful: {}", msg),
-                                    Err(e) => error!("TC rollback failed: {}", e),
-                                }
+                        // Execution was stopped by user - always clean up TC config
+                        info!("Execution stopped by user, cleaning up TC config");
+                        if let Some(ref captured_state) = pre_execution_state {
+                            match tc_manager.restore_tc_state(captured_state).await {
+                                Ok(msg) => info!("TC cleanup successful: {}", msg),
+                                Err(e) => error!("TC cleanup failed: {}", e),
                             }
                         }
 
@@ -516,13 +510,11 @@ impl ScenarioExecutionEngine {
                                 info!("Scenario execution stopped by user");
                                 execution.state = ExecutionState::Stopped;
 
-                                // Perform rollback on user stop
-                                if cleanup_on_failure {
-                                    if let Some(ref captured_state) = pre_execution_state {
-                                        match tc_manager.restore_tc_state(captured_state).await {
-                                            Ok(msg) => info!("TC rollback successful: {}", msg),
-                                            Err(e) => error!("TC rollback failed: {}", e),
-                                        }
+                                // Always clean up TC config on user stop
+                                if let Some(ref captured_state) = pre_execution_state {
+                                    match tc_manager.restore_tc_state(captured_state).await {
+                                        Ok(msg) => info!("TC cleanup successful: {}", msg),
+                                        Err(e) => error!("TC cleanup failed: {}", e),
                                     }
                                 }
 
