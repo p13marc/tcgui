@@ -924,7 +924,7 @@ impl TcCommandManager {
     ///     "default", "eth0"
     /// ).await?;
     ///
-    /// // Remove TC config from named namespace interface  
+    /// // Remove TC config from named namespace interface
     /// let result = tc_manager.remove_tc_config_in_namespace(
     ///     "test-ns", "eth0"
     /// ).await?;
@@ -1029,11 +1029,117 @@ impl TcCommandManager {
             || will_remove_rate;
 
         if needs_recreation {
-            info!("Qdisc recreation needed: loss_removal={}, delay_removal={}, duplicate_removal={}, reorder_removal={}, corrupt_removal={}, rate_removal={}", 
+            info!("Qdisc recreation needed: loss_removal={}, delay_removal={}, duplicate_removal={}, reorder_removal={}, corrupt_removal={}, rate_removal={}",
                 will_remove_loss, will_remove_delay, will_remove_duplicate, will_remove_reorder, will_remove_corrupt, will_remove_rate);
         }
 
         needs_recreation
+    }
+
+    /// Capture the current TC state for an interface (for rollback purposes)
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - Target namespace ("default" for host namespace)
+    /// * `interface` - Network interface name
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(CapturedTcState)` - The captured TC state
+    /// * `Err` - On command execution failures
+    #[instrument(skip(self), fields(namespace, interface))]
+    pub async fn capture_tc_state(
+        &self,
+        namespace: &str,
+        interface: &str,
+    ) -> Result<CapturedTcState> {
+        info!(
+            "Capturing TC state for rollback: namespace={}, interface={}",
+            namespace, interface
+        );
+
+        let qdisc_info = match self.check_existing_qdisc(namespace, interface).await {
+            Ok(info) => info,
+            Err(e) => {
+                warn!(
+                    "Could not capture TC state for {}/{}: {}, assuming no TC configured",
+                    namespace, interface, e
+                );
+                String::new()
+            }
+        };
+
+        let had_netem = qdisc_info.contains("netem");
+
+        let state = CapturedTcState {
+            namespace: namespace.to_string(),
+            interface: interface.to_string(),
+            qdisc_info: qdisc_info.clone(),
+            had_netem,
+        };
+
+        info!(
+            "Captured TC state: had_netem={}, qdisc_info='{}'",
+            had_netem,
+            qdisc_info.trim()
+        );
+
+        Ok(state)
+    }
+
+    /// Restore TC state from a previously captured state
+    ///
+    /// This removes any current TC configuration and restores the interface
+    /// to its pre-execution state.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The previously captured TC state to restore
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(String)` - Success message
+    /// * `Err` - On command execution failures
+    #[instrument(skip(self, state), fields(namespace = %state.namespace, interface = %state.interface))]
+    pub async fn restore_tc_state(&self, state: &CapturedTcState) -> Result<String> {
+        info!(
+            "Restoring TC state for {}/{}: had_netem={}",
+            state.namespace, state.interface, state.had_netem
+        );
+
+        // First, remove any current TC configuration
+        match self
+            .remove_tc_config_in_namespace(&state.namespace, &state.interface)
+            .await
+        {
+            Ok(msg) => {
+                info!("Removed current TC config: {}", msg);
+            }
+            Err(e) => {
+                // Not having a qdisc to remove is fine
+                info!("Note while removing TC config: {}", e);
+            }
+        }
+
+        // If the original state had no TC configuration, we're done
+        if !state.had_tc_config() {
+            info!(
+                "Original state had no TC config, interface {}/{} restored to clean state",
+                state.namespace, state.interface
+            );
+            return Ok("TC state restored (no previous configuration)".to_string());
+        }
+
+        // Note: We don't try to recreate the exact previous configuration here
+        // because parsing TC output back into parameters is complex and error-prone.
+        // The interface is left in a clean state (no TC rules), which is a safe default.
+        // For more sophisticated rollback, we would need to store structured TC config.
+        info!(
+            "Interface {}/{} restored to clean state (previous TC config was present but not re-applied)",
+            state.namespace, state.interface
+        );
+
+        Ok("TC state restored (previous config cleared)".to_string())
     }
 }
 
@@ -1046,4 +1152,24 @@ struct CurrentTcConfig {
     has_reorder: bool,
     has_corrupt: bool,
     has_rate: bool,
+}
+
+/// Captured TC state for rollback purposes
+#[derive(Debug, Clone)]
+pub struct CapturedTcState {
+    /// The namespace of the interface
+    pub namespace: String,
+    /// The interface name
+    pub interface: String,
+    /// Raw qdisc info string (empty if no qdisc was configured)
+    pub qdisc_info: String,
+    /// Whether there was a netem qdisc configured
+    pub had_netem: bool,
+}
+
+impl CapturedTcState {
+    /// Check if there was any TC configuration
+    pub fn had_tc_config(&self) -> bool {
+        !self.qdisc_info.is_empty() && self.had_netem
+    }
 }

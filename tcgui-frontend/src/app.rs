@@ -159,12 +159,32 @@ impl TcGui {
 
             // Scenario events
             TcGuiMessage::ScenarioExecutionUpdate(update) => {
-                self.scenario_manager.handle_execution_update(
-                    update.backend_name,
-                    update.namespace,
-                    update.interface,
-                    update.execution,
+                use tcgui_shared::scenario::ExecutionState;
+
+                // Check if execution is in a terminal state before updating
+                let is_terminal = matches!(
+                    update.execution.state,
+                    ExecutionState::Completed
+                        | ExecutionState::Stopped
+                        | ExecutionState::Failed { .. }
                 );
+
+                if is_terminal {
+                    // Remove completed/stopped/failed executions from tracking
+                    self.scenario_manager.remove_execution(
+                        &update.backend_name,
+                        &update.namespace,
+                        &update.interface,
+                    );
+                } else {
+                    // Update active execution state
+                    self.scenario_manager.handle_execution_update(
+                        update.backend_name,
+                        update.namespace,
+                        update.interface,
+                        update.execution,
+                    );
+                }
                 Task::none()
             }
 
@@ -312,7 +332,18 @@ impl TcGui {
                 if let (Some(namespace), Some(interface)) =
                     (&dialog.selected_namespace, &dialog.selected_interface)
                 {
-                    if let Err(e) = self.scenario_manager.start_execution(
+                    // Check if there's already an execution running on this interface
+                    if self.scenario_manager.is_execution_active(
+                        &dialog.backend_name,
+                        namespace,
+                        interface,
+                    ) {
+                        tracing::warn!(
+                            "Scenario execution already active on {}:{}, ignoring request",
+                            namespace,
+                            interface
+                        );
+                    } else if let Err(e) = self.scenario_manager.start_execution(
                         &dialog.backend_name,
                         &dialog.scenario_id,
                         namespace,
@@ -320,7 +351,7 @@ impl TcGui {
                     ) {
                         tracing::error!("Failed to start scenario execution: {}", e);
                     }
-                    // Hide the dialog after starting execution
+                    // Hide the dialog after attempting execution
                     self.ui_state.hide_interface_selection_dialog();
                 }
                 Task::none()
@@ -414,6 +445,7 @@ impl TcGui {
                 &mut self.backend_manager,
                 &mut self.query_manager,
                 &mut self.ui_state,
+                &mut self.scenario_manager,
             ),
         }
     }

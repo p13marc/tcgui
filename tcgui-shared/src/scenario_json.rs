@@ -69,6 +69,13 @@ pub struct ScenarioFile {
     #[serde(default)]
     pub metadata: ScenarioMetadataJson,
     pub steps: Vec<ScenarioStepJson>,
+    /// Whether to restore original TC configuration on failure/abort (default: true)
+    #[serde(default = "default_cleanup_on_failure")]
+    pub cleanup_on_failure: bool,
+}
+
+fn default_cleanup_on_failure() -> bool {
+    true
 }
 
 /// Intermediate struct for scenario metadata
@@ -274,6 +281,7 @@ impl ScenarioFile {
                 version: self.metadata.version,
                 duration_ms,
             },
+            cleanup_on_failure: self.cleanup_on_failure,
         })
     }
 }

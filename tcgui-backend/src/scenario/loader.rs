@@ -43,18 +43,32 @@ impl ScenarioLoader {
     /// 2. User: `~/.config/tcgui/scenarios`
     /// 3. Local: `./scenarios`
     pub fn new() -> Self {
+        Self::with_defaults(true)
+    }
+
+    /// Create a new scenario loader, optionally including default directories.
+    ///
+    /// If `include_defaults` is true, includes:
+    /// 1. System: `/usr/share/tcgui/scenarios`
+    /// 2. User: `~/.config/tcgui/scenarios`
+    /// 3. Local: `./scenarios`
+    ///
+    /// If `include_defaults` is false, starts with an empty directory list.
+    pub fn with_defaults(include_defaults: bool) -> Self {
         let mut directories = Vec::new();
 
-        // System directory (lowest priority)
-        directories.push(PathBuf::from(SYSTEM_SCENARIO_DIR));
+        if include_defaults {
+            // System directory (lowest priority)
+            directories.push(PathBuf::from(SYSTEM_SCENARIO_DIR));
 
-        // User directory
-        if let Some(home) = dirs::home_dir() {
-            directories.push(home.join(USER_SCENARIO_DIR));
+            // User directory
+            if let Some(home) = dirs::home_dir() {
+                directories.push(home.join(USER_SCENARIO_DIR));
+            }
+
+            // Local directory (highest priority)
+            directories.push(PathBuf::from("./scenarios"));
         }
-
-        // Local directory (highest priority)
-        directories.push(PathBuf::from("./scenarios"));
 
         Self { directories }
     }

@@ -84,7 +84,6 @@ impl ScenarioManager {
     }
 
     /// Check if there's an execution running on an interface
-    #[allow(dead_code)] // TODO: Wire up scenario UI
     pub fn is_execution_active(
         &self,
         backend_name: &str,
@@ -310,7 +309,6 @@ impl ScenarioManager {
     }
 
     /// Remove execution when it completes or is stopped
-    #[allow(dead_code)]
     pub fn remove_execution(&mut self, backend_name: &str, namespace: &str, interface: &str) {
         let execution_key = format!("{}/{}", namespace, interface);
         if let Some(executions) = self.active_executions.get_mut(backend_name) {
@@ -321,7 +319,6 @@ impl ScenarioManager {
     }
 
     /// Clean up backend state when backend disconnects
-    #[allow(dead_code)]
     pub fn cleanup_backend_state(&mut self, backend_name: &str) {
         info!("Cleaning up scenario state for backend: {}", backend_name);
         self.available_scenarios.remove(backend_name);
@@ -329,7 +326,6 @@ impl ScenarioManager {
     }
 
     /// Get statistics about scenario state
-    #[allow(dead_code)]
     pub fn get_stats(&self) -> ScenarioManagerStats {
         let total_scenarios: usize = self.available_scenarios.values().map(|v| v.len()).sum();
         let total_executions: usize = self
@@ -349,7 +345,6 @@ impl ScenarioManager {
 
 /// Statistics about scenario manager state
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ScenarioManagerStats {
     pub backend_count: usize,
     pub total_scenarios: usize,

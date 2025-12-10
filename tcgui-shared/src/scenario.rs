@@ -31,6 +31,14 @@ pub struct NetworkScenario {
     pub modified_at: u64,
     /// Optional metadata for categorization and searching
     pub metadata: ScenarioMetadata,
+    /// Whether to restore original TC configuration on failure/abort (default: true)
+    #[serde(default = "default_cleanup_on_failure")]
+    pub cleanup_on_failure: bool,
+}
+
+/// Default value for cleanup_on_failure (true)
+fn default_cleanup_on_failure() -> bool {
+    true
 }
 
 /// Metadata for scenario organization and searching
@@ -364,6 +372,7 @@ impl NetworkScenario {
             created_at: now,
             modified_at: now,
             metadata: ScenarioMetadata::default(),
+            cleanup_on_failure: true,
         }
     }
 

@@ -18,6 +18,7 @@ pub struct CliConfig {
     pub zenoh_listen: Option<String>,
     pub no_multicast: bool,
     pub scenario_dirs: Vec<String>,
+    pub no_default_scenarios: bool,
 }
 
 impl CliConfig {
@@ -32,6 +33,7 @@ impl CliConfig {
         let verbose = matches.get_flag("verbose");
         let exclude_loopback = matches.get_flag("exclude-loopback");
         let no_multicast = matches.get_flag("no-multicast");
+        let no_default_scenarios = matches.get_flag("no-default-scenarios");
 
         let backend_name = matches
             .get_one::<String>("name")
@@ -60,6 +62,7 @@ impl CliConfig {
             zenoh_listen,
             no_multicast,
             scenario_dirs,
+            no_default_scenarios,
         })
     }
 
@@ -149,6 +152,15 @@ impl CliConfig {
                               with later ones taking priority (can override scenarios with same ID). \
                               Default directories: /usr/share/tcgui/scenarios, ~/.config/tcgui/scenarios, ./scenarios"),
             )
+            .arg(
+                Arg::new("no-default-scenarios")
+                    .long("no-default-scenarios")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Disable loading scenarios from default directories")
+                    .long_help("Disable automatic loading of scenarios from default directories \
+                              (/usr/share/tcgui/scenarios, ~/.config/tcgui/scenarios, ./scenarios). \
+                              Only scenarios from explicitly specified --scenario-dir will be loaded."),
+            )
     }
 
     /// Validate CLI configuration
@@ -199,6 +211,7 @@ mod tests {
         assert!(!config.verbose);
         assert!(!config.exclude_loopback);
         assert!(!config.no_multicast);
+        assert!(!config.no_default_scenarios);
         assert_eq!(config.backend_name, "default");
         assert_eq!(config.zenoh_mode, "peer");
         assert!(config.zenoh_connect.is_none());
@@ -225,6 +238,7 @@ mod tests {
                 "/custom/scenarios",
                 "--scenario-dir",
                 "/another/dir",
+                "--no-default-scenarios",
             ])
             .unwrap();
 
@@ -232,6 +246,7 @@ mod tests {
 
         assert!(config.verbose);
         assert!(config.exclude_loopback);
+        assert!(config.no_default_scenarios);
         assert_eq!(config.backend_name, "test-backend");
         assert_eq!(config.zenoh_mode, "client");
         assert_eq!(
@@ -256,6 +271,7 @@ mod tests {
             zenoh_listen: None,
             no_multicast: false,
             scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_ok());
@@ -272,6 +288,7 @@ mod tests {
             zenoh_listen: None,
             no_multicast: false,
             scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_err());
@@ -288,6 +305,7 @@ mod tests {
             zenoh_listen: None,
             no_multicast: false,
             scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_err());
@@ -304,6 +322,7 @@ mod tests {
             zenoh_listen: None,
             no_multicast: false,
             scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_err());

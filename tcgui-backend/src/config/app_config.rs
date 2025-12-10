@@ -40,6 +40,8 @@ pub struct AppConfig {
     pub log_level: LogLevel,
     pub interface_monitor_interval_secs: u64,
     pub bandwidth_monitor_interval_secs: u64,
+    pub scenario_dirs: Vec<String>,
+    pub no_default_scenarios: bool,
 }
 
 impl AppConfig {
@@ -61,6 +63,8 @@ impl AppConfig {
             log_level,
             interface_monitor_interval_secs: 5, // Default 5 seconds
             bandwidth_monitor_interval_secs: 2, // Default 2 seconds
+            scenario_dirs: cli_config.scenario_dirs.clone(),
+            no_default_scenarios: cli_config.no_default_scenarios,
         })
     }
 
@@ -162,6 +166,8 @@ pub struct AppConfigBuilder {
     log_level: Option<LogLevel>,
     interface_monitor_interval_secs: Option<u64>,
     bandwidth_monitor_interval_secs: Option<u64>,
+    scenario_dirs: Option<Vec<String>>,
+    no_default_scenarios: Option<bool>,
 }
 
 impl AppConfigBuilder {
@@ -173,6 +179,8 @@ impl AppConfigBuilder {
             log_level: None,
             interface_monitor_interval_secs: None,
             bandwidth_monitor_interval_secs: None,
+            scenario_dirs: None,
+            no_default_scenarios: None,
         }
     }
 
@@ -206,6 +214,18 @@ impl AppConfigBuilder {
         self
     }
 
+    /// Set scenario directories
+    pub fn scenario_dirs(mut self, dirs: Vec<String>) -> Self {
+        self.scenario_dirs = Some(dirs);
+        self
+    }
+
+    /// Set no default scenarios flag
+    pub fn no_default_scenarios(mut self, no_defaults: bool) -> Self {
+        self.no_default_scenarios = Some(no_defaults);
+        self
+    }
+
     /// Build the configuration
     pub fn build(self) -> Result<AppConfig> {
         let config = AppConfig {
@@ -216,6 +236,8 @@ impl AppConfigBuilder {
             log_level: self.log_level.unwrap_or(LogLevel::Info),
             interface_monitor_interval_secs: self.interface_monitor_interval_secs.unwrap_or(5),
             bandwidth_monitor_interval_secs: self.bandwidth_monitor_interval_secs.unwrap_or(2),
+            scenario_dirs: self.scenario_dirs.unwrap_or_default(),
+            no_default_scenarios: self.no_default_scenarios.unwrap_or(false),
         };
 
         config.validate()?;
@@ -266,13 +288,16 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
-            scenario_dirs: vec![],
+            scenario_dirs: vec!["/custom/scenarios".to_string()],
+            no_default_scenarios: true,
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();
         assert_eq!(app_config.backend_name, "test-backend");
         assert!(app_config.exclude_loopback);
         assert_eq!(app_config.log_level, LogLevel::Info); // Not verbose
+        assert_eq!(app_config.scenario_dirs, vec!["/custom/scenarios"]);
+        assert!(app_config.no_default_scenarios);
     }
 
     #[test]
@@ -286,10 +311,13 @@ mod tests {
             zenoh_listen: None,
             no_multicast: false,
             scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();
         assert_eq!(app_config.log_level, LogLevel::Debug); // Verbose enabled
+        assert!(app_config.scenario_dirs.is_empty());
+        assert!(!app_config.no_default_scenarios);
     }
 
     #[test]
@@ -300,6 +328,8 @@ mod tests {
             log_level: LogLevel::Info,
             interface_monitor_interval_secs: 5,
             bandwidth_monitor_interval_secs: 2,
+            scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_ok());
@@ -313,6 +343,8 @@ mod tests {
             log_level: LogLevel::Info,
             interface_monitor_interval_secs: 5,
             bandwidth_monitor_interval_secs: 2,
+            scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_err());
@@ -326,6 +358,8 @@ mod tests {
             log_level: LogLevel::Info,
             interface_monitor_interval_secs: 0,
             bandwidth_monitor_interval_secs: 2,
+            scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_err());
@@ -336,6 +370,8 @@ mod tests {
             log_level: LogLevel::Info,
             interface_monitor_interval_secs: 5,
             bandwidth_monitor_interval_secs: 0,
+            scenario_dirs: vec![],
+            no_default_scenarios: false,
         };
 
         assert!(config.validate().is_err());

@@ -8,6 +8,7 @@ use crate::backend_manager::BackendManager;
 use crate::interface::TcInterface;
 use crate::messages::{TcGuiMessage, TcInterfaceMessage};
 use crate::query_manager::QueryManager;
+use crate::scenario_manager::ScenarioManager;
 use crate::ui_state::UiStateManager;
 use iced::Task;
 use tcgui_shared::TcConfigUpdate;
@@ -1269,6 +1270,7 @@ pub fn handle_cleanup_stale_backends(
     backend_manager: &mut BackendManager,
     _query_manager: &mut QueryManager,
     ui_state: &mut UiStateManager,
+    scenario_manager: &mut ScenarioManager,
 ) -> Task<TcGuiMessage> {
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1308,6 +1310,8 @@ pub fn handle_cleanup_stale_backends(
             ui_state.toggle_backend_visibility(backend_name);
             // Clean up UI state for this backend
             ui_state.cleanup_backend_state(backend_name);
+            // Clean up scenario state for this backend
+            scenario_manager.cleanup_backend_state(backend_name);
         }
     }
 
@@ -1315,9 +1319,13 @@ pub fn handle_cleanup_stale_backends(
     // Channels will be automatically refreshed when Zenoh reconnects
     if !backends_to_remove.is_empty() {
         backend_manager.cleanup_stale_backends();
+
+        // Log scenario manager stats after cleanup
+        let stats = scenario_manager.get_stats();
         info!(
-            "Removed {} stale backends - preserving query channels for future connections",
-            backends_to_remove.len()
+            "Removed {} stale backends - preserving query channels for future connections. {}",
+            backends_to_remove.len(),
+            stats
         );
     }
 

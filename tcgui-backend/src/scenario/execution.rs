@@ -15,7 +15,7 @@ use zenoh::Session;
 use tcgui_shared::scenario::{ExecutionState, ExecutionStats, NetworkScenario, ScenarioExecution};
 use tcgui_shared::{topics, TcOperation, TcRequest, TcResponse};
 
-use crate::tc_commands::TcCommandManager;
+use crate::tc_commands::{CapturedTcState, TcCommandManager};
 
 /// Execution engine for managing scenario playback across multiple interfaces
 pub struct ScenarioExecutionEngine {
@@ -116,9 +116,36 @@ impl ScenarioExecutionEngine {
         }
 
         info!(
-            "Starting scenario '{}' on interface {}:{}",
-            scenario.id, namespace, interface
+            "Starting scenario '{}' on interface {}:{} (cleanup_on_failure={})",
+            scenario.id, namespace, interface, scenario.cleanup_on_failure
         );
+
+        // Capture pre-execution TC state for potential rollback
+        let pre_execution_state = if scenario.cleanup_on_failure {
+            match self
+                .tc_manager
+                .capture_tc_state(&namespace, &interface)
+                .await
+            {
+                Ok(state) => {
+                    info!(
+                        "Captured pre-execution TC state for rollback: had_netem={}",
+                        state.had_netem
+                    );
+                    Some(state)
+                }
+                Err(e) => {
+                    warn!(
+                        "Could not capture pre-execution TC state: {}, rollback will not be available",
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            info!("Scenario has cleanup_on_failure=false, skipping state capture");
+            None
+        };
 
         // Create execution state
         let start_time = SystemTime::now()
@@ -145,6 +172,8 @@ impl ScenarioExecutionEngine {
             control_receiver,
             self.tc_manager.clone(),
             self.update_sender.clone(),
+            pre_execution_state.clone(),
+            scenario.cleanup_on_failure,
         );
 
         // Create executor
@@ -293,16 +322,21 @@ impl ScenarioExecutionEngine {
         &self,
         mut execution: ScenarioExecution,
         mut control_receiver: mpsc::UnboundedReceiver<ExecutorControlMessage>,
-        _tc_manager: TcCommandManager,
+        tc_manager: TcCommandManager,
         update_sender: mpsc::UnboundedSender<ScenarioExecutionUpdate>,
+        pre_execution_state: Option<CapturedTcState>,
+        cleanup_on_failure: bool,
     ) -> tokio::task::JoinHandle<()> {
         let backend_name = self.backend_name.clone();
         let session = self.session.clone();
 
         tokio::spawn(async move {
             info!(
-                "Starting execution task for scenario '{}' on {}:{}",
-                execution.scenario.id, execution.target_namespace, execution.target_interface
+                "Starting execution task for scenario '{}' on {}:{} (cleanup_on_failure={})",
+                execution.scenario.id,
+                execution.target_namespace,
+                execution.target_interface,
+                cleanup_on_failure
             );
 
             let mut paused_duration = Duration::from_millis(0);
@@ -351,7 +385,32 @@ impl ScenarioExecutionEngine {
                             response.message
                         );
                         execution.stats.failed_operations += 1;
-                        execution.stats.last_error = Some(response.message);
+                        execution.stats.last_error = Some(response.message.clone());
+
+                        // Mark as failed and trigger rollback
+                        execution.state = ExecutionState::Failed {
+                            error: response.message,
+                        };
+
+                        // Perform rollback
+                        if cleanup_on_failure {
+                            if let Some(ref captured_state) = pre_execution_state {
+                                info!("Performing TC state rollback due to execution failure");
+                                match tc_manager.restore_tc_state(captured_state).await {
+                                    Ok(msg) => info!("TC rollback successful: {}", msg),
+                                    Err(e) => error!("TC rollback failed: {}", e),
+                                }
+                            }
+                        }
+
+                        // Send failure update
+                        let _ = update_sender.send(ScenarioExecutionUpdate {
+                            namespace: execution.target_namespace.clone(),
+                            interface: execution.target_interface.clone(),
+                            execution: execution.clone(),
+                            backend_name: backend_name.clone(),
+                        });
+                        return;
                     }
                     Err(e) => {
                         error!(
@@ -360,7 +419,31 @@ impl ScenarioExecutionEngine {
                             e
                         );
                         execution.stats.failed_operations += 1;
-                        execution.stats.last_error = Some(e.to_string());
+                        let error_msg = e.to_string();
+                        execution.stats.last_error = Some(error_msg.clone());
+
+                        // Mark as failed and trigger rollback
+                        execution.state = ExecutionState::Failed { error: error_msg };
+
+                        // Perform rollback
+                        if cleanup_on_failure {
+                            if let Some(ref captured_state) = pre_execution_state {
+                                info!("Performing TC state rollback due to execution failure");
+                                match tc_manager.restore_tc_state(captured_state).await {
+                                    Ok(msg) => info!("TC rollback successful: {}", msg),
+                                    Err(e) => error!("TC rollback failed: {}", e),
+                                }
+                            }
+                        }
+
+                        // Send failure update
+                        let _ = update_sender.send(ScenarioExecutionUpdate {
+                            namespace: execution.target_namespace.clone(),
+                            interface: execution.target_interface.clone(),
+                            execution: execution.clone(),
+                            backend_name: backend_name.clone(),
+                        });
+                        return;
                     }
                 }
 
@@ -392,7 +475,25 @@ impl ScenarioExecutionEngine {
                 .await)
                     .is_err()
                 {
-                    // Execution was stopped
+                    // Execution was stopped - perform rollback
+                    info!("Execution stopped, performing rollback");
+                    if cleanup_on_failure {
+                        if let Some(ref captured_state) = pre_execution_state {
+                            match tc_manager.restore_tc_state(captured_state).await {
+                                Ok(msg) => info!("TC rollback successful: {}", msg),
+                                Err(e) => error!("TC rollback failed: {}", e),
+                            }
+                        }
+                    }
+
+                    // Send stopped update
+                    execution.state = ExecutionState::Stopped;
+                    let _ = update_sender.send(ScenarioExecutionUpdate {
+                        namespace: execution.target_namespace.clone(),
+                        interface: execution.target_interface.clone(),
+                        execution: execution.clone(),
+                        backend_name: backend_name.clone(),
+                    });
                     return;
                 }
 
@@ -414,6 +515,24 @@ impl ScenarioExecutionEngine {
                         ExecutorControlMessage::Stop => {
                             info!("Scenario execution stopped by user");
                             execution.state = ExecutionState::Stopped;
+
+                            // Perform rollback on user stop
+                            if cleanup_on_failure {
+                                if let Some(ref captured_state) = pre_execution_state {
+                                    match tc_manager.restore_tc_state(captured_state).await {
+                                        Ok(msg) => info!("TC rollback successful: {}", msg),
+                                        Err(e) => error!("TC rollback failed: {}", e),
+                                    }
+                                }
+                            }
+
+                            // Send stopped update
+                            let _ = update_sender.send(ScenarioExecutionUpdate {
+                                namespace: execution.target_namespace.clone(),
+                                interface: execution.target_interface.clone(),
+                                execution: execution.clone(),
+                                backend_name: backend_name.clone(),
+                            });
                             return;
                         }
                         ExecutorControlMessage::Pause => {
@@ -440,7 +559,7 @@ impl ScenarioExecutionEngine {
                 }
             }
 
-            // Scenario completed successfully
+            // Scenario completed successfully - no rollback needed
             info!(
                 "Scenario '{}' execution completed successfully",
                 execution.scenario.id

@@ -32,7 +32,7 @@ impl ScenarioManager {
     /// Create a new scenario manager with default scenario directories
     #[instrument(skip(session, tc_manager))]
     pub fn new(session: Arc<Session>, backend_name: String, tc_manager: TcCommandManager) -> Self {
-        Self::with_scenario_dirs(session, backend_name, tc_manager, vec![])
+        Self::with_options(session, backend_name, tc_manager, vec![], false)
     }
 
     /// Create a new scenario manager with additional scenario directories
@@ -43,6 +43,25 @@ impl ScenarioManager {
         tc_manager: TcCommandManager,
         extra_dirs: Vec<PathBuf>,
     ) -> Self {
+        Self::with_options(session, backend_name, tc_manager, extra_dirs, false)
+    }
+
+    /// Create a new scenario manager with full configuration options
+    ///
+    /// # Arguments
+    /// * `session` - Zenoh session for storage and communication
+    /// * `backend_name` - Name of this backend instance
+    /// * `tc_manager` - TC command manager for executing network changes
+    /// * `extra_dirs` - Additional directories to load scenarios from
+    /// * `no_default_scenarios` - If true, skip default scenario directories
+    #[instrument(skip(session, tc_manager, extra_dirs))]
+    pub fn with_options(
+        session: Arc<Session>,
+        backend_name: String,
+        tc_manager: TcCommandManager,
+        extra_dirs: Vec<PathBuf>,
+        no_default_scenarios: bool,
+    ) -> Self {
         info!("Initializing ScenarioManager for backend: {}", backend_name);
 
         let storage_prefix = format!("tcgui/storage/{}/scenarios", backend_name);
@@ -51,8 +70,8 @@ impl ScenarioManager {
         let execution_engine =
             ScenarioExecutionEngine::new(session.clone(), backend_name.clone(), tc_manager);
 
-        // Create loader with default directories plus any extra ones
-        let mut loader = ScenarioLoader::new();
+        // Create loader, optionally skipping default directories
+        let mut loader = ScenarioLoader::with_defaults(!no_default_scenarios);
         loader.add_directories(extra_dirs);
 
         // Load templates from files
