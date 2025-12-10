@@ -9,7 +9,7 @@ use tracing::{debug, error, info, warn};
 
 use tcgui_shared::scenario::{
     NetworkScenario, ScenarioExecution, ScenarioExecutionRequest, ScenarioExecutionUpdate,
-    ScenarioRequest,
+    ScenarioLoadError, ScenarioRequest,
 };
 
 use crate::messages::{ScenarioExecutionQueryMessage, ScenarioQueryMessage};
@@ -72,6 +72,8 @@ pub struct ScenarioManager {
     loading_backends: std::collections::HashSet<String>,
     /// Execution timelines that are collapsed (key: "backend/namespace/interface")
     collapsed_timelines: std::collections::HashSet<String>,
+    /// Errors that occurred while loading scenario files
+    load_errors: HashMap<String, Vec<ScenarioLoadError>>, // backend_name -> errors
 }
 
 impl ScenarioManager {
@@ -460,14 +462,27 @@ impl ScenarioManager {
         &mut self,
         backend_name: String,
         scenarios: Vec<NetworkScenario>,
+        load_errors: Vec<ScenarioLoadError>,
     ) {
         info!(
-            "Received {} scenarios from backend: {}",
+            "Received {} scenarios from backend: {} ({} load errors)",
             scenarios.len(),
-            backend_name
+            backend_name,
+            load_errors.len()
         );
         self.loading_backends.remove(&backend_name);
-        self.available_scenarios.insert(backend_name, scenarios);
+        self.available_scenarios
+            .insert(backend_name.clone(), scenarios);
+        if load_errors.is_empty() {
+            self.load_errors.remove(&backend_name);
+        } else {
+            self.load_errors.insert(backend_name, load_errors);
+        }
+    }
+
+    /// Get load errors for a specific backend
+    pub fn get_load_errors(&self, backend_name: &str) -> Option<&Vec<ScenarioLoadError>> {
+        self.load_errors.get(backend_name)
     }
 
     /// Handle execution status update with timestamp-based deduplication

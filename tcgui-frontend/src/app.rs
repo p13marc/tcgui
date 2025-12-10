@@ -400,12 +400,32 @@ impl TcGui {
             } => {
                 use tcgui_shared::scenario::ScenarioResponse;
                 match response {
-                    ScenarioResponse::Listed { scenarios } => {
-                        self.scenario_manager
-                            .handle_scenario_list_response(backend_name, scenarios);
+                    ScenarioResponse::Listed {
+                        scenarios,
+                        load_errors,
+                    } => {
+                        if !load_errors.is_empty() {
+                            for load_error in &load_errors {
+                                tracing::warn!(
+                                    "Failed to load scenario from {}: {}",
+                                    load_error.file_path,
+                                    load_error.error.message
+                                );
+                            }
+                        }
+                        self.scenario_manager.handle_scenario_list_response(
+                            backend_name,
+                            scenarios,
+                            load_errors,
+                        );
                     }
-                    ScenarioResponse::Error { message } => {
-                        tracing::error!("Scenario query error from {}: {}", backend_name, message);
+                    ScenarioResponse::Error { error } => {
+                        tracing::error!(
+                            "Scenario query error from {}: {} ({})",
+                            backend_name,
+                            error.message,
+                            error.category_str()
+                        );
                     }
                     _ => {
                         tracing::debug!(
@@ -423,12 +443,16 @@ impl TcGui {
             } => {
                 use tcgui_shared::scenario::ScenarioExecutionResponse;
                 match response {
-                    ScenarioExecutionResponse::Error { message } => {
+                    ScenarioExecutionResponse::Error { error } => {
                         tracing::error!(
-                            "Scenario execution error from {}: {}",
+                            "Scenario execution error from {}: {} ({})",
                             backend_name,
-                            message
+                            error.message,
+                            error.category_str()
                         );
+                        if let Some(suggestion) = &error.suggestion {
+                            tracing::info!("Suggestion: {}", suggestion);
+                        }
                     }
                     _ => {
                         tracing::debug!(

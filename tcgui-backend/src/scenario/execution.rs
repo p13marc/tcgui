@@ -12,7 +12,9 @@ use tokio::time::{sleep, Duration, Instant};
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 
-use tcgui_shared::scenario::{ExecutionState, ExecutionStats, NetworkScenario, ScenarioExecution};
+use tcgui_shared::scenario::{
+    ExecutionState, ExecutionStats, NetworkScenario, ScenarioError, ScenarioExecution,
+};
 use tcgui_shared::{topics, TcOperation, TcRequest, TcResponse};
 
 use crate::tc_commands::{CapturedTcState, TcCommandManager};
@@ -385,7 +387,9 @@ impl ScenarioExecutionEngine {
 
                             // Mark as failed and trigger rollback
                             execution.state = ExecutionState::Failed {
-                                error: response.message,
+                                error: ScenarioError::permanent(&response.message)
+                                    .at_step(step_index)
+                                    .during("applying TC configuration"),
                             };
 
                             // Perform rollback
@@ -419,7 +423,12 @@ impl ScenarioExecutionEngine {
                             execution.stats.last_error = Some(error_msg.clone());
 
                             // Mark as failed and trigger rollback
-                            execution.state = ExecutionState::Failed { error: error_msg };
+                            execution.state = ExecutionState::Failed {
+                                error: ScenarioError::transient(&error_msg)
+                                    .at_step(step_index)
+                                    .during("executing TC command")
+                                    .with_suggestion("Check network interface status and retry"),
+                            };
 
                             // Perform rollback
                             if cleanup_on_failure {

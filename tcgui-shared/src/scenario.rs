@@ -105,6 +105,150 @@ pub struct ExecutionStats {
     pub progress_percent: f32,
 }
 
+/// Category of error for user guidance
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScenarioErrorCategory {
+    /// Transient error, may succeed on retry (network timeout, temporary unavailability)
+    Transient,
+    /// Permanent error, will not succeed without changes (interface doesn't exist)
+    Permanent,
+    /// Validation error in scenario definition
+    Validation,
+    /// Permission or capability error
+    Permission,
+    /// Internal error (bug or unexpected state)
+    Internal,
+}
+
+impl std::fmt::Display for ScenarioErrorCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScenarioErrorCategory::Transient => write!(f, "Transient"),
+            ScenarioErrorCategory::Permanent => write!(f, "Permanent"),
+            ScenarioErrorCategory::Validation => write!(f, "Validation"),
+            ScenarioErrorCategory::Permission => write!(f, "Permission"),
+            ScenarioErrorCategory::Internal => write!(f, "Internal"),
+        }
+    }
+}
+
+/// Detailed error information for scenario operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioError {
+    /// Error category for user guidance
+    pub category: ScenarioErrorCategory,
+    /// Human-readable error message
+    pub message: String,
+    /// Actionable suggestion for the user (if applicable)
+    pub suggestion: Option<String>,
+    /// Step index where the error occurred (if applicable)
+    pub step_index: Option<usize>,
+    /// The TC operation that was being attempted (if applicable)
+    pub operation: Option<String>,
+}
+
+impl ScenarioError {
+    /// Create a new transient error
+    pub fn transient(message: impl Into<String>) -> Self {
+        Self {
+            category: ScenarioErrorCategory::Transient,
+            message: message.into(),
+            suggestion: Some("This may be a temporary issue. Try again.".to_string()),
+            step_index: None,
+            operation: None,
+        }
+    }
+
+    /// Create a new permanent error
+    pub fn permanent(message: impl Into<String>) -> Self {
+        Self {
+            category: ScenarioErrorCategory::Permanent,
+            message: message.into(),
+            suggestion: None,
+            step_index: None,
+            operation: None,
+        }
+    }
+
+    /// Create a new validation error
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self {
+            category: ScenarioErrorCategory::Validation,
+            message: message.into(),
+            suggestion: None,
+            step_index: None,
+            operation: None,
+        }
+    }
+
+    /// Create a new permission error
+    pub fn permission(message: impl Into<String>) -> Self {
+        Self {
+            category: ScenarioErrorCategory::Permission,
+            message: message.into(),
+            suggestion: Some("Ensure backend has CAP_NET_ADMIN capability.".to_string()),
+            step_index: None,
+            operation: None,
+        }
+    }
+
+    /// Create a new internal error
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            category: ScenarioErrorCategory::Internal,
+            message: message.into(),
+            suggestion: Some("This is unexpected. Please report this issue.".to_string()),
+            step_index: None,
+            operation: None,
+        }
+    }
+
+    /// Add step context to the error
+    pub fn at_step(mut self, step_index: usize) -> Self {
+        self.step_index = Some(step_index);
+        self
+    }
+
+    /// Add operation context to the error
+    pub fn during(mut self, operation: impl Into<String>) -> Self {
+        self.operation = Some(operation.into());
+        self
+    }
+
+    /// Add a suggestion to the error
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestion = Some(suggestion.into());
+        self
+    }
+
+    /// Get a string representation of the error category
+    pub fn category_str(&self) -> &'static str {
+        match self.category {
+            ScenarioErrorCategory::Transient => "transient",
+            ScenarioErrorCategory::Permanent => "permanent",
+            ScenarioErrorCategory::Validation => "validation",
+            ScenarioErrorCategory::Permission => "permission",
+            ScenarioErrorCategory::Internal => "internal",
+        }
+    }
+}
+
+impl std::fmt::Display for ScenarioError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.category, self.message)?;
+        if let Some(step) = self.step_index {
+            write!(f, " (step {})", step + 1)?;
+        }
+        if let Some(op) = &self.operation {
+            write!(f, " during {}", op)?;
+        }
+        if let Some(suggestion) = &self.suggestion {
+            write!(f, ". {}", suggestion)?;
+        }
+        Ok(())
+    }
+}
+
 /// Current state of scenario execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExecutionState {
@@ -121,8 +265,8 @@ pub enum ExecutionState {
     Completed,
     /// Scenario failed due to an error
     Failed {
-        /// Error message describing the failure
-        error: String,
+        /// Detailed error information
+        error: ScenarioError,
     },
 }
 
@@ -141,6 +285,15 @@ pub enum ScenarioRequest {
     Update(NetworkScenario),
 }
 
+/// Information about a scenario file that failed to load
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioLoadError {
+    /// File path that failed to load
+    pub file_path: String,
+    /// Error details
+    pub error: ScenarioError,
+}
+
 /// Response to scenario management requests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScenarioResponse {
@@ -148,14 +301,18 @@ pub enum ScenarioResponse {
     Added { id: ScenarioId },
     /// Scenario was successfully removed
     Removed { success: bool },
-    /// List of all scenarios
-    Listed { scenarios: Vec<NetworkScenario> },
+    /// List of all scenarios (with any loading errors)
+    Listed {
+        scenarios: Vec<NetworkScenario>,
+        /// Scenario files that failed to load
+        load_errors: Vec<ScenarioLoadError>,
+    },
     /// Retrieved scenario (None if not found)
     Retrieved { scenario: Option<NetworkScenario> },
     /// Scenario was successfully updated
     Updated { success: bool },
-    /// Operation failed with error message
-    Error { message: String },
+    /// Operation failed
+    Error { error: ScenarioError },
 }
 
 /// Scenario execution control request messages
@@ -214,8 +371,8 @@ pub enum ScenarioExecutionResponse {
     },
     /// List of active executions
     ActiveExecutions { executions: Vec<ScenarioExecution> },
-    /// Operation failed with error message
-    Error { message: String },
+    /// Operation failed
+    Error { error: ScenarioError },
 }
 
 /// Scenario execution status update (Pub/Sub)
@@ -634,7 +791,7 @@ mod tests {
 
         // Test failed state with partial progress
         execution.state = ExecutionState::Failed {
-            error: "Test error".to_string(),
+            error: ScenarioError::permanent("Test error"),
         };
         execution.stats.progress_percent = 50.0;
         assert_eq!(execution.calculate_progress(), 50.0);
@@ -672,7 +829,7 @@ mod tests {
         assert!(!execution.is_active());
 
         execution.state = ExecutionState::Failed {
-            error: "Test".to_string(),
+            error: ScenarioError::permanent("Test"),
         };
         assert!(!execution.is_active());
     }

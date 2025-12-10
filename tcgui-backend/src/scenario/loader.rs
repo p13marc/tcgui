@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use tcgui_shared::scenario::NetworkScenario;
+use tcgui_shared::scenario::{NetworkScenario, ScenarioError, ScenarioLoadError};
 use tcgui_shared::scenario_json::parse_scenario_file;
 
 /// Default system scenario directory (installed via package)
@@ -98,7 +98,17 @@ impl ScenarioLoader {
     /// Scenarios are loaded in directory order, with later directories
     /// overriding scenarios with the same ID from earlier directories.
     pub fn load_all(&self) -> Vec<NetworkScenario> {
+        self.load_all_with_errors().0
+    }
+
+    /// Load all scenarios from configured directories, also returning load errors.
+    ///
+    /// Returns a tuple of (successful scenarios, load errors).
+    /// Scenarios are loaded in directory order, with later directories
+    /// overriding scenarios with the same ID from earlier directories.
+    pub fn load_all_with_errors(&self) -> (Vec<NetworkScenario>, Vec<ScenarioLoadError>) {
         let mut scenarios: HashMap<String, NetworkScenario> = HashMap::new();
+        let mut errors: Vec<ScenarioLoadError> = Vec::new();
 
         for dir in &self.directories {
             if !dir.exists() {
@@ -106,8 +116,8 @@ impl ScenarioLoader {
                 continue;
             }
 
-            match self.load_from_directory(dir) {
-                Ok(loaded) => {
+            match self.load_from_directory_with_errors(dir) {
+                Ok((loaded, dir_errors)) => {
                     let count = loaded.len();
                     for scenario in loaded {
                         let id = scenario.id.clone();
@@ -119,6 +129,7 @@ impl ScenarioLoader {
                         }
                         scenarios.insert(id, scenario);
                     }
+                    errors.extend(dir_errors);
                     if count > 0 {
                         info!("Loaded {} scenarios from {:?}", count, dir);
                     }
@@ -129,12 +140,16 @@ impl ScenarioLoader {
             }
         }
 
-        scenarios.into_values().collect()
+        (scenarios.into_values().collect(), errors)
     }
 
-    /// Load scenarios from a single directory.
-    fn load_from_directory(&self, dir: &Path) -> Result<Vec<NetworkScenario>> {
+    /// Load scenarios from a single directory, returning both scenarios and errors.
+    fn load_from_directory_with_errors(
+        &self,
+        dir: &Path,
+    ) -> Result<(Vec<NetworkScenario>, Vec<ScenarioLoadError>)> {
         let mut scenarios = Vec::new();
+        let mut errors = Vec::new();
 
         let entries = std::fs::read_dir(dir)
             .with_context(|| format!("Failed to read directory: {:?}", dir))?;
@@ -155,12 +170,16 @@ impl ScenarioLoader {
                 }
                 Err(e) => {
                     warn!("Failed to load scenario from {:?}: {}", path, e);
-                    // Continue loading other files
+                    errors.push(ScenarioLoadError {
+                        file_path: path.display().to_string(),
+                        error: ScenarioError::validation(e.to_string())
+                            .with_suggestion("Check the JSON5 syntax and required fields"),
+                    });
                 }
             }
         }
 
-        Ok(scenarios)
+        Ok((scenarios, errors))
     }
 
     /// Load a single scenario file.

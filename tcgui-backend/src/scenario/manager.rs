@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tracing::{info, instrument};
 use zenoh::Session;
 
-use tcgui_shared::scenario::NetworkScenario;
+use tcgui_shared::scenario::{NetworkScenario, ScenarioLoadError};
 
 use super::{ScenarioExecutionEngine, ScenarioLoader, ScenarioZenohStorage};
 use crate::tc_commands::TcCommandManager;
@@ -24,6 +24,8 @@ pub struct ScenarioManager {
     loader: ScenarioLoader,
     /// Cached templates loaded from files
     cached_templates: Vec<NetworkScenario>,
+    /// Cached load errors from last template load
+    cached_load_errors: Vec<ScenarioLoadError>,
     /// Backend name for identification
     backend_name: String,
 }
@@ -75,10 +77,11 @@ impl ScenarioManager {
         loader.add_directories(extra_dirs);
 
         // Load templates from files
-        let cached_templates = loader.load_all();
+        let (cached_templates, cached_load_errors) = loader.load_all_with_errors();
         info!(
-            "Loaded {} scenario templates from files",
-            cached_templates.len()
+            "Loaded {} scenario templates from files ({} errors)",
+            cached_templates.len(),
+            cached_load_errors.len()
         );
 
         Self {
@@ -86,16 +89,20 @@ impl ScenarioManager {
             execution_engine,
             loader,
             cached_templates,
+            cached_load_errors,
             backend_name,
         }
     }
 
     /// Reload templates from disk
     pub fn reload_templates(&mut self) {
-        self.cached_templates = self.loader.load_all();
+        let (templates, errors) = self.loader.load_all_with_errors();
+        self.cached_templates = templates;
+        self.cached_load_errors = errors;
         info!(
-            "Reloaded {} scenario templates from files",
-            self.cached_templates.len()
+            "Reloaded {} scenario templates from files ({} errors)",
+            self.cached_templates.len(),
+            self.cached_load_errors.len()
         );
     }
 
@@ -111,6 +118,15 @@ impl ScenarioManager {
         let mut scenarios = self.storage.list_scenarios().await?;
         scenarios.extend(self.cached_templates.clone());
         Ok(scenarios)
+    }
+
+    /// List all scenarios with any load errors that occurred
+    pub async fn list_all_scenarios_with_errors(
+        &self,
+    ) -> Result<(Vec<NetworkScenario>, Vec<ScenarioLoadError>)> {
+        let mut scenarios = self.storage.list_scenarios().await?;
+        scenarios.extend(self.cached_templates.clone());
+        Ok((scenarios, self.cached_load_errors.clone()))
     }
 
     /// Get a specific scenario by ID

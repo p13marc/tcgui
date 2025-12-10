@@ -3,7 +3,7 @@
 //! This module provides UI components for displaying and managing scenarios,
 //! including scenario lists, details view, and execution controls.
 
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, space, text, text_input, Column};
 use iced::{Color, Element, Length};
 
 use tcgui_shared::scenario::{ExecutionState, NetworkScenario, ScenarioExecution};
@@ -269,6 +269,58 @@ fn render_backend_scenarios<'a>(
             ]
             .spacing(8),
         );
+    }
+
+    // Show load errors if any
+    if let Some(load_errors) = scenario_manager.get_load_errors(backend_name) {
+        if !load_errors.is_empty() {
+            let mut error_items: Column<'_, TcGuiMessage> = column![].spacing(4);
+            for load_error in load_errors {
+                error_items = error_items.push(
+                    container(
+                        column![
+                            text(format!("File: {}", load_error.file_path))
+                                .size(11)
+                                .style(move |_| text::Style {
+                                    color: Some(colors.text_primary),
+                                }),
+                            text(format!("  {}", load_error.error.message))
+                                .size(10)
+                                .style(move |_| text::Style {
+                                    color: Some(colors.error_red),
+                                }),
+                        ]
+                        .spacing(2),
+                    )
+                    .padding([4, 8])
+                    .style(move |_| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba(
+                            0.9, 0.2, 0.2, 0.05,
+                        ))),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..iced::Border::default()
+                        },
+                        ..container::Style::default()
+                    }),
+                );
+            }
+
+            backend_content = backend_content.push(
+                column![
+                    text(format!(
+                        "⚠️ Failed to load {} scenario files",
+                        load_errors.len()
+                    ))
+                    .size(14)
+                    .style(move |_| text::Style {
+                        color: Some(colors.warning_orange)
+                    }),
+                    error_items
+                ]
+                .spacing(6),
+            );
+        }
     }
 
     // Active executions section
@@ -689,26 +741,51 @@ fn render_execution_card<'a>(
 
     // Show error message if failed
     if let ExecutionState::Failed { error } = &execution.state {
-        card_content = card_content.push(
-            container(
-                text(format!("Error: {}", error))
-                    .size(11)
-                    .style(move |_| text::Style {
+        let mut error_content: Column<'_, TcGuiMessage> = column![text(format!(
+            "Error [{}]: {}",
+            error.category_str(),
+            error.message
+        ))
+        .size(11)
+        .style(move |_| text::Style {
+            color: Some(colors.error_red),
+        }),];
+
+        // Show step info if available
+        if let Some(step_idx) = error.step_index {
+            error_content =
+                error_content.push(text(format!("  At step {}", step_idx + 1)).size(10).style(
+                    move |_| text::Style {
                         color: Some(colors.error_red),
+                    },
+                ));
+        }
+
+        // Show suggestion if available
+        if let Some(suggestion) = &error.suggestion {
+            error_content = error_content.push(
+                text(format!("  Suggestion: {}", suggestion))
+                    .size(10)
+                    .style(move |_| text::Style {
+                        color: Some(colors.warning_orange),
                     }),
-            )
-            .padding([4, 8])
-            .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    0.9, 0.2, 0.2, 0.1,
-                ))),
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
-            }),
+            );
+        }
+
+        card_content = card_content.push(
+            container(error_content)
+                .padding([4, 8])
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba(
+                        0.9, 0.2, 0.2, 0.1,
+                    ))),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }),
         );
     }
 

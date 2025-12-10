@@ -9,8 +9,8 @@ use tracing::{debug, error, info, instrument, warn};
 use zenoh::{query::Query, Session};
 
 use tcgui_shared::scenario::{
-    ScenarioExecutionRequest, ScenarioExecutionResponse, ScenarioExecutionUpdate, ScenarioRequest,
-    ScenarioResponse,
+    ScenarioError, ScenarioExecutionRequest, ScenarioExecutionResponse, ScenarioExecutionUpdate,
+    ScenarioRequest, ScenarioResponse,
 };
 use tcgui_shared::topics;
 
@@ -95,7 +95,7 @@ impl ScenarioZenohHandlers {
             None => {
                 warn!("Received scenario query without payload");
                 let error_response = ScenarioResponse::Error {
-                    message: "Missing request payload".to_string(),
+                    error: ScenarioError::validation("Missing request payload"),
                 };
                 let response_payload = serde_json::to_vec(&error_response)?;
                 query
@@ -133,7 +133,10 @@ impl ScenarioZenohHandlers {
                     Err(e) => {
                         error!("Failed to add scenario: {}", e);
                         ScenarioResponse::Error {
-                            message: format!("Failed to add scenario: {}", e),
+                            error: ScenarioError::internal(format!(
+                                "Failed to add scenario: {}",
+                                e
+                            )),
                         }
                     }
                 }
@@ -145,22 +148,35 @@ impl ScenarioZenohHandlers {
                     Err(e) => {
                         error!("Failed to remove scenario: {}", e);
                         ScenarioResponse::Error {
-                            message: format!("Failed to remove scenario: {}", e),
+                            error: ScenarioError::internal(format!(
+                                "Failed to remove scenario: {}",
+                                e
+                            )),
                         }
                     }
                 }
             }
             ScenarioRequest::List => {
                 debug!("Listing all scenarios");
-                match scenario_manager.list_all_scenarios().await {
-                    Ok(scenarios) => {
-                        info!("Listed {} scenarios", scenarios.len());
-                        ScenarioResponse::Listed { scenarios }
+                match scenario_manager.list_all_scenarios_with_errors().await {
+                    Ok((scenarios, load_errors)) => {
+                        info!(
+                            "Listed {} scenarios ({} load errors)",
+                            scenarios.len(),
+                            load_errors.len()
+                        );
+                        ScenarioResponse::Listed {
+                            scenarios,
+                            load_errors,
+                        }
                     }
                     Err(e) => {
                         error!("Failed to list scenarios: {}", e);
                         ScenarioResponse::Error {
-                            message: format!("Failed to list scenarios: {}", e),
+                            error: ScenarioError::internal(format!(
+                                "Failed to list scenarios: {}",
+                                e
+                            )),
                         }
                     }
                 }
@@ -172,7 +188,10 @@ impl ScenarioZenohHandlers {
                     Err(e) => {
                         error!("Failed to get scenario: {}", e);
                         ScenarioResponse::Error {
-                            message: format!("Failed to get scenario: {}", e),
+                            error: ScenarioError::permanent(format!(
+                                "Failed to get scenario: {}",
+                                e
+                            )),
                         }
                     }
                 }
@@ -184,7 +203,10 @@ impl ScenarioZenohHandlers {
                     Err(e) => {
                         error!("Failed to update scenario: {}", e);
                         ScenarioResponse::Error {
-                            message: format!("Failed to update scenario: {}", e),
+                            error: ScenarioError::internal(format!(
+                                "Failed to update scenario: {}",
+                                e
+                            )),
                         }
                     }
                 }
@@ -272,7 +294,7 @@ impl ScenarioExecutionHandlers {
             None => {
                 warn!("Received execution query without payload");
                 let error_response = ScenarioExecutionResponse::Error {
-                    message: "Missing request payload".to_string(),
+                    error: ScenarioError::validation("Missing request payload"),
                 };
                 let response_payload = serde_json::to_vec(&error_response)?;
                 query
@@ -333,10 +355,21 @@ impl ScenarioExecutionHandlers {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to start scenario execution: {}", e);
-                        ScenarioExecutionResponse::Error {
-                            message: format!("Failed to start execution: {}", e),
-                        }
+                        let err_str = e.to_string();
+                        error!("Failed to start scenario execution: {}", err_str);
+                        // Categorize the error based on content
+                        let error = if err_str.contains("not found") {
+                            ScenarioError::permanent(format!("Scenario not found: {}", err_str))
+                        } else if err_str.contains("already running") {
+                            ScenarioError::permanent(err_str)
+                                .with_suggestion("Stop the existing execution first.")
+                        } else {
+                            ScenarioError::transient(format!(
+                                "Failed to start execution: {}",
+                                err_str
+                            ))
+                        };
+                        ScenarioExecutionResponse::Error { error }
                     }
                 }
             }
@@ -353,7 +386,10 @@ impl ScenarioExecutionHandlers {
                     Err(e) => {
                         error!("Failed to stop scenario execution: {}", e);
                         ScenarioExecutionResponse::Error {
-                            message: format!("Failed to stop execution: {}", e),
+                            error: ScenarioError::transient(format!(
+                                "Failed to stop execution: {}",
+                                e
+                            )),
                         }
                     }
                 }
@@ -371,7 +407,10 @@ impl ScenarioExecutionHandlers {
                     Err(e) => {
                         error!("Failed to pause scenario execution: {}", e);
                         ScenarioExecutionResponse::Error {
-                            message: format!("Failed to pause execution: {}", e),
+                            error: ScenarioError::transient(format!(
+                                "Failed to pause execution: {}",
+                                e
+                            )),
                         }
                     }
                 }
@@ -389,7 +428,10 @@ impl ScenarioExecutionHandlers {
                     Err(e) => {
                         error!("Failed to resume scenario execution: {}", e);
                         ScenarioExecutionResponse::Error {
-                            message: format!("Failed to resume execution: {}", e),
+                            error: ScenarioError::transient(format!(
+                                "Failed to resume execution: {}",
+                                e
+                            )),
                         }
                     }
                 }
