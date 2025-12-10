@@ -1,0 +1,98 @@
+// Fast Network Degradation Test
+// Rapid network quality changes for testing and demonstration
+// Shows quick progression through different network conditions
+{
+    id: "fast-degradation",
+    name: "Fast Network Degradation Test",
+    description: "Rapid network quality changes for testing and demonstration - shows quick progression through different network conditions",
+
+    metadata: {
+        tags: ["testing", "demo", "fast", "degradation"],
+        author: "TC GUI Built-in Templates",
+        version: "1.0",
+    },
+
+    steps: [
+        {
+            duration: "3s",
+            description: "Perfect connection - no network impairment",
+            tc_config: {},
+        },
+        {
+            duration: "3s",
+            description: "Light packet loss - 2% loss rate",
+            tc_config: {
+                loss: { percentage: 2 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "High latency - 100ms delay with 5% loss",
+            tc_config: {
+                loss: { percentage: 5 },
+                delay: { base_ms: 100 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Unstable connection - jitter and correlated loss",
+            tc_config: {
+                loss: { percentage: 8, correlation: 25 },
+                delay: { base_ms: 150, jitter_ms: 50 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Packet duplication - 3% duplicate rate",
+            tc_config: {
+                loss: { percentage: 12 },
+                delay: { base_ms: 200 },
+                duplicate: { percentage: 3 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Packet reordering - 5% reorder rate",
+            tc_config: {
+                loss: { percentage: 15 },
+                delay: { base_ms: 250 },
+                reorder: { percentage: 5, gap: 3 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Packet corruption - 2% corrupt rate",
+            tc_config: {
+                loss: { percentage: 20 },
+                delay: { base_ms: 300 },
+                corrupt: { percentage: 2 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Rate limiting - 1 Mbps bandwidth limit",
+            tc_config: {
+                loss: { percentage: 25 },
+                delay: { base_ms: 400 },
+                rate_limit: { rate_kbps: 1000 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Severe degradation - all impairments active",
+            tc_config: {
+                loss: { percentage: 30, correlation: 50 },
+                delay: { base_ms: 500, jitter_ms: 200, correlation: 25 },
+                duplicate: { percentage: 5 },
+                reorder: { percentage: 10, gap: 5 },
+                corrupt: { percentage: 3 },
+                rate_limit: { rate_kbps: 512 },
+            },
+        },
+        {
+            duration: "3s",
+            description: "Network recovery - back to normal conditions",
+            tc_config: {},
+        },
+    ],
+}

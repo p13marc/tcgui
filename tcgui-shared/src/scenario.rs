@@ -42,8 +42,6 @@ pub struct ScenarioMetadata {
     pub author: Option<String>,
     /// Scenario version for tracking updates
     pub version: String,
-    /// Whether this is a built-in template scenario
-    pub is_template: bool,
     /// Expected duration in milliseconds (calculated from steps)
     pub duration_ms: u64,
 }
@@ -51,33 +49,12 @@ pub struct ScenarioMetadata {
 /// Individual step in a network scenario
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioStep {
-    /// When to apply this step (milliseconds from scenario start)
-    pub timestamp_ms: u64,
-    /// How long to maintain these settings (None = until next step)
-    pub duration_ms: Option<u64>,
+    /// How long to maintain these settings (in milliseconds)
+    pub duration_ms: u64,
     /// TC netem configuration to apply at this step
     pub tc_config: TcNetemConfig,
     /// Human-readable description of this step
     pub description: String,
-    /// How to transition to these parameters from previous step
-    pub transition_type: TransitionType,
-}
-
-/// Method for transitioning between scenario steps
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TransitionType {
-    /// Apply configuration immediately (step change)
-    Immediate,
-    /// Gradually transition over specified duration with linear interpolation
-    Linear {
-        /// Duration for the transition in milliseconds
-        duration_ms: u64,
-    },
-    /// Exponential transition curve (fast initially, then slower)
-    Exponential {
-        /// Duration for the transition in milliseconds
-        duration_ms: u64,
-    },
 }
 
 /// Current execution state of a running scenario
@@ -148,8 +125,6 @@ pub enum ScenarioRequest {
     Get { id: ScenarioId },
     /// Update an existing scenario
     Update(NetworkScenario),
-    /// Get built-in scenario templates
-    GetTemplates,
 }
 
 /// Response to scenario management requests
@@ -165,8 +140,6 @@ pub enum ScenarioResponse {
     Retrieved { scenario: Option<NetworkScenario> },
     /// Scenario was successfully updated
     Updated { success: bool },
-    /// List of built-in scenario templates
-    Templates { templates: Vec<NetworkScenario> },
     /// Operation failed with error message
     Error { message: String },
 }
@@ -268,29 +241,14 @@ impl TcValidate for NetworkScenario {
                 })?;
         }
 
-        // Validate step timing (timestamps should be in ascending order)
-        for i in 1..self.steps.len() {
-            if self.steps[i].timestamp_ms <= self.steps[i - 1].timestamp_ms {
-                return Err(ScenarioValidationError::InvalidStepTiming {
-                    step_index: i,
-                    message: format!(
-                        "Step timestamp {}ms is not greater than previous step {}ms",
-                        self.steps[i].timestamp_ms,
-                        self.steps[i - 1].timestamp_ms
-                    ),
-                });
-            }
-        }
-
-        // Validate timestamps are reasonable (not too far in future)
+        // Validate total duration is reasonable (not too long)
         let max_duration_ms = 24 * 60 * 60 * 1000; // 24 hours
-        if let Some(last_step) = self.steps.last() {
-            if last_step.timestamp_ms > max_duration_ms {
-                return Err(ScenarioValidationError::InvalidDuration {
-                    duration_ms: last_step.timestamp_ms,
-                    max_duration_ms,
-                });
-            }
+        let total_duration: u64 = self.steps.iter().map(|s| s.duration_ms).sum();
+        if total_duration > max_duration_ms {
+            return Err(ScenarioValidationError::InvalidDuration {
+                duration_ms: total_duration,
+                max_duration_ms,
+            });
         }
 
         Ok(())
@@ -311,30 +269,9 @@ impl TcValidate for ScenarioStep {
             return Err(ScenarioStepValidationError::EmptyDescription);
         }
 
-        // Validate transition duration if specified
-        match &self.transition_type {
-            TransitionType::Linear { duration_ms }
-            | TransitionType::Exponential { duration_ms } => {
-                if *duration_ms == 0 {
-                    return Err(ScenarioStepValidationError::InvalidTransitionDuration(
-                        *duration_ms,
-                    ));
-                }
-                if *duration_ms > 5 * 60 * 1000 {
-                    // 5 minutes max transition
-                    return Err(ScenarioStepValidationError::InvalidTransitionDuration(
-                        *duration_ms,
-                    ));
-                }
-            }
-            TransitionType::Immediate => {} // No validation needed
-        }
-
-        // Validate duration if specified
-        if let Some(duration) = self.duration_ms {
-            if duration == 0 {
-                return Err(ScenarioStepValidationError::InvalidDuration(duration));
-            }
+        // Validate duration
+        if self.duration_ms == 0 {
+            return Err(ScenarioStepValidationError::InvalidDuration(0));
         }
 
         Ok(())
@@ -348,10 +285,6 @@ pub enum ScenarioValidationError {
     StepValidation {
         step_index: usize,
         error: ScenarioStepValidationError,
-    },
-    InvalidStepTiming {
-        step_index: usize,
-        message: String,
     },
     InvalidDuration {
         duration_ms: u64,
@@ -367,12 +300,6 @@ impl std::fmt::Display for ScenarioValidationError {
             }
             ScenarioValidationError::StepValidation { step_index, error } => {
                 write!(f, "Validation error in step {}: {}", step_index, error)
-            }
-            ScenarioValidationError::InvalidStepTiming {
-                step_index,
-                message,
-            } => {
-                write!(f, "Invalid timing for step {}: {}", step_index, message)
             }
             ScenarioValidationError::InvalidDuration {
                 duration_ms,
@@ -395,7 +322,6 @@ impl std::error::Error for ScenarioValidationError {}
 pub enum ScenarioStepValidationError {
     TcConfigError(TcValidationError),
     EmptyDescription,
-    InvalidTransitionDuration(u64),
     InvalidDuration(u64),
 }
 
@@ -407,13 +333,6 @@ impl std::fmt::Display for ScenarioStepValidationError {
             }
             ScenarioStepValidationError::EmptyDescription => {
                 write!(f, "Step description cannot be empty")
-            }
-            ScenarioStepValidationError::InvalidTransitionDuration(duration) => {
-                write!(
-                    f,
-                    "Invalid transition duration: {}ms (must be 1ms to 5 minutes)",
-                    duration
-                )
             }
             ScenarioStepValidationError::InvalidDuration(duration) => {
                 write!(
@@ -465,68 +384,23 @@ impl NetworkScenario {
 
     /// Calculate and update the total scenario duration
     pub fn recalculate_duration(&mut self) {
-        self.metadata.duration_ms = self.steps.last().map(|step| step.timestamp_ms).unwrap_or(0);
+        self.metadata.duration_ms = self.steps.iter().map(|step| step.duration_ms).sum();
     }
 
-    /// Get estimated total duration including step durations and transitions
+    /// Get estimated total duration (sum of all step durations)
     pub fn estimated_total_duration_ms(&self) -> u64 {
-        if self.steps.is_empty() {
-            return 0;
-        }
-
-        let mut total_duration = 0u64;
-
-        for step in &self.steps {
-            // Add the step timestamp (when it occurs)
-            total_duration = total_duration.max(step.timestamp_ms);
-
-            // Add step duration if specified
-            if let Some(duration) = step.duration_ms {
-                total_duration += duration;
-            }
-
-            // Add transition duration if applicable
-            match &step.transition_type {
-                TransitionType::Linear { duration_ms }
-                | TransitionType::Exponential { duration_ms } => {
-                    total_duration += duration_ms;
-                }
-                TransitionType::Immediate => {}
-            }
-        }
-
-        total_duration
+        self.steps.iter().map(|step| step.duration_ms).sum()
     }
 }
 
 impl ScenarioStep {
-    /// Create a new scenario step with immediate transition
-    pub fn new(timestamp_ms: u64, description: String, tc_config: TcNetemConfig) -> Self {
+    /// Create a new scenario step
+    pub fn new(duration_ms: u64, description: String, tc_config: TcNetemConfig) -> Self {
         Self {
-            timestamp_ms,
-            duration_ms: None,
+            duration_ms,
             tc_config,
             description,
-            transition_type: TransitionType::Immediate,
         }
-    }
-
-    /// Set linear transition with specified duration
-    pub fn with_linear_transition(mut self, duration_ms: u64) -> Self {
-        self.transition_type = TransitionType::Linear { duration_ms };
-        self
-    }
-
-    /// Set exponential transition with specified duration
-    pub fn with_exponential_transition(mut self, duration_ms: u64) -> Self {
-        self.transition_type = TransitionType::Exponential { duration_ms };
-        self
-    }
-
-    /// Set step duration
-    pub fn with_duration(mut self, duration_ms: u64) -> Self {
-        self.duration_ms = Some(duration_ms);
-        self
     }
 }
 
@@ -600,27 +474,10 @@ mod tests {
         tc_config.loss.enabled = true;
         tc_config.loss.percentage = 5.0;
 
-        let step = ScenarioStep::new(1000, "Initial step".to_string(), tc_config);
+        let step = ScenarioStep::new(30000, "Initial step".to_string(), tc_config);
 
-        assert_eq!(step.timestamp_ms, 1000);
+        assert_eq!(step.duration_ms, 30000);
         assert_eq!(step.description, "Initial step");
-        assert!(matches!(step.transition_type, TransitionType::Immediate));
-        assert!(step.duration_ms.is_none());
-    }
-
-    #[test]
-    fn test_scenario_step_with_transitions() {
-        let tc_config = TcNetemConfig::new();
-
-        let step = ScenarioStep::new(1000, "Test step".to_string(), tc_config)
-            .with_linear_transition(5000)
-            .with_duration(10000);
-
-        assert!(matches!(
-            step.transition_type,
-            TransitionType::Linear { duration_ms: 5000 }
-        ));
-        assert_eq!(step.duration_ms, Some(10000));
     }
 
     #[test]
@@ -660,31 +517,6 @@ mod tests {
     }
 
     #[test]
-    fn test_scenario_validation_step_timing() {
-        let mut scenario = NetworkScenario::new(
-            "test".to_string(),
-            "Test".to_string(),
-            "Description".to_string(),
-        );
-
-        // Add steps with invalid timing (not ascending)
-        let tc_config = TcNetemConfig::new();
-        scenario.add_step(ScenarioStep::new(
-            2000,
-            "Step 2".to_string(),
-            tc_config.clone(),
-        ));
-        scenario.add_step(ScenarioStep::new(1000, "Step 1".to_string(), tc_config));
-
-        let result = scenario.validate();
-        assert!(result.is_err());
-
-        if let Err(ScenarioValidationError::InvalidStepTiming { step_index, .. }) = result {
-            assert_eq!(step_index, 1);
-        }
-    }
-
-    #[test]
     fn test_scenario_step_validation() {
         let mut tc_config = TcNetemConfig::new();
         tc_config.loss.enabled = true;
@@ -712,17 +544,17 @@ mod tests {
     }
 
     #[test]
-    fn test_scenario_step_validation_transition_duration() {
+    fn test_scenario_step_validation_zero_duration() {
         let tc_config = TcNetemConfig::new();
-        let step = ScenarioStep::new(1000, "Test".to_string(), tc_config).with_linear_transition(0); // Invalid 0 duration
+        let step = ScenarioStep::new(0, "Zero duration".to_string(), tc_config);
 
         let result = step.validate();
         assert!(result.is_err());
 
-        if let Err(ScenarioStepValidationError::InvalidTransitionDuration(0)) = result {
+        if let Err(ScenarioStepValidationError::InvalidDuration(0)) = result {
             // Expected error
         } else {
-            panic!("Expected InvalidTransitionDuration error");
+            panic!("Expected InvalidDuration error");
         }
     }
 
@@ -736,45 +568,20 @@ mod tests {
 
         let tc_config = TcNetemConfig::new();
         scenario.add_step(ScenarioStep::new(
-            1000,
+            10000,
             "Step 1".to_string(),
             tc_config.clone(),
         ));
         scenario.add_step(ScenarioStep::new(
-            5000,
+            20000,
             "Step 2".to_string(),
             tc_config.clone(),
         ));
-        scenario.add_step(ScenarioStep::new(10000, "Step 3".to_string(), tc_config));
+        scenario.add_step(ScenarioStep::new(30000, "Step 3".to_string(), tc_config));
 
-        assert_eq!(scenario.metadata.duration_ms, 10000);
-        assert_eq!(scenario.estimated_total_duration_ms(), 10000);
-    }
-
-    #[test]
-    fn test_scenario_duration_with_transitions_and_durations() {
-        let mut scenario = NetworkScenario::new(
-            "test".to_string(),
-            "Test".to_string(),
-            "Description".to_string(),
-        );
-
-        let tc_config = TcNetemConfig::new();
-
-        // Step at 1000ms with 2000ms duration and 500ms transition
-        let step1 = ScenarioStep::new(1000, "Step 1".to_string(), tc_config.clone())
-            .with_duration(2000)
-            .with_linear_transition(500);
-
-        // Step at 5000ms with 1000ms transition
-        let step2 = ScenarioStep::new(5000, "Step 2".to_string(), tc_config)
-            .with_exponential_transition(1000);
-
-        scenario.add_step(step1);
-        scenario.add_step(step2);
-
-        // Total should be max of: (1000 + 2000 + 500) and (5000 + 1000) = max(3500, 6000) = 6000
-        assert_eq!(scenario.estimated_total_duration_ms(), 6000);
+        // Total duration is sum of all step durations: 10000 + 20000 + 30000 = 60000
+        assert_eq!(scenario.metadata.duration_ms, 60000);
+        assert_eq!(scenario.estimated_total_duration_ms(), 60000);
     }
 
     #[test]

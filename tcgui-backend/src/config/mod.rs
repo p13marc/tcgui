@@ -76,6 +76,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();

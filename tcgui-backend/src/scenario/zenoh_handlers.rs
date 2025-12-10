@@ -189,18 +189,6 @@ impl ScenarioZenohHandlers {
                     }
                 }
             }
-            ScenarioRequest::GetTemplates => {
-                debug!("Getting scenario templates");
-                let templates: Vec<_> = scenario_manager
-                    .list_all_scenarios()
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|s| s.metadata.is_template)
-                    .collect();
-                info!("Listed {} templates", templates.len());
-                ScenarioResponse::Templates { templates }
-            }
         }
     }
 }

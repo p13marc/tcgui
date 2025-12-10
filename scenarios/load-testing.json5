@@ -1,0 +1,57 @@
+// Load Testing Conditions
+// Reproducible network conditions for application load testing scenarios
+{
+    id: "load-testing",
+    name: "Load Testing Conditions",
+    description: "Reproducible network conditions for application load testing scenarios",
+
+    metadata: {
+        tags: ["load-testing", "reproducible", "testing"],
+        author: "TC GUI Built-in Templates",
+        version: "1.0",
+    },
+
+    steps: [
+        {
+            duration: "1m",
+            description: "Baseline conditions - establish normal operation",
+            tc_config: {
+                delay: { base_ms: 50 },
+            },
+        },
+        {
+            duration: "1m",
+            description: "Light load conditions",
+            tc_config: {
+                loss: { percentage: 0.5 },
+                delay: { base_ms: 75, jitter_ms: 15 },
+            },
+        },
+        {
+            duration: "1m",
+            description: "Medium load conditions",
+            tc_config: {
+                loss: { percentage: 2 },
+                delay: { base_ms: 120, jitter_ms: 40 },
+                duplicate: { percentage: 0.8 },
+            },
+        },
+        {
+            duration: "1m",
+            description: "Heavy load conditions",
+            tc_config: {
+                loss: { percentage: 5, correlation: 20 },
+                delay: { base_ms: 200, jitter_ms: 80 },
+                duplicate: { percentage: 1.5 },
+                rate_limit: { rate_kbps: 2000 },
+            },
+        },
+        {
+            duration: "1m",
+            description: "Recovery to baseline conditions",
+            tc_config: {
+                delay: { base_ms: 50 },
+            },
+        },
+    ],
+}

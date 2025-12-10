@@ -16,10 +16,8 @@ use crate::messages::{ScenarioExecutionQueryMessage, ScenarioQueryMessage};
 /// Manages scenario state and operations for the frontend
 #[derive(Clone, Default)]
 pub struct ScenarioManager {
-    /// Available scenarios from backend (user + templates)
+    /// Available scenarios from backend
     available_scenarios: HashMap<String, Vec<NetworkScenario>>, // backend_name -> scenarios
-    /// Template scenarios specifically
-    template_scenarios: HashMap<String, Vec<NetworkScenario>>, // backend_name -> templates
     /// Currently active scenario executions
     active_executions: HashMap<String, HashMap<String, ScenarioExecution>>, // backend -> (namespace/interface -> execution)
     /// Currently selected scenario for details view
@@ -58,14 +56,6 @@ impl ScenarioManager {
     /// Get all available scenarios for a backend
     pub fn get_available_scenarios(&self, backend_name: &str) -> Vec<NetworkScenario> {
         self.available_scenarios
-            .get(backend_name)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// Get template scenarios for a backend
-    pub fn get_template_scenarios(&self, backend_name: &str) -> Vec<NetworkScenario> {
-        self.template_scenarios
             .get(backend_name)
             .cloned()
             .unwrap_or_default()
@@ -145,29 +135,6 @@ impl ScenarioManager {
             }
 
             info!("Requested scenarios from backend: {}", backend_name);
-            Ok(())
-        } else {
-            warn!("Scenario query channel not available");
-            Err("Scenario query channel not available".to_string())
-        }
-    }
-
-    /// Request template scenarios from backend
-    pub fn request_templates(&self, backend_name: &str) -> Result<(), String> {
-        if let Some(sender) = &self.scenario_query_sender {
-            let request = ScenarioRequest::GetTemplates;
-            let message = ScenarioQueryMessage {
-                backend_name: backend_name.to_string(),
-                request,
-                response_sender: None,
-            };
-
-            if let Err(e) = sender.send(message) {
-                error!("Failed to send template request: {}", e);
-                return Err(format!("Failed to request templates: {}", e));
-            }
-
-            info!("Requested templates from backend: {}", backend_name);
             Ok(())
         } else {
             warn!("Scenario query channel not available");
@@ -322,20 +289,6 @@ impl ScenarioManager {
         self.available_scenarios.insert(backend_name, scenarios);
     }
 
-    /// Handle template scenarios response
-    pub fn handle_templates_response(
-        &mut self,
-        backend_name: String,
-        templates: Vec<NetworkScenario>,
-    ) {
-        info!(
-            "Received {} template scenarios from backend: {}",
-            templates.len(),
-            backend_name
-        );
-        self.template_scenarios.insert(backend_name, templates);
-    }
-
     /// Handle execution status update
     pub fn handle_execution_update(
         &mut self,
@@ -372,7 +325,6 @@ impl ScenarioManager {
     pub fn cleanup_backend_state(&mut self, backend_name: &str) {
         info!("Cleaning up scenario state for backend: {}", backend_name);
         self.available_scenarios.remove(backend_name);
-        self.template_scenarios.remove(backend_name);
         self.active_executions.remove(backend_name);
     }
 
@@ -380,7 +332,6 @@ impl ScenarioManager {
     #[allow(dead_code)]
     pub fn get_stats(&self) -> ScenarioManagerStats {
         let total_scenarios: usize = self.available_scenarios.values().map(|v| v.len()).sum();
-        let total_templates: usize = self.template_scenarios.values().map(|v| v.len()).sum();
         let total_executions: usize = self
             .active_executions
             .values()
@@ -390,7 +341,6 @@ impl ScenarioManager {
         ScenarioManagerStats {
             backend_count: self.available_scenarios.len(),
             total_scenarios,
-            total_templates,
             total_executions,
             details_visible: self.show_scenario_details,
         }
@@ -403,7 +353,6 @@ impl ScenarioManager {
 pub struct ScenarioManagerStats {
     pub backend_count: usize,
     pub total_scenarios: usize,
-    pub total_templates: usize,
     pub total_executions: usize,
     pub details_visible: bool,
 }
@@ -412,10 +361,9 @@ impl std::fmt::Display for ScenarioManagerStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Scenario Stats: {} backends, {} scenarios, {} templates, {} active executions{}",
+            "Scenario Stats: {} backends, {} scenarios, {} active executions{}",
             self.backend_count,
             self.total_scenarios,
-            self.total_templates,
             self.total_executions,
             if self.details_visible {
                 " (details visible)"

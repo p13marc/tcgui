@@ -177,6 +177,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -194,6 +195,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -210,6 +212,7 @@ mod tests {
             zenoh_connect: Some("tcp/192.168.1.1:7447,udp/192.168.1.2:7447".to_string()),
             zenoh_listen: Some("tcp/0.0.0.0:7447".to_string()),
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -226,6 +229,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -242,6 +246,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: true,
+            scenario_dirs: vec![],
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();

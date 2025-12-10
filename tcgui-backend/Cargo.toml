@@ -47,6 +47,9 @@ thiserror = "1.0"
 # CLI
 clap = { workspace = true }
 
+# Filesystem utilities
+dirs = "5"
+
 # Regex for pattern matching
 regex = { workspace = true }
 
@@ -69,6 +72,7 @@ assets = [
     ["../packaging/systemd/tcgui-backend.service", "etc/systemd/system/", "644"],
     ["../packaging/sudoers/tcgui-backend", "etc/sudoers.d/", "440"],
     ["../README.md", "usr/share/doc/tcgui-backend/", "644"],
+    ["../scenarios/*.json5", "usr/share/tcgui/scenarios/", "644"],
 ]
 conf-files = [
     "/etc/systemd/system/tcgui-backend.service",
@@ -100,4 +104,34 @@ config = true
 [[package.metadata.generate-rpm.assets]]
 source = "../README.md"
 dest = "/usr/share/doc/tcgui-backend/README.md"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../scenarios/mobile-degradation.json5"
+dest = "/usr/share/tcgui/scenarios/mobile-degradation.json5"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../scenarios/network-congestion.json5"
+dest = "/usr/share/tcgui/scenarios/network-congestion.json5"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../scenarios/intermittent-connectivity.json5"
+dest = "/usr/share/tcgui/scenarios/intermittent-connectivity.json5"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../scenarios/quality-degradation.json5"
+dest = "/usr/share/tcgui/scenarios/quality-degradation.json5"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../scenarios/load-testing.json5"
+dest = "/usr/share/tcgui/scenarios/load-testing.json5"
+mode = "644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "../scenarios/fast-degradation.json5"
+dest = "/usr/share/tcgui/scenarios/fast-degradation.json5"
 mode = "644"

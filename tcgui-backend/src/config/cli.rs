@@ -17,6 +17,7 @@ pub struct CliConfig {
     pub zenoh_connect: Option<String>,
     pub zenoh_listen: Option<String>,
     pub no_multicast: bool,
+    pub scenario_dirs: Vec<String>,
 }
 
 impl CliConfig {
@@ -45,6 +46,11 @@ impl CliConfig {
         let zenoh_connect = matches.get_one::<String>("zenoh-connect").cloned();
         let zenoh_listen = matches.get_one::<String>("zenoh-listen").cloned();
 
+        let scenario_dirs: Vec<String> = matches
+            .get_many::<String>("scenario-dir")
+            .map(|vals| vals.cloned().collect())
+            .unwrap_or_default();
+
         Ok(Self {
             verbose,
             exclude_loopback,
@@ -53,6 +59,7 @@ impl CliConfig {
             zenoh_connect,
             zenoh_listen,
             no_multicast,
+            scenario_dirs,
         })
     }
 
@@ -131,6 +138,17 @@ impl CliConfig {
                               When disabled, you must explicitly specify connect endpoints. \
                               Useful in environments where multicast is not available or desired."),
             )
+            .arg(
+                Arg::new("scenario-dir")
+                    .long("scenario-dir")
+                    .value_name("DIRECTORY")
+                    .action(clap::ArgAction::Append)
+                    .help("Additional directory to load scenario files from")
+                    .long_help("Additional directory to scan for .json5 scenario files. \
+                              Can be specified multiple times. Directories are scanned in order \
+                              with later ones taking priority (can override scenarios with same ID). \
+                              Default directories: /usr/share/tcgui/scenarios, ~/.config/tcgui/scenarios, ./scenarios"),
+            )
     }
 
     /// Validate CLI configuration
@@ -185,6 +203,7 @@ mod tests {
         assert_eq!(config.zenoh_mode, "peer");
         assert!(config.zenoh_connect.is_none());
         assert!(config.zenoh_listen.is_none());
+        assert!(config.scenario_dirs.is_empty());
     }
 
     #[test]
@@ -202,6 +221,10 @@ mod tests {
                 "tcp/192.168.1.1:7447,udp/192.168.1.2:7447",
                 "--zenoh-listen",
                 "tcp/0.0.0.0:7447",
+                "--scenario-dir",
+                "/custom/scenarios",
+                "--scenario-dir",
+                "/another/dir",
             ])
             .unwrap();
 
@@ -216,6 +239,10 @@ mod tests {
             Some("tcp/192.168.1.1:7447,udp/192.168.1.2:7447".to_string())
         );
         assert_eq!(config.zenoh_listen, Some("tcp/0.0.0.0:7447".to_string()));
+        assert_eq!(
+            config.scenario_dirs,
+            vec!["/custom/scenarios", "/another/dir"]
+        );
     }
 
     #[test]
@@ -228,6 +255,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         assert!(config.validate().is_ok());
@@ -243,6 +271,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         assert!(config.validate().is_err());
@@ -258,6 +287,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         assert!(config.validate().is_err());
@@ -273,6 +303,7 @@ mod tests {
             zenoh_connect: None,
             zenoh_listen: None,
             no_multicast: false,
+            scenario_dirs: vec![],
         };
 
         assert!(config.validate().is_err());

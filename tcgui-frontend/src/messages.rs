@@ -108,9 +108,6 @@ pub enum TcGuiMessage {
     ListScenarios {
         backend_name: String,
     },
-    GetScenarioTemplates {
-        backend_name: String,
-    },
     StopScenarioExecution {
         backend_name: String,
         namespace: String,

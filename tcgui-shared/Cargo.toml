@@ -8,6 +8,8 @@ description = "Shared types and utilities for tcgui frontend and backend"
 zenoh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+json5 = "0.4"
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 rtnetlink = { workspace = true }
+duration-string = "0.4"

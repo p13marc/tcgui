@@ -204,12 +204,8 @@ impl ScenarioZenohStorage {
             .map(|s| s.estimated_total_duration_ms())
             .sum();
 
-        let templates_count = scenarios.iter().filter(|s| s.metadata.is_template).count();
-
         Ok(ScenarioStorageStats {
             total_scenarios: count,
-            template_scenarios: templates_count,
-            user_scenarios: count - templates_count,
             total_steps,
             average_steps_per_scenario: avg_steps,
             total_duration_ms,
@@ -227,10 +223,6 @@ impl ScenarioZenohStorage {
 pub struct ScenarioStorageStats {
     /// Total number of scenarios in storage
     pub total_scenarios: usize,
-    /// Number of built-in template scenarios
-    pub template_scenarios: usize,
-    /// Number of user-created scenarios
-    pub user_scenarios: usize,
     /// Total number of steps across all scenarios
     pub total_steps: usize,
     /// Average number of steps per scenario

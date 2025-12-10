@@ -225,12 +225,6 @@ impl TcGui {
                 }
                 Task::none()
             }
-            TcGuiMessage::GetScenarioTemplates { backend_name } => {
-                if let Err(e) = self.scenario_manager.request_templates(&backend_name) {
-                    tracing::error!("Failed to request templates: {}", e);
-                }
-                Task::none()
-            }
             TcGuiMessage::StopScenarioExecution {
                 backend_name,
                 namespace,
@@ -341,10 +335,6 @@ impl TcGui {
                         self.scenario_manager
                             .handle_scenario_list_response(backend_name, scenarios);
                     }
-                    ScenarioResponse::Templates { templates } => {
-                        self.scenario_manager
-                            .handle_templates_response(backend_name, templates);
-                    }
                     ScenarioResponse::Error { message } => {
                         tracing::error!("Scenario query error from {}: {}", backend_name, message);
                     }
@@ -405,10 +395,10 @@ impl TcGui {
                             );
                         }
 
-                        // Request templates
-                        if let Err(e) = self.scenario_manager.request_templates(backend_name) {
+                        // Request scenarios
+                        if let Err(e) = self.scenario_manager.request_scenarios(backend_name) {
                             tracing::warn!(
-                                "Failed to auto-refresh templates from {}: {}",
+                                "Failed to auto-refresh scenarios from {}: {}",
                                 backend_name,
                                 e
                             );

@@ -48,6 +48,7 @@ use zenoh::key_expr::{
 pub mod errors;
 pub mod presets;
 pub mod scenario;
+pub mod scenario_json;
 
 /// Topic key expressions for the new communication architecture
 pub mod topics {

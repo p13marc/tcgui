@@ -1,0 +1,48 @@
+// Mobile Device Distance Simulation
+// Simulates mobile device moving away from base station with progressive signal degradation
+{
+    id: "mobile-degradation",
+    name: "Mobile Device Distance Simulation",
+    description: "Simulate mobile device moving away from base station with progressive signal degradation",
+
+    metadata: {
+        tags: ["mobile", "wireless", "degradation"],
+        author: "TC GUI Built-in Templates",
+        version: "1.0",
+    },
+
+    steps: [
+        {
+            duration: "30s",
+            description: "Close to base station - excellent signal quality",
+            tc_config: {
+                delay: { base_ms: 5 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Moving away - signal degradation begins",
+            tc_config: {
+                loss: { percentage: 1 },
+                delay: { base_ms: 20 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Far from base station - poor signal with high latency",
+            tc_config: {
+                loss: { percentage: 15, correlation: 25 },
+                delay: { base_ms: 100, jitter_ms: 50 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Edge of coverage - very poor connection",
+            tc_config: {
+                loss: { percentage: 25, correlation: 30 },
+                delay: { base_ms: 200, jitter_ms: 100 },
+                duplicate: { percentage: 1 },
+            },
+        },
+    ],
+}

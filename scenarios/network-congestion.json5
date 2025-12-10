@@ -1,0 +1,51 @@
+// Network Congestion Simulation
+// Simulates daily network usage patterns with varying congestion levels
+{
+    id: "network-congestion",
+    name: "Network Congestion Simulation",
+    description: "Simulate daily network usage patterns with varying congestion levels",
+
+    metadata: {
+        tags: ["congestion", "bandwidth", "daily-pattern"],
+        author: "TC GUI Built-in Templates",
+        version: "1.0",
+    },
+
+    steps: [
+        {
+            duration: "1m",
+            description: "Off-peak hours - minimal network congestion",
+            tc_config: {
+                loss: { percentage: 0.1 },
+                delay: { base_ms: 10 },
+            },
+        },
+        {
+            duration: "1.5m",
+            description: "Morning peak - increased network congestion",
+            tc_config: {
+                loss: { percentage: 2 },
+                delay: { base_ms: 50, jitter_ms: 20 },
+                duplicate: { percentage: 0.5 },
+            },
+        },
+        {
+            duration: "1m",
+            description: "Peak congestion - maximum network load",
+            tc_config: {
+                loss: { percentage: 5, correlation: 15 },
+                delay: { base_ms: 150, jitter_ms: 75 },
+                duplicate: { percentage: 1.5 },
+                rate_limit: { rate_kbps: 1000 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Recovery period - congestion decreasing",
+            tc_config: {
+                loss: { percentage: 1 },
+                delay: { base_ms: 30, jitter_ms: 10 },
+            },
+        },
+    ],
+}

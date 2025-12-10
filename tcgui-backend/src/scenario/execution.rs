@@ -305,7 +305,6 @@ impl ScenarioExecutionEngine {
                 execution.scenario.id, execution.target_namespace, execution.target_interface
             );
 
-            let start_instant = Instant::now();
             let mut paused_duration = Duration::from_millis(0);
             let mut pause_start: Option<Instant> = None;
 
@@ -323,49 +322,13 @@ impl ScenarioExecutionEngine {
             for (step_index, step) in scenario_steps.iter().enumerate() {
                 execution.current_step = step_index;
 
-                // Send step start update
-                let _ = update_sender.send(ScenarioExecutionUpdate {
-                    namespace: execution.target_namespace.clone(),
-                    interface: execution.target_interface.clone(),
-                    execution: execution.clone(),
-                    backend_name: backend_name.clone(),
-                });
-
-                // Wait until it's time for this step
-                let target_time = Duration::from_millis(step.timestamp_ms);
-                let elapsed_time = start_instant.elapsed() - paused_duration;
-
-                if target_time > elapsed_time {
-                    let sleep_duration = target_time - elapsed_time;
-                    debug!(
-                        "Waiting {:?} for step {} (timestamp: {}ms)",
-                        sleep_duration, step_index, step.timestamp_ms
-                    );
-
-                    // Interruptible sleep that handles pause/resume/stop
-                    if (Self::interruptible_sleep(
-                        sleep_duration,
-                        &mut control_receiver,
-                        &mut execution,
-                        &mut pause_start,
-                        &mut paused_duration,
-                        &update_sender,
-                        &backend_name,
-                    )
-                    .await)
-                        .is_err()
-                    {
-                        // Execution was stopped
-                        return;
-                    }
-                }
-
                 // Apply TC configuration for this step
                 info!(
-                    "Executing step {} of scenario '{}': {}",
+                    "Executing step {} of scenario '{}': {} (duration: {}ms)",
                     step_index + 1,
                     execution.scenario.id,
-                    step.description
+                    step.description,
+                    step.duration_ms
                 );
 
                 let tc_request = TcRequest {
@@ -401,6 +364,38 @@ impl ScenarioExecutionEngine {
                     }
                 }
 
+                // Send step start update
+                let _ = update_sender.send(ScenarioExecutionUpdate {
+                    namespace: execution.target_namespace.clone(),
+                    interface: execution.target_interface.clone(),
+                    execution: execution.clone(),
+                    backend_name: backend_name.clone(),
+                });
+
+                // Wait for step duration
+                let step_duration = Duration::from_millis(step.duration_ms);
+                debug!(
+                    "Maintaining step {} configuration for {:?}",
+                    step_index + 1,
+                    step_duration
+                );
+
+                if (Self::interruptible_sleep(
+                    step_duration,
+                    &mut control_receiver,
+                    &mut execution,
+                    &mut pause_start,
+                    &mut paused_duration,
+                    &update_sender,
+                    &backend_name,
+                )
+                .await)
+                    .is_err()
+                {
+                    // Execution was stopped
+                    return;
+                }
+
                 execution.stats.steps_completed += 1;
                 execution.stats.progress_percent =
                     ((step_index + 1) as f32 / scenario_steps.len() as f32) * 100.0;
@@ -412,31 +407,6 @@ impl ScenarioExecutionEngine {
                     execution: execution.clone(),
                     backend_name: backend_name.clone(),
                 });
-
-                // Handle step duration if specified
-                if let Some(duration_ms) = step.duration_ms {
-                    let step_duration = Duration::from_millis(duration_ms);
-                    debug!(
-                        "Maintaining step {} configuration for {:?}",
-                        step_index + 1,
-                        step_duration
-                    );
-
-                    if (Self::interruptible_sleep(
-                        step_duration,
-                        &mut control_receiver,
-                        &mut execution,
-                        &mut pause_start,
-                        &mut paused_duration,
-                        &update_sender,
-                        &backend_name,
-                    )
-                    .await)
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
 
                 // Check for stop/pause messages during execution
                 while let Ok(control_msg) = control_receiver.try_recv() {
@@ -650,14 +620,14 @@ mod tests {
         tc_config.loss.percentage = 5.0;
 
         scenario.add_step(ScenarioStep::new(
-            1000,
+            5000, // 5 seconds duration
             "Step 1: Apply 5% packet loss".to_string(),
             tc_config.clone(),
         ));
 
         tc_config.loss.percentage = 10.0;
         scenario.add_step(ScenarioStep::new(
-            3000,
+            10000, // 10 seconds duration
             "Step 2: Increase to 10% packet loss".to_string(),
             tc_config,
         ));
@@ -678,8 +648,8 @@ mod tests {
     fn test_scenario_duration_calculation() {
         let scenario = create_test_scenario();
 
-        // Scenario has steps at 1000ms and 3000ms
-        assert_eq!(scenario.estimated_total_duration_ms(), 3000);
+        // Scenario has steps with 5000ms + 10000ms = 15000ms total
+        assert_eq!(scenario.estimated_total_duration_ms(), 15000);
     }
 
     #[test]

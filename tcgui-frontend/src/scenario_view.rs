@@ -12,6 +12,29 @@ use crate::backend_manager::BackendManager;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::ScenarioManager;
 
+/// Format a duration in milliseconds to a human-readable string
+fn format_duration(duration_ms: u64) -> String {
+    if duration_ms >= 60000 {
+        let minutes = duration_ms / 60000;
+        let seconds = (duration_ms % 60000) / 1000;
+        if seconds > 0 {
+            format!("{}m {}s", minutes, seconds)
+        } else {
+            format!("{}m", minutes)
+        }
+    } else if duration_ms >= 1000 {
+        let seconds = duration_ms / 1000;
+        let ms = duration_ms % 1000;
+        if ms > 0 {
+            format!("{}.{}s", seconds, ms / 100)
+        } else {
+            format!("{}s", seconds)
+        }
+    } else {
+        format!("{}ms", duration_ms)
+    }
+}
+
 /// Color palette for scenario UI styling
 #[derive(Clone)]
 pub struct ScenarioColorPalette {
@@ -162,11 +185,6 @@ fn render_backend_scenarios<'a>(
                 .on_press(TcGuiMessage::ListScenarios {
                     backend_name: backend_name.to_string()
                 })
-                .style(button::secondary),
-            button(text("📋 Get Templates").size(12))
-                .on_press(TcGuiMessage::GetScenarioTemplates {
-                    backend_name: backend_name.to_string()
-                })
                 .style(button::secondary)
         ]
         .spacing(8)
@@ -178,28 +196,10 @@ fn render_backend_scenarios<'a>(
     if !available_scenarios.is_empty() {
         backend_content = backend_content.push(
             column![
-                text("Available Scenarios")
-                    .size(16)
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_primary)
-                    }),
-                render_scenario_list(&available_scenarios, backend_name, colors.clone(), false)
-            ]
-            .spacing(8),
-        );
-    }
-
-    // Template scenarios section
-    let template_scenarios = scenario_manager.get_template_scenarios(backend_name);
-    if !template_scenarios.is_empty() {
-        backend_content = backend_content.push(
-            column![
-                text("📚 Template Scenarios")
-                    .size(16)
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_primary)
-                    }),
-                render_scenario_list(&template_scenarios, backend_name, colors.clone(), true)
+                text("📋 Scenarios").size(16).style(move |_| text::Style {
+                    color: Some(colors.text_primary)
+                }),
+                render_scenario_list(&available_scenarios, backend_name, colors.clone())
             ]
             .spacing(8),
         );
@@ -222,10 +222,10 @@ fn render_backend_scenarios<'a>(
     }
 
     // If no scenarios available, show loading message
-    if available_scenarios.is_empty() && template_scenarios.is_empty() {
+    if available_scenarios.is_empty() {
         backend_content = backend_content.push(
             container(
-                text("Click 'Refresh Scenarios' or 'Get Templates' to load scenarios")
+                text("Click 'Refresh Scenarios' to load scenarios")
                     .size(14)
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary),
@@ -263,17 +263,12 @@ fn render_scenario_list<'a>(
     scenarios: &[NetworkScenario],
     backend_name: &str,
     colors: ScenarioColorPalette,
-    is_template: bool,
 ) -> Element<'a, TcGuiMessage> {
     let mut list_content = column![];
 
     for scenario in scenarios {
-        list_content = list_content.push(render_scenario_card(
-            scenario,
-            backend_name,
-            colors.clone(),
-            is_template,
-        ));
+        list_content =
+            list_content.push(render_scenario_card(scenario, backend_name, colors.clone()));
     }
 
     list_content.spacing(8).into()
@@ -284,15 +279,11 @@ fn render_scenario_card<'a>(
     scenario: &NetworkScenario,
     backend_name: &str,
     colors: ScenarioColorPalette,
-    is_template: bool,
 ) -> Element<'a, TcGuiMessage> {
-    let icon = if is_template { "📋" } else { "🎯" };
-    let type_label = if is_template { "Template" } else { "Scenario" };
-
     container(
         column![
             row![
-                text(format!("{} {}", icon, scenario.name))
+                text(format!("📋 {}", scenario.name))
                     .size(16)
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary)
@@ -340,14 +331,6 @@ fn render_scenario_card<'a>(
                 .size(12)
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary)
-                }),
-                space().width(Length::Fill),
-                text(type_label).size(11).style(move |_| text::Style {
-                    color: Some(if is_template {
-                        colors.primary_blue
-                    } else {
-                        colors.success_green
-                    })
                 })
             ]
             .spacing(4)
@@ -608,11 +591,7 @@ fn render_scenario_details<'a>(
         }));
 
         for (i, step) in scenario.steps.iter().enumerate() {
-            let timing_info = if let Some(duration) = step.duration_ms {
-                format!("{}ms + {}ms hold", step.timestamp_ms, duration)
-            } else {
-                format!("{}ms", step.timestamp_ms)
-            };
+            let timing_info = format_duration(step.duration_ms);
 
             steps_content = steps_content.push(
                 container(
@@ -623,11 +602,6 @@ fn render_scenario_details<'a>(
                                 color: Some(colors.text_primary)
                             }),
                         text(format!("Timing: {}", timing_info))
-                            .size(12)
-                            .style(move |_| text::Style {
-                                color: Some(colors.text_secondary)
-                            }),
-                        text(format!("Transition: {:?}", step.transition_type))
                             .size(12)
                             .style(move |_| text::Style {
                                 color: Some(colors.text_secondary)

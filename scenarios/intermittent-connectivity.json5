@@ -1,0 +1,63 @@
+// Intermittent Connectivity Simulation
+// Simulates unstable connection with sporadic drops and recoveries
+{
+    id: "intermittent-connectivity",
+    name: "Intermittent Connectivity Simulation",
+    description: "Simulate unstable connection with sporadic drops and recoveries",
+
+    metadata: {
+        tags: ["intermittent", "unstable", "drops"],
+        author: "TC GUI Built-in Templates",
+        version: "1.0",
+    },
+
+    steps: [
+        {
+            duration: "20s",
+            description: "Normal operation - stable connection",
+            tc_config: {
+                delay: { base_ms: 15 },
+            },
+        },
+        {
+            duration: "15s",
+            description: "First connectivity issue - high packet loss",
+            tc_config: {
+                loss: { percentage: 30 },
+                delay: { base_ms: 500, jitter_ms: 200 },
+            },
+        },
+        {
+            duration: "25s",
+            description: "Brief recovery - connection stabilizing",
+            tc_config: {
+                loss: { percentage: 2 },
+                delay: { base_ms: 50 },
+            },
+        },
+        {
+            duration: "20s",
+            description: "Severe connectivity drop - major packet loss",
+            tc_config: {
+                loss: { percentage: 60, correlation: 40 },
+                delay: { base_ms: 1000, jitter_ms: 500 },
+                duplicate: { percentage: 5 },
+            },
+        },
+        {
+            duration: "40s",
+            description: "Gradual recovery - connection improving",
+            tc_config: {
+                loss: { percentage: 5 },
+                delay: { base_ms: 80, jitter_ms: 30 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Stable connection restored",
+            tc_config: {
+                delay: { base_ms: 20 },
+            },
+        },
+    ],
+}

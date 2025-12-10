@@ -1,16 +1,17 @@
 //! Scenario Manager - High-level interface for scenario operations.
 //!
 //! This module provides the main ScenarioManager that coordinates between
-//! storage, execution engine, and built-in templates.
+//! storage, execution engine, and file-based scenario loading.
 
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, instrument};
 use zenoh::Session;
 
 use tcgui_shared::scenario::NetworkScenario;
 
-use super::{BuiltinScenarioTemplates, ScenarioExecutionEngine, ScenarioZenohStorage};
+use super::{ScenarioExecutionEngine, ScenarioLoader, ScenarioZenohStorage};
 use crate::tc_commands::TcCommandManager;
 
 /// High-level scenario manager that coordinates all scenario operations
@@ -19,16 +20,29 @@ pub struct ScenarioManager {
     storage: ScenarioZenohStorage,
     /// Execution engine for running scenarios
     execution_engine: ScenarioExecutionEngine,
-    /// Built-in scenario templates
-    templates: BuiltinScenarioTemplates,
+    /// File-based scenario loader
+    loader: ScenarioLoader,
+    /// Cached templates loaded from files
+    cached_templates: Vec<NetworkScenario>,
     /// Backend name for identification
     backend_name: String,
 }
 
 impl ScenarioManager {
-    /// Create a new scenario manager
+    /// Create a new scenario manager with default scenario directories
     #[instrument(skip(session, tc_manager))]
     pub fn new(session: Arc<Session>, backend_name: String, tc_manager: TcCommandManager) -> Self {
+        Self::with_scenario_dirs(session, backend_name, tc_manager, vec![])
+    }
+
+    /// Create a new scenario manager with additional scenario directories
+    #[instrument(skip(session, tc_manager, extra_dirs))]
+    pub fn with_scenario_dirs(
+        session: Arc<Session>,
+        backend_name: String,
+        tc_manager: TcCommandManager,
+        extra_dirs: Vec<PathBuf>,
+    ) -> Self {
         info!("Initializing ScenarioManager for backend: {}", backend_name);
 
         let storage_prefix = format!("tcgui/storage/{}/scenarios", backend_name);
@@ -37,14 +51,33 @@ impl ScenarioManager {
         let execution_engine =
             ScenarioExecutionEngine::new(session.clone(), backend_name.clone(), tc_manager);
 
-        let templates = BuiltinScenarioTemplates::new();
+        // Create loader with default directories plus any extra ones
+        let mut loader = ScenarioLoader::new();
+        loader.add_directories(extra_dirs);
+
+        // Load templates from files
+        let cached_templates = loader.load_all();
+        info!(
+            "Loaded {} scenario templates from files",
+            cached_templates.len()
+        );
 
         Self {
             storage,
             execution_engine,
-            templates,
+            loader,
+            cached_templates,
             backend_name,
         }
+    }
+
+    /// Reload templates from disk
+    pub fn reload_templates(&mut self) {
+        self.cached_templates = self.loader.load_all();
+        info!(
+            "Reloaded {} scenario templates from files",
+            self.cached_templates.len()
+        );
     }
 
     /// Get storage statistics
@@ -57,7 +90,7 @@ impl ScenarioManager {
     /// List all scenarios (both user and templates)
     pub async fn list_all_scenarios(&self) -> Result<Vec<NetworkScenario>> {
         let mut scenarios = self.storage.list_scenarios().await?;
-        scenarios.extend(self.templates.get_all_templates());
+        scenarios.extend(self.cached_templates.clone());
         Ok(scenarios)
     }
 
@@ -68,8 +101,8 @@ impl ScenarioManager {
             return Ok(Some(scenario));
         }
 
-        // Then check templates
-        Ok(self.templates.get_template(id))
+        // Then check cached templates
+        Ok(self.cached_templates.iter().find(|s| s.id == id).cloned())
     }
 
     /// Store a new scenario
@@ -144,5 +177,10 @@ impl ScenarioManager {
     /// Get backend name
     pub fn backend_name(&self) -> &str {
         &self.backend_name
+    }
+
+    /// Get the scenario loader (for accessing directory info)
+    pub fn loader(&self) -> &ScenarioLoader {
+        &self.loader
     }
 }
