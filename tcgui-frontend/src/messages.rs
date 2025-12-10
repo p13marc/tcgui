@@ -144,6 +144,7 @@ pub enum TcGuiMessage {
     HideInterfaceSelectionDialog,
     SelectExecutionNamespace(String),
     SelectExecutionInterface(String),
+    ToggleLoopExecution,
     ConfirmScenarioExecution,
     // Scenario response messages
     ScenarioListResponse {

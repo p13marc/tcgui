@@ -140,6 +140,7 @@ impl ScenarioManager {
         scenario_id: &str,
         namespace: String,
         interface: String,
+        loop_execution: bool,
     ) -> Result<String> {
         // Get the scenario from storage or templates
         let scenario = self
@@ -148,7 +149,7 @@ impl ScenarioManager {
             .ok_or_else(|| anyhow::anyhow!("Scenario '{}' not found", scenario_id))?;
 
         self.execution_engine
-            .start_scenario(scenario, namespace, interface)
+            .start_scenario(scenario, namespace, interface, loop_execution)
             .await
     }
 

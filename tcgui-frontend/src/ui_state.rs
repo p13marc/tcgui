@@ -26,6 +26,8 @@ pub struct InterfaceSelectionDialog {
     pub selected_namespace: Option<String>,
     /// Selected interface for execution
     pub selected_interface: Option<String>,
+    /// Whether to loop the scenario execution
+    pub loop_execution: bool,
 }
 
 /// Manager for UI state and visibility toggles.
@@ -155,6 +157,7 @@ impl UiStateManager {
             scenario_id,
             selected_namespace: None,
             selected_interface: None,
+            loop_execution: false,
         };
     }
 
@@ -184,6 +187,12 @@ impl UiStateManager {
     pub fn can_confirm_execution(&self) -> bool {
         self.interface_selection_dialog.selected_namespace.is_some()
             && self.interface_selection_dialog.selected_interface.is_some()
+    }
+
+    /// Toggle loop execution in the dialog
+    pub fn toggle_loop_execution(&mut self) {
+        self.interface_selection_dialog.loop_execution =
+            !self.interface_selection_dialog.loop_execution;
     }
 
     /// Gets visibility statistics for debugging/logging.

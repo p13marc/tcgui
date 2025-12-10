@@ -307,13 +307,14 @@ impl ScenarioExecutionHandlers {
                 scenario_id,
                 namespace,
                 interface,
+                loop_execution,
             } => {
                 info!(
-                    "Starting scenario '{}' on {}:{}",
-                    scenario_id, namespace, interface
+                    "Starting scenario '{}' on {}:{} (loop: {})",
+                    scenario_id, namespace, interface, loop_execution
                 );
                 match scenario_manager
-                    .start_scenario_execution(&scenario_id, namespace, interface)
+                    .start_scenario_execution(&scenario_id, namespace, interface, loop_execution)
                     .await
                 {
                     Ok(execution_id) => {

@@ -1239,6 +1239,53 @@ fn render_interface_selection_dialog<'a>(
 
         content = content.push(namespaces_column);
 
+        // Loop execution toggle
+        let loop_enabled = dialog.loop_execution;
+        let loop_toggle = row![
+            button(text(if loop_enabled { "🔁" } else { "➡️" }).size(16))
+                .padding([6, 10])
+                .on_press(TcGuiMessage::ToggleLoopExecution)
+                .style(move |_, _| button::Style {
+                    background: Some(iced::Background::Color(if loop_enabled {
+                        colors.primary_blue
+                    } else {
+                        Color::from_rgb(0.95, 0.97, 1.0)
+                    })),
+                    text_color: if loop_enabled {
+                        Color::WHITE
+                    } else {
+                        colors.text_primary
+                    },
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        width: 1.0,
+                        color: if loop_enabled {
+                            colors.primary_blue
+                        } else {
+                            Color::from_rgb(0.9, 0.93, 0.98)
+                        },
+                    },
+                    ..button::Style::default()
+                }),
+            text(if loop_enabled {
+                "Loop enabled - scenario will repeat"
+            } else {
+                "Run once"
+            })
+            .size(13)
+            .style(move |_| text::Style {
+                color: Some(if loop_enabled {
+                    colors.primary_blue
+                } else {
+                    colors.text_secondary
+                }),
+            })
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
+
+        content = content.push(loop_toggle);
+
         // Action buttons
         let can_confirm = ui_state.can_confirm_execution();
         let action_row = row![

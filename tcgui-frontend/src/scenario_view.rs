@@ -578,14 +578,23 @@ fn render_execution_card<'a>(
     // Build the main card content
     let mut card_content = column![].spacing(8);
 
-    // Header row with name and controls
+    // Header row with name, loop indicator, and controls
+    let loop_info = if execution.loop_execution {
+        format!(" 🔁 Loop #{}", execution.loop_iteration + 1)
+    } else {
+        String::new()
+    };
+
     card_content = card_content.push(
         row![
-            text(format!("{} {}", state_icon, execution.scenario.name))
-                .size(16)
-                .style(move |_| text::Style {
-                    color: Some(colors.text_primary)
-                }),
+            text(format!(
+                "{} {}{}",
+                state_icon, execution.scenario.name, loop_info
+            ))
+            .size(16)
+            .style(move |_| text::Style {
+                color: Some(colors.text_primary)
+            }),
             space().width(Length::Fill),
             render_execution_controls(execution, backend_name, colors.clone())
         ]

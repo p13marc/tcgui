@@ -94,12 +94,13 @@ impl ScenarioExecutionEngine {
     }
 
     /// Start executing a scenario on the specified interface
-    #[instrument(skip(self), fields(scenario_id = %scenario.id, namespace = %namespace, interface = %interface))]
+    #[instrument(skip(self), fields(scenario_id = %scenario.id, namespace = %namespace, interface = %interface, loop_execution = %loop_execution))]
     pub async fn start_scenario(
         &self,
         scenario: NetworkScenario,
         namespace: String,
         interface: String,
+        loop_execution: bool,
     ) -> Result<String> {
         let execution_key = format!("{}/{}", namespace, interface);
 
@@ -161,6 +162,8 @@ impl ScenarioExecutionEngine {
             target_namespace: namespace.clone(),
             target_interface: interface.clone(),
             stats: ExecutionStats::default(),
+            loop_execution,
+            loop_iteration: 0,
         };
 
         // Create control channels
@@ -337,6 +340,7 @@ impl ScenarioExecutionEngine {
             let mut pause_start: Option<Instant> = None;
 
             let scenario_steps = execution.scenario.steps.clone();
+            let loop_execution = execution.loop_execution;
 
             // Send initial execution update
             execution.current_step = 0;
@@ -347,172 +351,51 @@ impl ScenarioExecutionEngine {
                 backend_name: backend_name.clone(),
             });
 
-            for (step_index, step) in scenario_steps.iter().enumerate() {
-                execution.current_step = step_index;
+            // Main execution loop - runs once or forever if loop_execution is true
+            'execution_loop: loop {
+                for (step_index, step) in scenario_steps.iter().enumerate() {
+                    execution.current_step = step_index;
 
-                // Apply TC configuration for this step
-                info!(
-                    "Executing step {} of scenario '{}': {} (duration: {}ms)",
-                    step_index + 1,
-                    execution.scenario.id,
-                    step.description,
-                    step.duration_ms
-                );
+                    // Apply TC configuration for this step
+                    info!(
+                        "Executing step {} of scenario '{}': {} (duration: {}ms)",
+                        step_index + 1,
+                        execution.scenario.id,
+                        step.description,
+                        step.duration_ms
+                    );
 
-                let tc_request = TcRequest {
-                    namespace: execution.target_namespace.clone(),
-                    interface: execution.target_interface.clone(),
-                    operation: TcOperation::ApplyConfig {
-                        config: step.tc_config.clone(),
-                    },
-                };
-
-                match Self::execute_tc_command(&session, &backend_name, &tc_request).await {
-                    Ok(response) if response.success => {
-                        debug!("Successfully applied TC config for step {}", step_index + 1);
-                        execution.stats.tc_operations += 1;
-                    }
-                    Ok(response) => {
-                        warn!(
-                            "TC operation failed for step {}: {}",
-                            step_index + 1,
-                            response.message
-                        );
-                        execution.stats.failed_operations += 1;
-                        execution.stats.last_error = Some(response.message.clone());
-
-                        // Mark as failed and trigger rollback
-                        execution.state = ExecutionState::Failed {
-                            error: response.message,
-                        };
-
-                        // Perform rollback
-                        if cleanup_on_failure {
-                            if let Some(ref captured_state) = pre_execution_state {
-                                info!("Performing TC state rollback due to execution failure");
-                                match tc_manager.restore_tc_state(captured_state).await {
-                                    Ok(msg) => info!("TC rollback successful: {}", msg),
-                                    Err(e) => error!("TC rollback failed: {}", e),
-                                }
-                            }
-                        }
-
-                        // Send failure update
-                        let _ = update_sender.send(ScenarioExecutionUpdate {
-                            namespace: execution.target_namespace.clone(),
-                            interface: execution.target_interface.clone(),
-                            execution: execution.clone(),
-                            backend_name: backend_name.clone(),
-                        });
-                        return;
-                    }
-                    Err(e) => {
-                        error!(
-                            "Error executing TC command for step {}: {}",
-                            step_index + 1,
-                            e
-                        );
-                        execution.stats.failed_operations += 1;
-                        let error_msg = e.to_string();
-                        execution.stats.last_error = Some(error_msg.clone());
-
-                        // Mark as failed and trigger rollback
-                        execution.state = ExecutionState::Failed { error: error_msg };
-
-                        // Perform rollback
-                        if cleanup_on_failure {
-                            if let Some(ref captured_state) = pre_execution_state {
-                                info!("Performing TC state rollback due to execution failure");
-                                match tc_manager.restore_tc_state(captured_state).await {
-                                    Ok(msg) => info!("TC rollback successful: {}", msg),
-                                    Err(e) => error!("TC rollback failed: {}", e),
-                                }
-                            }
-                        }
-
-                        // Send failure update
-                        let _ = update_sender.send(ScenarioExecutionUpdate {
-                            namespace: execution.target_namespace.clone(),
-                            interface: execution.target_interface.clone(),
-                            execution: execution.clone(),
-                            backend_name: backend_name.clone(),
-                        });
-                        return;
-                    }
-                }
-
-                // Send step start update
-                let _ = update_sender.send(ScenarioExecutionUpdate {
-                    namespace: execution.target_namespace.clone(),
-                    interface: execution.target_interface.clone(),
-                    execution: execution.clone(),
-                    backend_name: backend_name.clone(),
-                });
-
-                // Wait for step duration
-                let step_duration = Duration::from_millis(step.duration_ms);
-                debug!(
-                    "Maintaining step {} configuration for {:?}",
-                    step_index + 1,
-                    step_duration
-                );
-
-                if (Self::interruptible_sleep(
-                    step_duration,
-                    &mut control_receiver,
-                    &mut execution,
-                    &mut pause_start,
-                    &mut paused_duration,
-                    &update_sender,
-                    &backend_name,
-                )
-                .await)
-                    .is_err()
-                {
-                    // Execution was stopped - perform rollback
-                    info!("Execution stopped, performing rollback");
-                    if cleanup_on_failure {
-                        if let Some(ref captured_state) = pre_execution_state {
-                            match tc_manager.restore_tc_state(captured_state).await {
-                                Ok(msg) => info!("TC rollback successful: {}", msg),
-                                Err(e) => error!("TC rollback failed: {}", e),
-                            }
-                        }
-                    }
-
-                    // Send stopped update
-                    execution.state = ExecutionState::Stopped;
-                    let _ = update_sender.send(ScenarioExecutionUpdate {
+                    let tc_request = TcRequest {
                         namespace: execution.target_namespace.clone(),
                         interface: execution.target_interface.clone(),
-                        execution: execution.clone(),
-                        backend_name: backend_name.clone(),
-                    });
-                    return;
-                }
+                        operation: TcOperation::ApplyConfig {
+                            config: step.tc_config.clone(),
+                        },
+                    };
 
-                execution.stats.steps_completed += 1;
-                execution.stats.progress_percent =
-                    ((step_index + 1) as f32 / scenario_steps.len() as f32) * 100.0;
+                    match Self::execute_tc_command(&session, &backend_name, &tc_request).await {
+                        Ok(response) if response.success => {
+                            debug!("Successfully applied TC config for step {}", step_index + 1);
+                            execution.stats.tc_operations += 1;
+                        }
+                        Ok(response) => {
+                            warn!(
+                                "TC operation failed for step {}: {}",
+                                step_index + 1,
+                                response.message
+                            );
+                            execution.stats.failed_operations += 1;
+                            execution.stats.last_error = Some(response.message.clone());
 
-                // Send progress update
-                let _ = update_sender.send(ScenarioExecutionUpdate {
-                    namespace: execution.target_namespace.clone(),
-                    interface: execution.target_interface.clone(),
-                    execution: execution.clone(),
-                    backend_name: backend_name.clone(),
-                });
+                            // Mark as failed and trigger rollback
+                            execution.state = ExecutionState::Failed {
+                                error: response.message,
+                            };
 
-                // Check for stop/pause messages during execution
-                while let Ok(control_msg) = control_receiver.try_recv() {
-                    match control_msg {
-                        ExecutorControlMessage::Stop => {
-                            info!("Scenario execution stopped by user");
-                            execution.state = ExecutionState::Stopped;
-
-                            // Perform rollback on user stop
+                            // Perform rollback
                             if cleanup_on_failure {
                                 if let Some(ref captured_state) = pre_execution_state {
+                                    info!("Performing TC state rollback due to execution failure");
                                     match tc_manager.restore_tc_state(captured_state).await {
                                         Ok(msg) => info!("TC rollback successful: {}", msg),
                                         Err(e) => error!("TC rollback failed: {}", e),
@@ -520,7 +403,7 @@ impl ScenarioExecutionEngine {
                                 }
                             }
 
-                            // Send stopped update
+                            // Send failure update
                             let _ = update_sender.send(ScenarioExecutionUpdate {
                                 namespace: execution.target_namespace.clone(),
                                 interface: execution.target_interface.clone(),
@@ -529,31 +412,182 @@ impl ScenarioExecutionEngine {
                             });
                             return;
                         }
-                        ExecutorControlMessage::Pause => {
-                            info!("Scenario execution paused by user");
-                            pause_start = Some(Instant::now());
-                            execution.state = ExecutionState::Paused {
-                                paused_at: SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis() as u64,
-                            };
+                        Err(e) => {
+                            error!(
+                                "Error executing TC command for step {}: {}",
+                                step_index + 1,
+                                e
+                            );
+                            execution.stats.failed_operations += 1;
+                            let error_msg = e.to_string();
+                            execution.stats.last_error = Some(error_msg.clone());
+
+                            // Mark as failed and trigger rollback
+                            execution.state = ExecutionState::Failed { error: error_msg };
+
+                            // Perform rollback
+                            if cleanup_on_failure {
+                                if let Some(ref captured_state) = pre_execution_state {
+                                    info!("Performing TC state rollback due to execution failure");
+                                    match tc_manager.restore_tc_state(captured_state).await {
+                                        Ok(msg) => info!("TC rollback successful: {}", msg),
+                                        Err(e) => error!("TC rollback failed: {}", e),
+                                    }
+                                }
+                            }
+
+                            // Send failure update
+                            let _ = update_sender.send(ScenarioExecutionUpdate {
+                                namespace: execution.target_namespace.clone(),
+                                interface: execution.target_interface.clone(),
+                                execution: execution.clone(),
+                                backend_name: backend_name.clone(),
+                            });
+                            return;
                         }
-                        ExecutorControlMessage::Resume => {
-                            if let Some(paused_at) = pause_start.take() {
-                                paused_duration += paused_at.elapsed();
-                                info!(
-                                    "Scenario execution resumed (total paused: {:?})",
-                                    paused_duration
-                                );
-                                execution.state = ExecutionState::Running;
+                    }
+
+                    // Send step start update
+                    let _ = update_sender.send(ScenarioExecutionUpdate {
+                        namespace: execution.target_namespace.clone(),
+                        interface: execution.target_interface.clone(),
+                        execution: execution.clone(),
+                        backend_name: backend_name.clone(),
+                    });
+
+                    // Wait for step duration
+                    let step_duration = Duration::from_millis(step.duration_ms);
+                    debug!(
+                        "Maintaining step {} configuration for {:?}",
+                        step_index + 1,
+                        step_duration
+                    );
+
+                    if (Self::interruptible_sleep(
+                        step_duration,
+                        &mut control_receiver,
+                        &mut execution,
+                        &mut pause_start,
+                        &mut paused_duration,
+                        &update_sender,
+                        &backend_name,
+                    )
+                    .await)
+                        .is_err()
+                    {
+                        // Execution was stopped - perform rollback
+                        info!("Execution stopped, performing rollback");
+                        if cleanup_on_failure {
+                            if let Some(ref captured_state) = pre_execution_state {
+                                match tc_manager.restore_tc_state(captured_state).await {
+                                    Ok(msg) => info!("TC rollback successful: {}", msg),
+                                    Err(e) => error!("TC rollback failed: {}", e),
+                                }
+                            }
+                        }
+
+                        // Send stopped update
+                        execution.state = ExecutionState::Stopped;
+                        let _ = update_sender.send(ScenarioExecutionUpdate {
+                            namespace: execution.target_namespace.clone(),
+                            interface: execution.target_interface.clone(),
+                            execution: execution.clone(),
+                            backend_name: backend_name.clone(),
+                        });
+                        return;
+                    }
+
+                    execution.stats.steps_completed += 1;
+                    execution.stats.progress_percent =
+                        ((step_index + 1) as f32 / scenario_steps.len() as f32) * 100.0;
+
+                    // Send progress update
+                    let _ = update_sender.send(ScenarioExecutionUpdate {
+                        namespace: execution.target_namespace.clone(),
+                        interface: execution.target_interface.clone(),
+                        execution: execution.clone(),
+                        backend_name: backend_name.clone(),
+                    });
+
+                    // Check for stop/pause messages during execution
+                    while let Ok(control_msg) = control_receiver.try_recv() {
+                        match control_msg {
+                            ExecutorControlMessage::Stop => {
+                                info!("Scenario execution stopped by user");
+                                execution.state = ExecutionState::Stopped;
+
+                                // Perform rollback on user stop
+                                if cleanup_on_failure {
+                                    if let Some(ref captured_state) = pre_execution_state {
+                                        match tc_manager.restore_tc_state(captured_state).await {
+                                            Ok(msg) => info!("TC rollback successful: {}", msg),
+                                            Err(e) => error!("TC rollback failed: {}", e),
+                                        }
+                                    }
+                                }
+
+                                // Send stopped update
+                                let _ = update_sender.send(ScenarioExecutionUpdate {
+                                    namespace: execution.target_namespace.clone(),
+                                    interface: execution.target_interface.clone(),
+                                    execution: execution.clone(),
+                                    backend_name: backend_name.clone(),
+                                });
+                                return;
+                            }
+                            ExecutorControlMessage::Pause => {
+                                info!("Scenario execution paused by user");
+                                pause_start = Some(Instant::now());
+                                execution.state = ExecutionState::Paused {
+                                    paused_at: SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis()
+                                        as u64,
+                                };
+                            }
+                            ExecutorControlMessage::Resume => {
+                                if let Some(paused_at) = pause_start.take() {
+                                    paused_duration += paused_at.elapsed();
+                                    info!(
+                                        "Scenario execution resumed (total paused: {:?})",
+                                        paused_duration
+                                    );
+                                    execution.state = ExecutionState::Running;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Scenario completed successfully - no rollback needed
+                // End of steps loop - check if we should loop again
+                if loop_execution {
+                    // Increment loop iteration and reset for next loop
+                    execution.loop_iteration += 1;
+                    execution.stats.steps_completed = 0;
+                    execution.stats.progress_percent = 0.0;
+                    execution.current_step = 0;
+
+                    info!(
+                        "Scenario '{}' completed iteration {}, starting next loop",
+                        execution.scenario.id, execution.loop_iteration
+                    );
+
+                    // Send loop restart update
+                    let _ = update_sender.send(ScenarioExecutionUpdate {
+                        namespace: execution.target_namespace.clone(),
+                        interface: execution.target_interface.clone(),
+                        execution: execution.clone(),
+                        backend_name: backend_name.clone(),
+                    });
+
+                    continue 'execution_loop;
+                }
+
+                // Scenario completed successfully (non-looping) - no rollback needed
+                break 'execution_loop;
+            } // end of 'execution_loop
+
             info!(
                 "Scenario '{}' execution completed successfully",
                 execution.scenario.id

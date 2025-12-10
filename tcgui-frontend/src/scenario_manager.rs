@@ -297,12 +297,14 @@ impl ScenarioManager {
         scenario_id: &str,
         namespace: &str,
         interface: &str,
+        loop_execution: bool,
     ) -> Result<(), String> {
         if let Some(sender) = &self.execution_query_sender {
             let request = ScenarioExecutionRequest::Start {
                 scenario_id: scenario_id.to_string(),
                 namespace: namespace.to_string(),
                 interface: interface.to_string(),
+                loop_execution,
             };
 
             let message = ScenarioExecutionQueryMessage {
@@ -317,8 +319,8 @@ impl ScenarioManager {
             }
 
             info!(
-                "Started scenario '{}' execution on {}:{}",
-                scenario_id, namespace, interface
+                "Started scenario '{}' execution on {}:{} (loop: {})",
+                scenario_id, namespace, interface, loop_execution
             );
             Ok(())
         } else {

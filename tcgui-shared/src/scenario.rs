@@ -82,6 +82,12 @@ pub struct ScenarioExecution {
     pub target_interface: String,
     /// Execution statistics
     pub stats: ExecutionStats,
+    /// Whether this execution should loop indefinitely
+    #[serde(default)]
+    pub loop_execution: bool,
+    /// Current loop iteration (0-based, only relevant when loop_execution is true)
+    #[serde(default)]
+    pub loop_iteration: u32,
 }
 
 /// Execution statistics for monitoring and debugging
@@ -160,6 +166,9 @@ pub enum ScenarioExecutionRequest {
         scenario_id: ScenarioId,
         namespace: String,
         interface: String,
+        /// Whether to loop the scenario indefinitely (overrides scenario's loop_scenario field)
+        #[serde(default)]
+        loop_execution: bool,
     },
     /// Stop execution on specified interface
     Stop {
@@ -612,6 +621,8 @@ mod tests {
             target_namespace: "default".to_string(),
             target_interface: "eth0".to_string(),
             stats: ExecutionStats::default(),
+            loop_execution: false,
+            loop_iteration: 0,
         };
 
         // Should be 100% for empty scenario
@@ -645,6 +656,8 @@ mod tests {
             target_namespace: "default".to_string(),
             target_interface: "eth0".to_string(),
             stats: ExecutionStats::default(),
+            loop_execution: false,
+            loop_iteration: 0,
         };
 
         assert!(execution.is_active());
@@ -680,6 +693,8 @@ mod tests {
             target_namespace: "test-namespace".to_string(),
             target_interface: "eth1".to_string(),
             stats: ExecutionStats::default(),
+            loop_execution: false,
+            loop_iteration: 0,
         };
 
         assert_eq!(execution.execution_key(), "test-namespace/eth1");

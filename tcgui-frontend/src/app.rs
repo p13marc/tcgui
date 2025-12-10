@@ -340,6 +340,10 @@ impl TcGui {
                 self.ui_state.select_execution_interface(interface);
                 Task::none()
             }
+            TcGuiMessage::ToggleLoopExecution => {
+                self.ui_state.toggle_loop_execution();
+                Task::none()
+            }
             TcGuiMessage::ConfirmScenarioExecution => {
                 let dialog = self.ui_state.interface_selection_dialog();
                 if let (Some(namespace), Some(interface)) =
@@ -361,6 +365,7 @@ impl TcGui {
                         &dialog.scenario_id,
                         namespace,
                         interface,
+                        dialog.loop_execution,
                     ) {
                         tracing::error!("Failed to start scenario execution: {}", e);
                     }
