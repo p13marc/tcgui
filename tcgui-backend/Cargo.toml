@@ -5,8 +5,8 @@ edition = "2021"
 description = "Privileged backend service for tcgui network operations"
 authors = ["Your Name <you@example.com>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/tcgui"
-homepage = "https://github.com/yourusername/tcgui"
+repository = "https://github.com/p13marc/tcgui"
+homepage = "https://github.com/p13marc/tcgui"
 keywords = ["networking", "traffic-control", "tc", "linux", "network-namespaces"]
 categories = ["network-programming", "command-line-utilities"]
 
