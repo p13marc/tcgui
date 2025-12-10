@@ -8,18 +8,26 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use tcgui_shared::scenario::{
-    NetworkScenario, ScenarioExecution, ScenarioExecutionRequest, ScenarioRequest,
+    NetworkScenario, ScenarioExecution, ScenarioExecutionRequest, ScenarioExecutionUpdate,
+    ScenarioRequest,
 };
 
 use crate::messages::{ScenarioExecutionQueryMessage, ScenarioQueryMessage};
+
+/// Tracked execution with timestamp for deduplication
+#[derive(Clone, Debug)]
+struct TrackedExecution {
+    execution: ScenarioExecution,
+    timestamp: u64,
+}
 
 /// Manages scenario state and operations for the frontend
 #[derive(Clone, Default)]
 pub struct ScenarioManager {
     /// Available scenarios from backend
     available_scenarios: HashMap<String, Vec<NetworkScenario>>, // backend_name -> scenarios
-    /// Currently active scenario executions
-    active_executions: HashMap<String, HashMap<String, ScenarioExecution>>, // backend -> (namespace/interface -> execution)
+    /// Currently active scenario executions with timestamps
+    active_executions: HashMap<String, HashMap<String, TrackedExecution>>, // backend -> (namespace/interface -> tracked_execution)
     /// Currently selected scenario for details view
     selected_scenario: Option<NetworkScenario>,
     /// Whether scenario details are visible
@@ -65,7 +73,12 @@ impl ScenarioManager {
     pub fn get_active_executions(&self, backend_name: &str) -> Vec<ScenarioExecution> {
         self.active_executions
             .get(backend_name)
-            .map(|executions| executions.values().cloned().collect())
+            .map(|executions| {
+                executions
+                    .values()
+                    .map(|tracked| tracked.execution.clone())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -80,7 +93,11 @@ impl ScenarioManager {
         let execution_key = format!("{}/{}", namespace, interface);
         self.active_executions
             .get(backend_name)
-            .and_then(|executions| executions.get(&execution_key).cloned())
+            .and_then(|executions| {
+                executions
+                    .get(&execution_key)
+                    .map(|tracked| tracked.execution.clone())
+            })
     }
 
     /// Check if there's an execution running on an interface
@@ -288,24 +305,43 @@ impl ScenarioManager {
         self.available_scenarios.insert(backend_name, scenarios);
     }
 
-    /// Handle execution status update
-    pub fn handle_execution_update(
-        &mut self,
-        backend_name: String,
-        namespace: String,
-        interface: String,
-        execution: ScenarioExecution,
-    ) {
-        let execution_key = format!("{}/{}", namespace, interface);
-        debug!(
-            "Updating execution status for {}: {} - {:?}",
-            execution_key, execution.scenario.id, execution.state
-        );
+    /// Handle execution status update with timestamp-based deduplication
+    pub fn handle_execution_update(&mut self, update: ScenarioExecutionUpdate) {
+        let execution_key = format!("{}/{}", update.namespace, update.interface);
 
-        self.active_executions
-            .entry(backend_name)
-            .or_default()
-            .insert(execution_key, execution);
+        let executions = self
+            .active_executions
+            .entry(update.backend_name.clone())
+            .or_default();
+
+        // Only update if this is a newer message (prevents stale Zenoh history messages)
+        let should_update = match executions.get(&execution_key) {
+            Some(existing) => update.timestamp >= existing.timestamp,
+            None => true,
+        };
+
+        if should_update {
+            debug!(
+                "Updating execution status for {}: {} - {:?} (step {}, ts={})",
+                execution_key,
+                update.execution.scenario.id,
+                update.execution.state,
+                update.execution.current_step,
+                update.timestamp
+            );
+            executions.insert(
+                execution_key,
+                TrackedExecution {
+                    execution: update.execution,
+                    timestamp: update.timestamp,
+                },
+            );
+        } else {
+            debug!(
+                "Ignoring stale execution update for {}: ts={} < existing",
+                execution_key, update.timestamp
+            );
+        }
     }
 
     /// Remove execution when it completes or is stopped

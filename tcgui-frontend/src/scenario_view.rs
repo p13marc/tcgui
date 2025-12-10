@@ -381,7 +381,7 @@ fn render_active_executions<'a>(
     list_content.spacing(8).into()
 }
 
-/// Renders a single execution status card
+/// Renders a single execution status card with enhanced progress UI
 fn render_execution_card<'a>(
     execution: &ScenarioExecution,
     backend_name: &str,
@@ -402,59 +402,253 @@ fn render_execution_card<'a>(
         execution.stats.progress_percent
     );
 
-    container(
-        column![
-            row![
-                text(format!("{} {}", state_icon, execution.scenario.name))
-                    .size(16)
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_primary)
-                    }),
-                space().width(Length::Fill),
-                render_execution_controls(execution, backend_name, colors.clone())
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-            row![
-                text(format!(
-                    "{}:{}",
-                    execution.target_namespace, execution.target_interface
-                ))
+    // Calculate estimated time remaining
+    let time_remaining_text = if matches!(execution.state, ExecutionState::Running) {
+        let remaining_duration: u64 = execution
+            .scenario
+            .steps
+            .iter()
+            .skip(execution.current_step)
+            .map(|s| s.duration_ms)
+            .sum();
+        format!("~{} remaining", format_duration(remaining_duration))
+    } else {
+        match &execution.state {
+            ExecutionState::Completed => "Completed".to_string(),
+            ExecutionState::Stopped => "Stopped".to_string(),
+            ExecutionState::Failed { .. } => "Failed".to_string(),
+            ExecutionState::Paused { .. } => "Paused".to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // Get current step details
+    let current_step_text = execution
+        .scenario
+        .steps
+        .get(execution.current_step)
+        .map(|step| step.description.clone())
+        .unwrap_or_else(|| "No step".to_string());
+
+    // Progress bar colors
+    let bar_color = match &execution.state {
+        ExecutionState::Running => colors.success_green,
+        ExecutionState::Paused { .. } => colors.warning_orange,
+        ExecutionState::Completed => colors.primary_blue,
+        ExecutionState::Stopped | ExecutionState::Failed { .. } => colors.error_red,
+    };
+    let bar_bg_color = Color::from_rgb(0.85, 0.88, 0.92);
+    let progress_width = (execution.stats.progress_percent / 100.0).clamp(0.0, 1.0);
+
+    // Build step timeline
+    let mut timeline_content = column![].spacing(2);
+    for (i, step) in execution.scenario.steps.iter().enumerate() {
+        let (icon, step_color) = if i < execution.current_step {
+            ("✓", colors.success_green)
+        } else if i == execution.current_step {
+            match &execution.state {
+                ExecutionState::Running => ("▶", colors.primary_blue),
+                ExecutionState::Paused { .. } => ("⏸", colors.warning_orange),
+                ExecutionState::Stopped => ("⏹", colors.error_red),
+                ExecutionState::Completed => ("✓", colors.success_green),
+                ExecutionState::Failed { .. } => ("✗", colors.error_red),
+            }
+        } else {
+            ("○", colors.text_secondary)
+        };
+
+        let is_current = i == execution.current_step;
+        let step_bg = if is_current {
+            Color::from_rgba(0.2, 0.6, 1.0, 0.1)
+        } else {
+            Color::TRANSPARENT
+        };
+
+        timeline_content = timeline_content.push(
+            container(
+                row![
+                    container(text(icon).size(11).style(move |_| text::Style {
+                        color: Some(step_color)
+                    }))
+                    .width(16),
+                    column![
+                        text(format!("Step {}: {}", i + 1, step.description))
+                            .size(11)
+                            .style(move |_| text::Style {
+                                color: Some(if is_current {
+                                    colors.text_primary
+                                } else {
+                                    colors.text_secondary
+                                })
+                            }),
+                        text(format_duration(step.duration_ms))
+                            .size(10)
+                            .style(move |_| text::Style {
+                                color: Some(colors.text_secondary)
+                            })
+                    ]
+                    .spacing(1)
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding([3, 6])
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(step_bg)),
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            }),
+        );
+    }
+
+    // Build the main card content
+    let mut card_content = column![].spacing(8);
+
+    // Header row with name and controls
+    card_content = card_content.push(
+        row![
+            text(format!("{} {}", state_icon, execution.scenario.name))
+                .size(16)
+                .style(move |_| text::Style {
+                    color: Some(colors.text_primary)
+                }),
+            space().width(Length::Fill),
+            render_execution_controls(execution, backend_name, colors.clone())
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    );
+
+    // Target info and time remaining
+    card_content = card_content.push(
+        row![
+            text(format!(
+                "{}:{}",
+                execution.target_namespace, execution.target_interface
+            ))
+            .size(12)
+            .style(move |_| text::Style {
+                color: Some(colors.text_secondary)
+            }),
+            text("•").size(12).style(move |_| text::Style {
+                color: Some(colors.text_secondary)
+            }),
+            text(progress_text.clone())
                 .size(12)
                 .style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
+                    color: Some(state_color)
                 }),
-                text("•").size(12).style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
+            space().width(Length::Fill),
+            text(time_remaining_text)
+                .size(11)
+                .style(move |_| text::Style {
+                    color: Some(state_color)
+                })
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center),
+    );
+
+    // Visual progress bar
+    card_content = card_content.push(
+        container(
+            container(space().width(Length::Fill).height(Length::Fill))
+                .width(Length::FillPortion((progress_width * 100.0) as u16))
+                .height(6)
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color(bar_color)),
+                    border: iced::Border {
+                        radius: 3.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
                 }),
-                text(progress_text.clone())
-                    .size(12)
-                    .style(move |_| text::Style {
-                        color: Some(state_color)
-                    }),
-                space().width(Length::Fill),
-                text(format!("{:?}", execution.state))
+        )
+        .width(Length::Fill)
+        .height(6)
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(bar_bg_color)),
+            border: iced::Border {
+                radius: 3.0.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        }),
+    );
+
+    // Current step details
+    card_content = card_content.push(
+        row![
+            text("Current:").size(11).style(move |_| text::Style {
+                color: Some(colors.text_secondary)
+            }),
+            text(current_step_text)
+                .size(11)
+                .style(move |_| text::Style {
+                    color: Some(colors.text_primary)
+                })
+        ]
+        .spacing(4),
+    );
+
+    // Show error message if failed
+    if let ExecutionState::Failed { error } = &execution.state {
+        card_content = card_content.push(
+            container(
+                text(format!("Error: {}", error))
                     .size(11)
                     .style(move |_| text::Style {
-                        color: Some(state_color)
-                    })
-            ]
-            .spacing(4)
-            .align_y(iced::Alignment::Center)
-        ]
-        .spacing(6),
-    )
-    .padding(12)
-    .style(move |_| container::Style {
-        background: Some(iced::Background::Color(colors.background_light)),
-        border: iced::Border {
-            radius: 6.0.into(),
-            width: 1.0,
-            color: Color::from_rgb(0.9, 0.93, 0.98),
-        },
-        ..container::Style::default()
-    })
-    .into()
+                        color: Some(colors.error_red),
+                    }),
+            )
+            .padding([4, 8])
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.9, 0.2, 0.2, 0.1,
+                ))),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            }),
+        );
+    }
+
+    // Divider
+    card_content =
+        card_content.push(container(space().width(Length::Fill).height(1)).style(|_| {
+            container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb(0.88, 0.90, 0.94))),
+                ..container::Style::default()
+            }
+        }));
+
+    // Step timeline header
+    card_content = card_content.push(text("Steps Timeline").size(12).style(move |_| text::Style {
+        color: Some(colors.text_secondary),
+    }));
+
+    // Step timeline
+    card_content = card_content.push(timeline_content);
+
+    container(card_content)
+        .padding(12)
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(colors.background_light)),
+            border: iced::Border {
+                radius: 6.0.into(),
+                width: 1.0,
+                color: Color::from_rgb(0.9, 0.93, 0.98),
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 /// Renders execution control buttons

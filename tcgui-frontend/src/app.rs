@@ -177,13 +177,8 @@ impl TcGui {
                         &update.interface,
                     );
                 } else {
-                    // Update active execution state
-                    self.scenario_manager.handle_execution_update(
-                        update.backend_name,
-                        update.namespace,
-                        update.interface,
-                        update.execution,
-                    );
+                    // Update active execution state (with timestamp-based deduplication)
+                    self.scenario_manager.handle_execution_update(*update);
                 }
                 Task::none()
             }

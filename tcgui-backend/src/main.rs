@@ -218,12 +218,9 @@ impl TcBackend {
                 info!("Execution query handler started successfully");
             }
 
-            // Start scenario execution status publisher
-            if let Err(e) = execution_handlers.start_status_publisher().await {
-                error!("Failed to start scenario status publisher: {}", e);
-            } else {
-                info!("Scenario execution status publisher started successfully");
-            }
+            // Note: Scenario execution status publisher removed - the execution task
+            // already publishes updates at each step transition. The periodic publisher
+            // was using stale executor.execution data which caused step counter resets.
         }
 
         // Send initial backend status

@@ -189,13 +189,7 @@ impl ScenarioExecutionEngine {
             executions.insert(execution_key.clone(), executor);
         }
 
-        // Send initial execution update
-        let _ = self.update_sender.send(ScenarioExecutionUpdate {
-            namespace: namespace.clone(),
-            interface: interface.clone(),
-            execution,
-            backend_name: self.backend_name.clone(),
-        });
+        // Note: Initial execution update is sent by spawn_execution_task
 
         info!("Started scenario execution with key: {}", execution_key);
         Ok(execution_key)
