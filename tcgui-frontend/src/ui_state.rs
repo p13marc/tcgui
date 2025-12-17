@@ -5,6 +5,8 @@
 
 use std::collections::HashSet;
 
+use crate::theme::Theme;
+
 /// Available application tabs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AppTab {
@@ -49,6 +51,8 @@ pub struct UiStateManager {
     interface_selection_dialog: InterfaceSelectionDialog,
     /// Current zoom level (1.0 = 100%)
     zoom_level: f32,
+    /// Current theme (light/dark)
+    theme: Theme,
 }
 
 impl Default for UiStateManager {
@@ -59,6 +63,7 @@ impl Default for UiStateManager {
             current_tab: AppTab::default(),
             interface_selection_dialog: InterfaceSelectionDialog::default(),
             zoom_level: ZOOM_DEFAULT,
+            theme: Theme::default(),
         }
     }
 }
@@ -92,6 +97,16 @@ impl UiStateManager {
     /// Returns the zoom level as a percentage string (e.g., "100%").
     pub fn zoom_percentage(&self) -> String {
         format!("{}%", (self.zoom_level * 100.0).round() as i32)
+    }
+
+    /// Gets the current theme.
+    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    /// Toggles between light and dark theme.
+    pub fn toggle_theme(&mut self) {
+        self.theme = self.theme.toggle();
     }
 
     /// Toggles the visibility of a backend in the UI.

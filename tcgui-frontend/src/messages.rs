@@ -86,6 +86,8 @@ pub enum TcGuiMessage {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    // Theme toggle
+    ToggleTheme,
     // TC and Interface operations (trigger queries)
     ApplyTc {
         backend_name: String,

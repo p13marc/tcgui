@@ -484,6 +484,10 @@ impl TcGui {
                 self.ui_state.zoom_reset();
                 Task::none()
             }
+            TcGuiMessage::ToggleTheme => {
+                self.ui_state.toggle_theme();
+                Task::none()
+            }
 
             // Maintenance operations
             TcGuiMessage::CleanupStaleBackends => handle_cleanup_stale_backends(
