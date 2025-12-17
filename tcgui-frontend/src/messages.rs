@@ -100,6 +100,11 @@ pub enum TcGuiMessage {
         corrupt_correlation: Option<f32>,
         rate_limit_kbps: Option<u32>,
     },
+    RemoveTc {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     EnableInterface {
         backend_name: String,
         namespace: String,

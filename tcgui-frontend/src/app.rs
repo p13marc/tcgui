@@ -232,6 +232,12 @@ impl TcGui {
                 rate_limit_kbps,
             ),
 
+            TcGuiMessage::RemoveTc {
+                backend_name,
+                namespace,
+                interface,
+            } => handle_remove_tc(&self.query_manager, backend_name, namespace, interface),
+
             // Interface operations
             TcGuiMessage::EnableInterface {
                 backend_name,

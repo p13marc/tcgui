@@ -108,6 +108,46 @@ impl QueryManager {
         }
     }
 
+    /// Sends a remove TC query to a backend (deletes the netem qdisc).
+    pub fn remove_tc(
+        &self,
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    ) -> Result<(), String> {
+        if let Some(sender) = &self.tc_query_sender {
+            let request = TcRequest {
+                namespace: namespace.clone(),
+                interface: interface.clone(),
+                operation: TcOperation::Remove,
+            };
+            let tc_query_message = TcQueryMessage {
+                backend_name: backend_name.clone(),
+                request,
+                response_sender: None,
+            };
+
+            if let Err(e) = sender.send(tc_query_message) {
+                let error_msg = format!(
+                    "Failed to send TC remove query to backend '{}': {}",
+                    backend_name, e
+                );
+                error!("{}", error_msg);
+                return Err(error_msg);
+            }
+
+            info!(
+                "Sent TC remove query to backend '{}' for {}/{}",
+                backend_name, namespace, interface
+            );
+            Ok(())
+        } else {
+            let error_msg = "TC query sender not available".to_string();
+            error!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
+
     /// Sends an enable interface query to a backend.
     pub fn enable_interface(
         &self,
