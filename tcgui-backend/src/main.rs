@@ -12,7 +12,7 @@ mod tc_commands_test;
 
 use anyhow::Result;
 use rtnetlink::new_connection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{interval, Duration};
 use tracing::{error, info, instrument, warn};
@@ -325,6 +325,9 @@ impl TcBackend {
                                     .filter(|new_iface| !self.interfaces.contains_key(&new_iface.index))
                                     .map(|i| (i.namespace.clone(), i.name.clone()))
                                     .collect();
+
+                                // Clean up publishers for removed interfaces
+                                self.cleanup_stale_publishers(&updated_interfaces);
 
                                 self.interfaces = updated_interfaces;
                                 if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
@@ -950,6 +953,29 @@ impl TcBackend {
         }
 
         Ok(self.tc_config_publishers.get(&key).unwrap())
+    }
+
+    /// Remove publishers for interfaces that no longer exist
+    fn cleanup_stale_publishers(&mut self, current_interfaces: &HashMap<u32, NetworkInterface>) {
+        // Build set of valid keys from current interfaces
+        let valid_keys: HashSet<String> = current_interfaces
+            .values()
+            .map(|iface| format!("{}/{}", iface.namespace, iface.name))
+            .collect();
+
+        // Find stale publishers
+        let stale_keys: Vec<String> = self
+            .tc_config_publishers
+            .keys()
+            .filter(|key| !valid_keys.contains(*key))
+            .cloned()
+            .collect();
+
+        // Remove stale publishers
+        for key in stale_keys {
+            info!("Removing stale TC config publisher for: {}", key);
+            self.tc_config_publishers.remove(&key);
+        }
     }
 
     /// Parse TC parameters from qdisc info string
