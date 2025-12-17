@@ -11,6 +11,7 @@ use tcgui_shared::scenario::{ExecutionState, NetworkScenario, ScenarioExecution}
 use crate::backend_manager::BackendManager;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::{ScenarioManager, ScenarioSortOption};
+use crate::view::{scaled, scaled_padding, scaled_spacing};
 
 /// Format a duration in milliseconds to a human-readable string
 fn format_duration(duration_ms: u64) -> String {
@@ -67,6 +68,7 @@ impl Default for ScenarioColorPalette {
 pub fn render_scenario_view<'a>(
     backend_manager: &'a BackendManager,
     scenario_manager: &'a ScenarioManager,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let colors = ScenarioColorPalette::default();
 
@@ -74,7 +76,7 @@ pub fn render_scenario_view<'a>(
     let connected_backends: Vec<String> = backend_manager.connected_backend_names();
 
     if connected_backends.is_empty() {
-        return render_no_backends(colors);
+        return render_no_backends(colors, zoom);
     }
 
     let mut content = column![];
@@ -84,19 +86,19 @@ pub fn render_scenario_view<'a>(
         container(
             column![
                 text("📊 Network Scenarios")
-                    .size(24)
+                    .size(scaled(24, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary)
                     }),
                 text("Manage and execute network condition scenarios")
-                    .size(14)
+                    .size(scaled(14, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary)
                     })
             ]
-            .spacing(4),
+            .spacing(scaled_spacing(4, zoom)),
         )
-        .padding(16)
+        .padding(scaled_padding(16, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(colors.background_card)),
             border: iced::Border {
@@ -111,7 +113,7 @@ pub fn render_scenario_view<'a>(
     // Show scenario details if selected
     if scenario_manager.is_showing_details() {
         if let Some(scenario) = scenario_manager.get_selected_scenario() {
-            content = content.push(render_scenario_details(scenario, colors.clone()));
+            content = content.push(render_scenario_details(scenario, colors.clone(), zoom));
         }
     }
 
@@ -122,33 +124,34 @@ pub fn render_scenario_view<'a>(
             scenario_manager,
             backend_manager,
             colors.clone(),
+            zoom,
         ));
     }
 
-    container(scrollable(content.spacing(16)))
-        .padding(12)
+    container(scrollable(content.spacing(scaled_spacing(16, zoom))))
+        .padding(scaled_padding(12, zoom))
         .into()
 }
 
 /// Renders the no backends available message
-fn render_no_backends<'a>(colors: ScenarioColorPalette) -> Element<'a, TcGuiMessage> {
+fn render_no_backends<'a>(colors: ScenarioColorPalette, zoom: f32) -> Element<'a, TcGuiMessage> {
     container(
         column![
             text("⚠️ No Backends Connected")
-                .size(20)
+                .size(scaled(20, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.warning_orange)
                 }),
             text("Connect to a backend to manage scenarios")
-                .size(14)
+                .size(scaled(14, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary)
                 })
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_x(iced::Alignment::Center),
     )
-    .padding(40)
+    .padding(scaled_padding(40, zoom))
     .style(move |_| container::Style {
         background: Some(iced::Background::Color(colors.background_card)),
         border: iced::Border {
@@ -169,6 +172,7 @@ fn render_backend_scenarios<'a>(
     scenario_manager: &'a ScenarioManager,
     _backend_manager: &'a BackendManager,
     colors: ScenarioColorPalette,
+    _zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut backend_content = column![];
     let is_loading = scenario_manager.is_loading(backend_name);
@@ -925,6 +929,7 @@ fn render_execution_controls<'a>(
 fn render_scenario_details<'a>(
     scenario: &NetworkScenario,
     colors: ScenarioColorPalette,
+    _zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut details_content = column![];
 

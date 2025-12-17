@@ -13,6 +13,25 @@ use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Color, Element, Length};
 use std::collections::HashMap;
 
+/// Helper function to scale a font size by the zoom factor.
+/// Takes a base size and zoom level, returns the scaled size as f32 for Iced Pixels.
+#[inline]
+pub fn scaled(base: u16, zoom: f32) -> f32 {
+    (base as f32) * zoom
+}
+
+/// Helper function to scale a padding value by the zoom factor.
+#[inline]
+pub fn scaled_padding(base: u16, zoom: f32) -> f32 {
+    (base as f32) * zoom
+}
+
+/// Helper function to scale spacing values by the zoom factor.
+#[inline]
+pub fn scaled_spacing(base: u16, zoom: f32) -> f32 {
+    (base as f32) * zoom
+}
+
 /// Color palette for consistent styling
 #[derive(Clone)]
 pub struct ColorPalette {
@@ -50,6 +69,7 @@ pub fn render_main_view<'a>(
 ) -> Element<'a, TcGuiMessage> {
     let colors = ColorPalette::default();
     let bg_color = colors.background_primary;
+    let zoom = ui_state.zoom_level();
 
     // Check if any backend is connected
     let any_backend_connected = backend_manager
@@ -57,24 +77,30 @@ pub fn render_main_view<'a>(
         .values()
         .any(|bg| bg.is_connected);
 
-    let header = render_header(backend_manager, query_manager, colors.clone());
-    let tabs = render_tabs(ui_state, colors.clone());
+    let header = render_header(
+        backend_manager,
+        query_manager,
+        ui_state,
+        colors.clone(),
+        zoom,
+    );
+    let tabs = render_tabs(ui_state, colors.clone(), zoom);
 
     let content = match ui_state.current_tab() {
         crate::ui_state::AppTab::Interfaces => {
             if backend_manager.backends().is_empty() {
-                render_empty_state(any_backend_connected, colors.clone())
+                render_empty_state(any_backend_connected, colors.clone(), zoom)
             } else {
-                render_backend_content(backend_manager, ui_state, colors.clone())
+                render_backend_content(backend_manager, ui_state, colors.clone(), zoom)
             }
         }
         crate::ui_state::AppTab::Scenarios => {
-            scenario_view::render_scenario_view(backend_manager, _scenario_manager)
+            scenario_view::render_scenario_view(backend_manager, _scenario_manager, zoom)
         }
     };
 
-    let main_content = container(column![header, tabs, content].spacing(12))
-        .padding(12)
+    let main_content = container(column![header, tabs, content].spacing(scaled_spacing(12, zoom)))
+        .padding(scaled_padding(12, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(bg_color)),
             ..container::Style::default()
@@ -84,7 +110,7 @@ pub fn render_main_view<'a>(
     if ui_state.interface_selection_dialog().visible {
         iced::widget::stack![
             main_content,
-            render_interface_selection_dialog(backend_manager, ui_state, colors)
+            render_interface_selection_dialog(backend_manager, ui_state, colors, zoom)
         ]
         .into()
     } else {
@@ -96,16 +122,21 @@ pub fn render_main_view<'a>(
 fn render_tabs<'a>(
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let current_tab = ui_state.current_tab();
 
-    let interfaces_button = button(text("🌐 Interfaces").size(14).style(move |_| text::Style {
-        color: Some(if current_tab == crate::ui_state::AppTab::Interfaces {
-            Color::WHITE
-        } else {
-            colors.text_primary
-        }),
-    }))
+    let interfaces_button = button(
+        text("🌐 Interfaces")
+            .size(scaled(14, zoom))
+            .style(move |_| text::Style {
+                color: Some(if current_tab == crate::ui_state::AppTab::Interfaces {
+                    Color::WHITE
+                } else {
+                    colors.text_primary
+                }),
+            }),
+    )
     .on_press(TcGuiMessage::SwitchTab(crate::ui_state::AppTab::Interfaces))
     .style(move |_, _| button::Style {
         background: Some(iced::Background::Color(
@@ -128,37 +159,42 @@ fn render_tabs<'a>(
         ..button::Style::default()
     });
 
-    let scenarios_button = button(text("📊 Scenarios").size(14).style(move |_| text::Style {
-        color: Some(if current_tab == crate::ui_state::AppTab::Scenarios {
-            Color::WHITE
-        } else {
-            colors.text_primary
-        }),
-    }))
-    .on_press(TcGuiMessage::SwitchTab(crate::ui_state::AppTab::Scenarios))
-    .style(move |_, _| button::Style {
-        background: Some(iced::Background::Color(
-            if current_tab == crate::ui_state::AppTab::Scenarios {
-                colors.primary_blue
+    let scenarios_button =
+        button(
+            text("📊 Scenarios")
+                .size(scaled(14, zoom))
+                .style(move |_| text::Style {
+                    color: Some(if current_tab == crate::ui_state::AppTab::Scenarios {
+                        Color::WHITE
+                    } else {
+                        colors.text_primary
+                    }),
+                }),
+        )
+        .on_press(TcGuiMessage::SwitchTab(crate::ui_state::AppTab::Scenarios))
+        .style(move |_, _| button::Style {
+            background: Some(iced::Background::Color(
+                if current_tab == crate::ui_state::AppTab::Scenarios {
+                    colors.primary_blue
+                } else {
+                    colors.background_card
+                },
+            )),
+            text_color: if current_tab == crate::ui_state::AppTab::Scenarios {
+                Color::WHITE
             } else {
-                colors.background_card
+                colors.text_primary
             },
-        )),
-        text_color: if current_tab == crate::ui_state::AppTab::Scenarios {
-            Color::WHITE
-        } else {
-            colors.text_primary
-        },
-        border: iced::Border {
-            radius: 8.0.into(),
-            width: 1.0,
-            color: Color::from_rgb(0.88, 0.92, 0.98),
-        },
-        ..button::Style::default()
-    });
+            border: iced::Border {
+                radius: 8.0.into(),
+                width: 1.0,
+                color: Color::from_rgb(0.88, 0.92, 0.98),
+            },
+            ..button::Style::default()
+        });
 
     container(row![interfaces_button, scenarios_button].spacing(0))
-        .padding([8, 12])
+        .padding([scaled_padding(8, zoom), scaled_padding(12, zoom)])
         .into()
 }
 
@@ -166,34 +202,43 @@ fn render_tabs<'a>(
 fn render_header<'a>(
     backend_manager: &'a BackendManager,
     query_manager: &'a QueryManager,
+    ui_state: &'a UiStateManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let namespace_summaries = get_namespace_bandwidth_summaries(backend_manager);
     let overall_summary = get_bandwidth_summary(backend_manager);
 
-    let status_line = render_status_line(backend_manager, query_manager, colors.clone());
+    let status_line = render_status_line(backend_manager, query_manager, colors.clone(), zoom);
     let active_interfaces_display =
-        render_active_interfaces(namespace_summaries, overall_summary, colors.clone());
+        render_active_interfaces(namespace_summaries, overall_summary, colors.clone(), zoom);
+
+    // Zoom indicator (display only - use Ctrl+Scroll or Ctrl+/- to zoom)
+    let zoom_indicator = text(format!("🔍 {}", ui_state.zoom_percentage()))
+        .size(scaled(12, zoom))
+        .style(move |_| text::Style {
+            color: Some(colors.text_secondary),
+        });
 
     let header_content = column![
-        status_line,
+        row![status_line, space::horizontal(), zoom_indicator,].align_y(iced::Alignment::Center),
         container(
             column![
                 text("Most Active Interfaces")
-                    .size(12)
+                    .size(scaled(12, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary)
                     }),
                 active_interfaces_display
             ]
-            .spacing(4)
+            .spacing(scaled_spacing(4, zoom))
         )
-        .padding([6, 0])
+        .padding([scaled_padding(6, zoom), 0.0])
     ]
-    .spacing(10);
+    .spacing(scaled_spacing(10, zoom));
 
     container(header_content)
-        .padding(12)
+        .padding(scaled_padding(12, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(colors.background_card)),
             border: iced::Border {
@@ -216,6 +261,7 @@ fn render_status_line<'a>(
     backend_manager: &'a BackendManager,
     query_manager: &'a QueryManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut backend_statuses = Vec::new();
     let mut backend_names: Vec<_> = backend_manager.backends().keys().cloned().collect();
@@ -224,7 +270,7 @@ fn render_status_line<'a>(
     if backend_names.is_empty() {
         backend_statuses.push(
             text("⚠️ No backends")
-                .size(14)
+                .size(scaled(14, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.warning_orange),
                 })
@@ -239,10 +285,10 @@ fn render_status_line<'a>(
                     ("⚠️", colors.error_red)
                 };
 
-                backend_statuses.push(text(indicator).size(14).into());
+                backend_statuses.push(text(indicator).size(scaled(14, zoom)).into());
                 backend_statuses.push(
                     text(backend_name.clone())
-                        .size(14)
+                        .size(scaled(14, zoom))
                         .style(move |_| text::Style { color: Some(color) })
                         .into(),
                 );
@@ -251,7 +297,7 @@ fn render_status_line<'a>(
                 if i < backend_names.len() - 1 {
                     backend_statuses.push(
                         text(" • ")
-                            .size(14)
+                            .size(scaled(14, zoom))
                             .style(move |_| text::Style {
                                 color: Some(colors.text_secondary),
                             })
@@ -301,7 +347,7 @@ fn render_status_line<'a>(
 
     backend_statuses.push(
         text(stats_text)
-            .size(14)
+            .size(scaled(14, zoom))
             .style(move |_| text::Style {
                 color: Some(colors.text_primary),
             })
@@ -309,7 +355,7 @@ fn render_status_line<'a>(
     );
 
     row(backend_statuses)
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center)
         .into()
 }
@@ -322,6 +368,7 @@ fn render_active_interfaces(
     >,
     _overall_summary: Option<(String, String, f64, String)>,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'static, TcGuiMessage> {
     let mut active_interfaces: Vec<(String, String, String, f64)> = namespace_summaries
         .iter()
@@ -348,21 +395,21 @@ fn render_active_interfaces(
             .into_iter()
             .take(5)
             .map(|(ns_key, iface, rate_display, _)| {
-                render_active_interface_item(ns_key, iface, rate_display, colors.clone())
+                render_active_interface_item(ns_key, iface, rate_display, colors.clone(), zoom)
             })
             .collect();
 
-        row(top_interfaces).spacing(6).into()
+        row(top_interfaces).spacing(scaled_spacing(6, zoom)).into()
     } else {
         // Show placeholder when no active interfaces to maintain consistent layout
         row![container(
             text("📊 No active traffic")
-                .size(11)
+                .size(scaled(11, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary)
                 })
         )
-        .padding([4, 8])
+        .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
                 0.4, 0.4, 0.4, 0.08,
@@ -384,6 +431,7 @@ fn render_active_interface_item(
     iface: String,
     rate_display: String,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'static, TcGuiMessage> {
     // Parse backend/namespace from key
     let parts: Vec<&str> = ns_key.splitn(2, '/').collect();
@@ -399,21 +447,23 @@ fn render_active_interface_item(
 
     container(
         row![
-            text("🚀").size(11),
+            text("🚀").size(scaled(11, zoom)),
             text(format!("{}: {}", display_ns, iface))
-                .size(11)
+                .size(scaled(11, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary)
                 }),
             space::horizontal(),
-            text(rate_display).size(11).style(move |_| text::Style {
-                color: Some(colors.primary_blue)
-            })
+            text(rate_display)
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.primary_blue)
+                })
         ]
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center),
     )
-    .padding([4, 8])
+    .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
     .style(move |_| container::Style {
         background: Some(iced::Background::Color(Color::from_rgba(
             0.2, 0.6, 1.0, 0.08,
@@ -432,26 +482,27 @@ fn render_active_interface_item(
 fn render_empty_state(
     any_backend_connected: bool,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'static, TcGuiMessage> {
     if any_backend_connected {
         container(
             column![
-                text("📡").size(48),
+                text("📡").size(scaled(48, zoom)),
                 text("No Network Interfaces")
-                    .size(20)
+                    .size(scaled(20, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary)
                     }),
                 text("No network interfaces are currently available")
-                    .size(14)
+                    .size(scaled(14, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary)
                     }),
             ]
-            .spacing(12)
+            .spacing(scaled_spacing(12, zoom))
             .align_x(iced::Alignment::Center),
         )
-        .padding(40)
+        .padding(scaled_padding(40, zoom))
         .width(Length::Fill)
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(colors.background_card)),
@@ -466,22 +517,22 @@ fn render_empty_state(
     } else {
         container(
             column![
-                text("🔄").size(48),
+                text("🔄").size(scaled(48, zoom)),
                 text("Connecting to Backend")
-                    .size(20)
+                    .size(scaled(20, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary)
                     }),
                 text("Waiting for backend connection to discover interfaces...")
-                    .size(14)
+                    .size(scaled(14, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary)
                     }),
             ]
-            .spacing(12)
+            .spacing(scaled_spacing(12, zoom))
             .align_x(iced::Alignment::Center),
         )
-        .padding(40)
+        .padding(scaled_padding(40, zoom))
         .width(Length::Fill)
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
@@ -503,14 +554,19 @@ fn render_backend_content<'a>(
     backend_manager: &'a BackendManager,
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
-    let namespace_sections = render_namespace_sections(backend_manager, ui_state, colors.clone());
-    let all_namespaces_column: Element<_> = column(namespace_sections).spacing(8).into();
+    let namespace_sections =
+        render_namespace_sections(backend_manager, ui_state, colors.clone(), zoom);
+    let all_namespaces_column: Element<_> = column(namespace_sections)
+        .spacing(scaled_spacing(8, zoom))
+        .into();
 
     // Add UI stats footer
-    let ui_stats_footer = render_ui_stats_footer(ui_state, colors.clone());
+    let ui_stats_footer = render_ui_stats_footer(ui_state, colors.clone(), zoom);
 
-    let content_with_footer = column![all_namespaces_column, ui_stats_footer,].spacing(8);
+    let content_with_footer =
+        column![all_namespaces_column, ui_stats_footer,].spacing(scaled_spacing(8, zoom));
 
     // Enhanced scrollable content with modern styling
     let scrollable_content = scrollable(content_with_footer)
@@ -525,6 +581,7 @@ fn render_namespace_sections<'a>(
     backend_manager: &'a BackendManager,
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     let mut namespace_sections: Vec<Element<TcGuiMessage>> = Vec::new();
 
@@ -553,6 +610,7 @@ fn render_namespace_sections<'a>(
             ui_state,
             namespace_bandwidth_summaries.clone(),
             colors.clone(),
+            zoom,
         );
         namespace_sections.extend(backend_namespace_sections);
     }
@@ -570,6 +628,7 @@ fn render_backend_namespaces<'a>(
         (String, tcgui_shared::NetworkBandwidthStats, f64, String),
     >,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     let mut sections = Vec::new();
 
@@ -597,6 +656,7 @@ fn render_backend_namespaces<'a>(
                 is_hidden,
                 namespace_bandwidth_summaries.clone(),
                 colors.clone(),
+                zoom,
             );
             sections.push(section);
         }
@@ -606,6 +666,7 @@ fn render_backend_namespaces<'a>(
 }
 
 /// Renders a single namespace section
+#[allow(clippy::too_many_arguments)]
 fn render_namespace_section<'a>(
     backend_name: &'a str,
     namespace_name: &'a str,
@@ -617,6 +678,7 @@ fn render_namespace_section<'a>(
         (String, tcgui_shared::NetworkBandwidthStats, f64, String),
     >,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let namespace_header = render_namespace_header(
         backend_name,
@@ -625,12 +687,13 @@ fn render_namespace_section<'a>(
         is_hidden,
         namespace_bandwidth_summaries.clone(),
         colors.clone(),
+        zoom,
     );
 
     if is_hidden {
         // Compact namespace header when hidden
         container(namespace_header)
-            .padding(16)
+            .padding(scaled_padding(16, zoom))
             .width(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(Color::from_rgba(
@@ -647,11 +710,12 @@ fn render_namespace_section<'a>(
     } else {
         // Full namespace view with interface cards
         let interfaces = render_namespace_interfaces(backend_name, namespace_name, namespace_group);
-        let interfaces_column: Element<_> = column(interfaces).spacing(4).into();
+        let interfaces_column: Element<_> =
+            column(interfaces).spacing(scaled_spacing(4, zoom)).into();
 
         // Modern namespace container with card styling
-        container(column![namespace_header, interfaces_column].spacing(16))
-            .padding(20)
+        container(column![namespace_header, interfaces_column].spacing(scaled_spacing(16, zoom)))
+            .padding(scaled_padding(20, zoom))
             .width(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(colors.background_card)),
@@ -682,6 +746,7 @@ fn render_namespace_header<'a>(
         (String, tcgui_shared::NetworkBandwidthStats, f64, String),
     >,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     // Modern namespace header with enhanced styling
     let namespace_icon = if namespace_name == "default" {
@@ -693,20 +758,26 @@ fn render_namespace_header<'a>(
         "{} {} ({})",
         namespace_icon, namespace_name, backend_name
     ))
-    .size(20)
+    .size(scaled(20, zoom))
     .style(move |_| text::Style {
         color: Some(colors.text_primary),
     });
 
     // Enhanced toggle button with modern styling
-    let toggle_button =
-        render_toggle_button(backend_name, namespace_name, is_hidden, colors.clone());
+    let toggle_button = render_toggle_button(
+        backend_name,
+        namespace_name,
+        is_hidden,
+        colors.clone(),
+        zoom,
+    );
 
     // Enhanced per-namespace bandwidth summary
     let namespace_bandwidth_summary = render_namespace_bandwidth_summary(
         namespace_key.clone(),
         namespace_bandwidth_summaries.clone(),
         colors.clone(),
+        zoom,
     );
 
     row![
@@ -715,7 +786,7 @@ fn render_namespace_header<'a>(
         namespace_bandwidth_summary,
         toggle_button,
     ]
-    .spacing(12)
+    .spacing(scaled_spacing(12, zoom))
     .align_y(iced::Alignment::Center)
     .into()
 }
@@ -726,17 +797,21 @@ fn render_toggle_button<'a>(
     namespace_name: &'a str,
     is_hidden: bool,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let backend_clone = backend_name.to_string();
     let namespace_clone = namespace_name.to_string();
 
     if is_hidden {
         button(
-            row![text("👁").size(12), text("Show").size(12)]
-                .spacing(4)
-                .align_y(iced::Alignment::Center),
+            row![
+                text("👁").size(scaled(12, zoom)),
+                text("Show").size(scaled(12, zoom))
+            ]
+            .spacing(scaled_spacing(4, zoom))
+            .align_y(iced::Alignment::Center),
         )
-        .padding(8)
+        .padding(scaled_padding(8, zoom))
         .on_press(TcGuiMessage::ToggleNamespaceVisibility(
             backend_clone,
             namespace_clone,
@@ -759,11 +834,14 @@ fn render_toggle_button<'a>(
         .into()
     } else {
         button(
-            row![text("🙈").size(12), text("Hide").size(12)]
-                .spacing(4)
-                .align_y(iced::Alignment::Center),
+            row![
+                text("🙈").size(scaled(12, zoom)),
+                text("Hide").size(scaled(12, zoom))
+            ]
+            .spacing(scaled_spacing(4, zoom))
+            .align_y(iced::Alignment::Center),
         )
-        .padding(8)
+        .padding(scaled_padding(8, zoom))
         .on_press(TcGuiMessage::ToggleNamespaceVisibility(
             backend_clone,
             namespace_clone,
@@ -795,23 +873,24 @@ fn render_namespace_bandwidth_summary<'a>(
         (String, tcgui_shared::NetworkBandwidthStats, f64, String),
     >,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     if let Some((interface_name, _stats, _total_rate, rate_display)) =
         namespace_bandwidth_summaries.get(&namespace_key)
     {
         container(
             row![
-                text("📈").size(14),
+                text("📈").size(scaled(14, zoom)),
                 text(format!("Top: {} ({})", interface_name, rate_display))
-                    .size(13)
+                    .size(scaled(13, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.primary_blue)
                     })
             ]
-            .spacing(6)
+            .spacing(scaled_spacing(6, zoom))
             .align_y(iced::Alignment::Center),
         )
-        .padding(8)
+        .padding(scaled_padding(8, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
                 0.2, 0.6, 1.0, 0.1,
@@ -827,17 +906,19 @@ fn render_namespace_bandwidth_summary<'a>(
     } else {
         container(
             row![
-                text("📊").size(14),
-                text("No active traffic").size(13).style(move |_| {
-                    text::Style {
-                        color: Some(colors.text_secondary),
-                    }
-                })
+                text("📊").size(scaled(14, zoom)),
+                text("No active traffic")
+                    .size(scaled(13, zoom))
+                    .style(move |_| {
+                        text::Style {
+                            color: Some(colors.text_secondary),
+                        }
+                    })
             ]
-            .spacing(6)
+            .spacing(scaled_spacing(6, zoom))
             .align_y(iced::Alignment::Center),
         )
-        .padding(8)
+        .padding(scaled_padding(8, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
                 0.4, 0.4, 0.4, 0.1,
@@ -885,6 +966,7 @@ fn render_namespace_interfaces<'a>(
 fn render_ui_stats_footer(
     ui_state: &UiStateManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'_, TcGuiMessage> {
     let visibility_stats = ui_state.get_visibility_stats();
     let hidden_backend_count = ui_state.hidden_backend_count();
@@ -915,13 +997,13 @@ fn render_ui_stats_footer(
 
         container(column![row![
             text(format!("{}{}", stats_text, details_text))
-                .size(11)
+                .size(scaled(11, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary)
                 }),
             space::horizontal(),
-            button(text("Show All").size(11))
-                .padding([3, 6])
+            button(text("Show All").size(scaled(11, zoom)))
+                .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
                 .on_press(TcGuiMessage::ShowAllNamespaces)
                 .style(move |_, _| button::Style {
                     background: Some(iced::Background::Color(colors.primary_blue)),
@@ -933,8 +1015,8 @@ fn render_ui_stats_footer(
                     },
                     ..button::Style::default()
                 }),
-            button(text("Show All Backends").size(11))
-                .padding([3, 6])
+            button(text("Show All Backends").size(scaled(11, zoom)))
+                .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
                 .on_press(TcGuiMessage::ShowAllBackends)
                 .style(move |_, _| button::Style {
                     background: Some(iced::Background::Color(colors.success_green)),
@@ -946,8 +1028,8 @@ fn render_ui_stats_footer(
                     },
                     ..button::Style::default()
                 }),
-            button(text("Reset").size(11))
-                .padding([3, 6])
+            button(text("Reset").size(scaled(11, zoom)))
+                .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
                 .on_press(TcGuiMessage::ResetUiState)
                 .style(move |_, _| button::Style {
                     background: Some(iced::Background::Color(colors.warning_orange)),
@@ -960,9 +1042,9 @@ fn render_ui_stats_footer(
                     ..button::Style::default()
                 }),
         ]
-        .spacing(6)
+        .spacing(scaled_spacing(6, zoom))
         .align_y(iced::Alignment::Center)])
-        .padding(10)
+        .padding(scaled_padding(10, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
                 0.4, 0.4, 0.4, 0.05,
@@ -1074,6 +1156,7 @@ fn render_interface_selection_dialog<'a>(
     backend_manager: &'a BackendManager,
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let dialog = ui_state.interface_selection_dialog();
 
@@ -1088,12 +1171,12 @@ fn render_interface_selection_dialog<'a>(
                     "🎯 Select Interface for Scenario: {}",
                     dialog.scenario_id
                 ))
-                .size(18)
+                .size(scaled(18, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary),
                 }),
                 space().width(Length::Fill),
-                button(text("✕").size(14))
+                button(text("✕").size(scaled(14, zoom)))
                     .on_press(TcGuiMessage::HideInterfaceSelectionDialog)
                     .style(move |_, _| button::Style {
                         background: Some(iced::Background::Color(colors.error_red)),
@@ -1106,19 +1189,19 @@ fn render_interface_selection_dialog<'a>(
                         ..button::Style::default()
                     })
             ]
-            .spacing(12)
+            .spacing(scaled_spacing(12, zoom))
             .align_y(iced::Alignment::Center),
             // Instructions
             text("Please select a network namespace and interface to execute the scenario on:")
-                .size(14)
+                .size(scaled(14, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary),
                 }),
         ]
-        .spacing(16);
+        .spacing(scaled_spacing(16, zoom));
 
         // Namespace and interface selection
-        let mut namespaces_column = column![].spacing(12);
+        let mut namespaces_column = column![].spacing(scaled_spacing(12, zoom));
 
         // Sort namespaces (default first)
         let mut sorted_namespaces: Vec<_> = backend.namespaces.iter().collect();
@@ -1148,7 +1231,7 @@ fn render_interface_selection_dialog<'a>(
                     },
                     namespace_group.tc_interfaces.len()
                 ))
-                .size(14),
+                .size(scaled(14, zoom)),
             )
             .width(Length::Fill)
             .on_press(TcGuiMessage::SelectExecutionNamespace(
@@ -1181,7 +1264,7 @@ fn render_interface_selection_dialog<'a>(
 
             // Show interfaces for selected namespace
             if is_selected_namespace {
-                let mut interfaces_row = row![].spacing(8);
+                let mut interfaces_row = row![].spacing(scaled_spacing(8, zoom));
 
                 // Sort interfaces alphabetically
                 let mut sorted_interfaces: Vec<_> = namespace_group.tc_interfaces.iter().collect();
@@ -1192,12 +1275,13 @@ fn render_interface_selection_dialog<'a>(
 
                     let interface_button = button(
                         row![
-                            text(if is_selected_interface { "☑" } else { "☐" }).size(14),
-                            text(interface_name).size(12)
+                            text(if is_selected_interface { "☑" } else { "☐" })
+                                .size(scaled(14, zoom)),
+                            text(interface_name).size(scaled(12, zoom))
                         ]
-                        .spacing(6),
+                        .spacing(scaled_spacing(6, zoom)),
                     )
-                    .padding([6, 12])
+                    .padding([scaled_padding(6, zoom), scaled_padding(12, zoom)])
                     .on_press(TcGuiMessage::ToggleExecutionInterface(
                         interface_name.clone(),
                     ))
@@ -1242,14 +1326,16 @@ fn render_interface_selection_dialog<'a>(
                 namespaces_column = namespaces_column.push(
                     container(
                         column![
-                            text(selection_info).size(12).style(move |_| text::Style {
-                                color: Some(colors.text_secondary),
+                            text(selection_info).size(scaled(12, zoom)).style(move |_| {
+                                text::Style {
+                                    color: Some(colors.text_secondary),
+                                }
                             }),
                             interfaces_row.wrap()
                         ]
-                        .spacing(8),
+                        .spacing(scaled_spacing(8, zoom)),
                     )
-                    .padding([0, 20]),
+                    .padding([0.0, scaled_padding(20, zoom)]),
                 );
             }
         }
@@ -1259,8 +1345,8 @@ fn render_interface_selection_dialog<'a>(
         // Loop execution toggle
         let loop_enabled = dialog.loop_execution;
         let loop_toggle = row![
-            button(text(if loop_enabled { "🔁" } else { "➡️" }).size(16))
-                .padding([6, 10])
+            button(text(if loop_enabled { "🔁" } else { "➡️" }).size(scaled(16, zoom)))
+                .padding([scaled_padding(6, zoom), scaled_padding(10, zoom)])
                 .on_press(TcGuiMessage::ToggleLoopExecution)
                 .style(move |_, _| button::Style {
                     background: Some(iced::Background::Color(if loop_enabled {
@@ -1289,7 +1375,7 @@ fn render_interface_selection_dialog<'a>(
             } else {
                 "Run once"
             })
-            .size(13)
+            .size(scaled(13, zoom))
             .style(move |_| text::Style {
                 color: Some(if loop_enabled {
                     colors.primary_blue
@@ -1298,7 +1384,7 @@ fn render_interface_selection_dialog<'a>(
                 }),
             })
         ]
-        .spacing(10)
+        .spacing(scaled_spacing(10, zoom))
         .align_y(iced::Alignment::Center);
 
         content = content.push(loop_toggle);
@@ -1306,8 +1392,8 @@ fn render_interface_selection_dialog<'a>(
         // Action buttons
         let can_confirm = ui_state.can_confirm_execution();
         let action_row = row![
-            button(text("Cancel").size(14))
-                .padding([8, 16])
+            button(text("Cancel").size(scaled(14, zoom)))
+                .padding([scaled_padding(8, zoom), scaled_padding(16, zoom)])
                 .on_press(TcGuiMessage::HideInterfaceSelectionDialog)
                 .style(move |_, _| button::Style {
                     background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
@@ -1321,8 +1407,8 @@ fn render_interface_selection_dialog<'a>(
                 }),
             space().width(Length::Fill),
             {
-                let mut btn = button(text("Execute Scenario").size(14))
-                    .padding([8, 16])
+                let mut btn = button(text("Execute Scenario").size(scaled(14, zoom)))
+                    .padding([scaled_padding(8, zoom), scaled_padding(16, zoom)])
                     .style(move |_, _| button::Style {
                         background: Some(iced::Background::Color(if can_confirm {
                             colors.success_green
@@ -1343,14 +1429,14 @@ fn render_interface_selection_dialog<'a>(
                 btn
             }
         ]
-        .spacing(12);
+        .spacing(scaled_spacing(12, zoom));
 
         content = content.push(action_row);
 
         // Dialog container with backdrop
         container(
             container(content)
-                .padding(24)
+                .padding(scaled_padding(24, zoom))
                 .max_width(600)
                 .style(move |_| container::Style {
                     background: Some(iced::Background::Color(Color::WHITE)),
@@ -1367,7 +1453,7 @@ fn render_interface_selection_dialog<'a>(
                     ..container::Style::default()
                 }),
         )
-        .padding(40)
+        .padding(scaled_padding(40, zoom))
         .center(Length::Fill)
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
@@ -1382,12 +1468,12 @@ fn render_interface_selection_dialog<'a>(
             container(
                 column![
                     text(format!("⚠️ Backend '{}' not found", dialog.backend_name))
-                        .size(16)
+                        .size(scaled(16, zoom))
                         .style(move |_| text::Style {
                             color: Some(colors.error_red),
                         }),
-                    button(text("Close").size(14))
-                        .padding([8, 16])
+                    button(text("Close").size(scaled(14, zoom)))
+                        .padding([scaled_padding(8, zoom), scaled_padding(16, zoom)])
                         .on_press(TcGuiMessage::HideInterfaceSelectionDialog)
                         .style(move |_, _| button::Style {
                             background: Some(iced::Background::Color(colors.error_red)),
@@ -1400,9 +1486,9 @@ fn render_interface_selection_dialog<'a>(
                             ..button::Style::default()
                         })
                 ]
-                .spacing(16),
+                .spacing(scaled_spacing(16, zoom)),
             )
-            .padding(24)
+            .padding(scaled_padding(24, zoom))
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(Color::WHITE)),
                 border: iced::Border {
@@ -1413,7 +1499,7 @@ fn render_interface_selection_dialog<'a>(
                 ..container::Style::default()
             }),
         )
-        .padding(40)
+        .padding(scaled_padding(40, zoom))
         .center(Length::Fill)
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(

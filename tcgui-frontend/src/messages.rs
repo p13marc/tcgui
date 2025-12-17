@@ -75,6 +75,10 @@ pub enum TcGuiMessage {
     ResetUiState,                              // Reset all UI visibility state
     ShowAllBackends,                           // Show all hidden backends
     SwitchTab(crate::ui_state::AppTab),        // Switch application tab
+    // Zoom controls
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     // TC and Interface operations (trigger queries)
     ApplyTc {
         backend_name: String,

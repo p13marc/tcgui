@@ -30,8 +30,14 @@ pub struct InterfaceSelectionDialog {
     pub loop_execution: bool,
 }
 
+/// Zoom level constraints
+pub const ZOOM_MIN: f32 = 0.5;
+pub const ZOOM_MAX: f32 = 2.0;
+pub const ZOOM_STEP: f32 = 0.1;
+pub const ZOOM_DEFAULT: f32 = 1.0;
+
 /// Manager for UI state and visibility toggles.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct UiStateManager {
     /// Set of backend names that are collapsed/hidden in the UI
     hidden_backends: HashSet<String>,
@@ -41,17 +47,57 @@ pub struct UiStateManager {
     current_tab: AppTab,
     /// Interface selection dialog state
     interface_selection_dialog: InterfaceSelectionDialog,
+    /// Current zoom level (1.0 = 100%)
+    zoom_level: f32,
 }
 
-impl UiStateManager {
-    /// Creates a new UI state manager.
-    pub fn new() -> Self {
+impl Default for UiStateManager {
+    fn default() -> Self {
         Self {
             hidden_backends: HashSet::new(),
             hidden_namespaces: HashSet::new(),
             current_tab: AppTab::default(),
             interface_selection_dialog: InterfaceSelectionDialog::default(),
+            zoom_level: ZOOM_DEFAULT,
         }
+    }
+}
+
+impl UiStateManager {
+    /// Creates a new UI state manager.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Gets the current zoom level.
+    pub fn zoom_level(&self) -> f32 {
+        self.zoom_level
+    }
+
+    /// Increases the zoom level by one step.
+    pub fn zoom_in(&mut self) {
+        self.zoom_level = (self.zoom_level + ZOOM_STEP).min(ZOOM_MAX);
+    }
+
+    /// Decreases the zoom level by one step.
+    pub fn zoom_out(&mut self) {
+        self.zoom_level = (self.zoom_level - ZOOM_STEP).max(ZOOM_MIN);
+    }
+
+    /// Resets the zoom level to default (1.0).
+    pub fn zoom_reset(&mut self) {
+        self.zoom_level = ZOOM_DEFAULT;
+    }
+
+    /// Sets the zoom level directly (clamped to valid range).
+    #[allow(dead_code)]
+    pub fn set_zoom_level(&mut self, level: f32) {
+        self.zoom_level = level.clamp(ZOOM_MIN, ZOOM_MAX);
+    }
+
+    /// Returns the zoom level as a percentage string (e.g., "100%").
+    pub fn zoom_percentage(&self) -> String {
+        format!("{}%", (self.zoom_level * 100.0).round() as i32)
     }
 
     /// Toggles the visibility of a backend in the UI.
