@@ -347,7 +347,7 @@ impl TcInterface {
             .view(preset_list, &self.state.current_preset_id);
 
         // Feature toggles (compact checkboxes)
-        let feature_toggles = self.render_feature_toggles();
+        let feature_toggles = self.render_feature_toggles(theme);
 
         // Bandwidth display
         let bandwidth_display = self.render_bandwidth_display(theme);
@@ -389,33 +389,59 @@ impl TcInterface {
     }
 
     /// Render feature toggle checkboxes
-    fn render_feature_toggles(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_feature_toggles<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+        let text_color = theme.colors.text_primary;
+
         row![
             // Loss is always visible as it was in the original main row
-            checkbox(self.state.features.loss.enabled)
-                .label("LSS")
-                .text_size(12)
-                .on_toggle(TcInterfaceMessage::LossToggled),
-            checkbox(self.state.features.delay.enabled)
-                .label("DLY")
-                .text_size(12)
-                .on_toggle(TcInterfaceMessage::DelayToggled),
-            checkbox(self.state.features.duplicate.enabled)
-                .label("DUP")
-                .text_size(12)
-                .on_toggle(|_| TcInterfaceMessage::DuplicateToggled(())),
-            checkbox(self.state.features.reorder.enabled)
-                .label("RO")
-                .text_size(12)
-                .on_toggle(|_| TcInterfaceMessage::ReorderToggled(())),
-            checkbox(self.state.features.corrupt.enabled)
-                .label("CR")
-                .text_size(12)
-                .on_toggle(|_| TcInterfaceMessage::CorruptToggled(())),
-            checkbox(self.state.features.rate_limit.enabled)
-                .label("RL")
-                .text_size(12)
-                .on_toggle(|_| TcInterfaceMessage::RateLimitToggled(())),
+            row![
+                checkbox(self.state.features.loss.enabled)
+                    .on_toggle(TcInterfaceMessage::LossToggled),
+                text("LSS").size(12).style(move |_| text::Style {
+                    color: Some(text_color)
+                })
+            ]
+            .spacing(2),
+            row![
+                checkbox(self.state.features.delay.enabled)
+                    .on_toggle(TcInterfaceMessage::DelayToggled),
+                text("DLY").size(12).style(move |_| text::Style {
+                    color: Some(text_color)
+                })
+            ]
+            .spacing(2),
+            row![
+                checkbox(self.state.features.duplicate.enabled)
+                    .on_toggle(|_| TcInterfaceMessage::DuplicateToggled(())),
+                text("DUP").size(12).style(move |_| text::Style {
+                    color: Some(text_color)
+                })
+            ]
+            .spacing(2),
+            row![
+                checkbox(self.state.features.reorder.enabled)
+                    .on_toggle(|_| TcInterfaceMessage::ReorderToggled(())),
+                text("RO").size(12).style(move |_| text::Style {
+                    color: Some(text_color)
+                })
+            ]
+            .spacing(2),
+            row![
+                checkbox(self.state.features.corrupt.enabled)
+                    .on_toggle(|_| TcInterfaceMessage::CorruptToggled(())),
+                text("CR").size(12).style(move |_| text::Style {
+                    color: Some(text_color)
+                })
+            ]
+            .spacing(2),
+            row![
+                checkbox(self.state.features.rate_limit.enabled)
+                    .on_toggle(|_| TcInterfaceMessage::RateLimitToggled(())),
+                text("RL").size(12).style(move |_| text::Style {
+                    color: Some(text_color)
+                })
+            ]
+            .spacing(2),
         ]
         .spacing(4)
         .into()
