@@ -567,6 +567,8 @@ impl TcBackend {
                     || corrupt_percent.is_some_and(|c| c > 0.0)
                     || rate_limit_kbps.is_some_and(|r| r > 0);
 
+                #[allow(deprecated)]
+                // TcOperation::Apply uses legacy API for backward compatibility
                 let result = if has_meaningful_params {
                     // Apply TC with the meaningful parameters
                     self.tc_manager

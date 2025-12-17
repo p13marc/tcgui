@@ -164,6 +164,7 @@ impl TcCommandManager {
         ) = config.to_legacy_params();
 
         // Use existing implementation for now
+        #[allow(deprecated)]
         self.apply_tc_config_in_namespace(
             namespace,
             interface,
@@ -185,13 +186,18 @@ impl TcCommandManager {
     }
 
     /// Apply TC config in default namespace (legacy method)
-    #[allow(dead_code)] // Keep for backward compatibility
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use apply_tc_config_structured() with TcNetemConfig instead"
+    )]
+    #[allow(dead_code)]
     pub async fn apply_tc_config(
         &self,
         interface: &str,
         loss: f32,
         correlation: Option<f32>,
     ) -> Result<String> {
+        #[allow(deprecated)]
         self.apply_tc_config_in_namespace(
             "default",
             interface,
@@ -285,7 +291,11 @@ impl TcCommandManager {
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::too_many_arguments)] // Legacy method maintained for backward compatibility
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use apply_tc_config_structured() with TcNetemConfig instead"
+    )]
+    #[allow(clippy::too_many_arguments)]
     #[instrument(
         skip(self),
         fields(

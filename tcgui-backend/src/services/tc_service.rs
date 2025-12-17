@@ -56,6 +56,7 @@ impl TcService {
 
     /// Apply TC configuration to an interface
     #[allow(clippy::too_many_arguments)] // Legacy API - will be refactored to use config struct
+    #[allow(deprecated)] // Uses deprecated apply_tc_config_in_namespace internally
     #[instrument(skip(self), fields(service = "tc", namespace, interface))]
     pub async fn apply_tc_config(
         &mut self,
@@ -172,7 +173,7 @@ impl TcService {
         Ok(config)
     }
 
-    /// Remove TC configuration from an interface  
+    /// Remove TC configuration from an interface
     #[instrument(skip(self), fields(service = "tc", namespace, interface))]
     pub async fn remove_tc_config(
         &mut self,
