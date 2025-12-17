@@ -7,6 +7,7 @@ use crate::backend_manager::{BackendGroup, BackendManager, NamespaceGroup};
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::ScenarioManager;
 use crate::scenario_view;
+use crate::theme::{Theme, ThemeMode};
 use crate::ui_state::UiStateManager;
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Color, Element, Length};
@@ -31,7 +32,7 @@ pub fn scaled_spacing(base: u16, zoom: f32) -> f32 {
     (base as f32) * zoom
 }
 
-/// Color palette for consistent styling
+/// Color palette for consistent styling - derived from Theme
 #[derive(Clone)]
 pub struct ColorPalette {
     pub primary_blue: Color,
@@ -44,18 +45,25 @@ pub struct ColorPalette {
     pub background_card: Color,
 }
 
+impl ColorPalette {
+    /// Create a color palette from a Theme
+    pub fn from_theme(theme: &Theme) -> Self {
+        Self {
+            primary_blue: theme.colors.info,
+            success_green: theme.colors.success,
+            warning_orange: theme.colors.warning,
+            error_red: theme.colors.error,
+            text_primary: theme.colors.text_primary,
+            text_secondary: theme.colors.text_secondary,
+            background_primary: theme.colors.background,
+            background_card: theme.colors.surface,
+        }
+    }
+}
+
 impl Default for ColorPalette {
     fn default() -> Self {
-        Self {
-            primary_blue: Color::from_rgb(0.2, 0.6, 1.0),
-            success_green: Color::from_rgb(0.0, 0.8, 0.3),
-            warning_orange: Color::from_rgb(1.0, 0.6, 0.0),
-            error_red: Color::from_rgb(0.9, 0.2, 0.2),
-            text_primary: Color::from_rgb(0.1, 0.1, 0.1),
-            text_secondary: Color::from_rgb(0.4, 0.4, 0.4),
-            background_primary: Color::from_rgb(0.97, 0.98, 1.0),
-            background_card: Color::from_rgb(0.98, 0.99, 1.0),
-        }
+        Self::from_theme(&Theme::default())
     }
 }
 
@@ -65,7 +73,8 @@ pub fn render_main_view<'a>(
     ui_state: &'a UiStateManager,
     _scenario_manager: &'a ScenarioManager,
 ) -> Element<'a, TcGuiMessage> {
-    let colors = ColorPalette::default();
+    let theme = ui_state.theme();
+    let colors = ColorPalette::from_theme(theme);
     let bg_color = colors.background_primary;
     let zoom = ui_state.zoom_level();
 
@@ -75,7 +84,7 @@ pub fn render_main_view<'a>(
         .values()
         .any(|bg| bg.is_connected);
 
-    let header = render_header(backend_manager, ui_state, colors.clone(), zoom);
+    let header = render_header(backend_manager, ui_state, theme, colors.clone(), zoom);
     let tabs = render_tabs(ui_state, colors.clone(), zoom);
 
     let content = match ui_state.current_tab() {
@@ -194,6 +203,7 @@ fn render_tabs<'a>(
 fn render_header<'a>(
     backend_manager: &'a BackendManager,
     ui_state: &'a UiStateManager,
+    theme: &'a Theme,
     colors: ColorPalette,
     zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
@@ -204,6 +214,25 @@ fn render_header<'a>(
     let active_interfaces_display =
         render_active_interfaces(namespace_summaries, overall_summary, colors.clone(), zoom);
 
+    // Theme toggle button
+    let theme_icon = match theme.mode {
+        ThemeMode::Light => "🌙", // Moon to switch to dark
+        ThemeMode::Dark => "☀️",  // Sun to switch to light
+    };
+    let theme_button = button(text(theme_icon).size(scaled(14, zoom)))
+        .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
+        .on_press(TcGuiMessage::ToggleTheme)
+        .style(move |_, _| button::Style {
+            background: Some(iced::Background::Color(colors.background_card)),
+            text_color: colors.text_primary,
+            border: iced::Border {
+                radius: 6.0.into(),
+                width: 1.0,
+                color: colors.text_secondary,
+            },
+            ..button::Style::default()
+        });
+
     // Zoom indicator (display only - use Ctrl+Scroll or Ctrl+/- to zoom)
     let zoom_indicator = text(format!("🔍 {}", ui_state.zoom_percentage()))
         .size(scaled(12, zoom))
@@ -212,7 +241,14 @@ fn render_header<'a>(
         });
 
     let header_content = column![
-        row![status_line, space::horizontal(), zoom_indicator,].align_y(iced::Alignment::Center),
+        row![
+            status_line,
+            space::horizontal(),
+            theme_button,
+            zoom_indicator,
+        ]
+        .spacing(scaled_spacing(8, zoom))
+        .align_y(iced::Alignment::Center),
         container(
             column![
                 text("Most Active Interfaces")
