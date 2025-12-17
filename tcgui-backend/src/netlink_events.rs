@@ -17,7 +17,8 @@ use tracing::{debug, error, info, warn};
 ///
 /// The inner `LinkInfo` is used for Debug output to aid troubleshooting.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // LinkInfo fields used via Debug trait for logging
+/// Fields used via Debug trait for logging netlink events
+#[allow(dead_code)]
 pub enum NetlinkEvent {
     /// A new link was added
     Added(LinkInfo),

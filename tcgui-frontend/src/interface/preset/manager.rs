@@ -2,24 +2,22 @@
 //!
 //! This component handles the display and management of network presets,
 //! allowing users to quickly apply common traffic control configurations.
+//!
+//! Note: This module is prepared for future preset UI (Phase 2.2).
+//! Currently unused but kept for planned preset system implementation.
+
+#![allow(dead_code)]
 
 use tcgui_shared::presets::NetworkPreset;
 
-// Unused imports removed:
-// - iced::widget imports: UI components not used since view method was removed
-// - iced::{Element, Task}: Not used since update and view methods were removed
-// - TcInterfaceMessage and PresetMessage: Not used since those message handling methods were removed
-
-/// Component for preset management UI and logic
+/// Component for preset management UI and logic (future Phase 2.2)
 #[derive(Debug, Clone)]
 pub struct PresetManagerComponent {
     /// Currently selected preset
     current_preset: NetworkPreset,
-    /// Available presets (currently unused but kept for future)
-    #[allow(dead_code)]
+    /// Available presets
     available_presets: Vec<NetworkPreset>,
-    /// Whether preset controls are visible (currently unused but kept for future)
-    #[allow(dead_code)]
+    /// Whether preset controls are visible
     show_presets: bool,
     /// Whether preset application is in progress
     applying_preset: bool,

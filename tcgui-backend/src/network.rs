@@ -60,9 +60,9 @@ use tcgui_shared::{
 pub struct NetworkManager {
     /// rtnetlink handle for efficient default namespace operations
     rt_handle: Handle,
-    /// Track interfaces per namespace for change detection
+    /// Track interfaces per namespace for change detection (future namespace monitoring)
     /// Map: namespace_name -> (interface_index -> NetworkInterface)
-    #[allow(dead_code)] // Keep for future namespace monitoring functionality
+    #[allow(dead_code)]
     namespace_interfaces: HashMap<String, HashMap<u32, NetworkInterface>>,
     /// Backend name for topic routing in multi-backend scenarios
     backend_name: String,
@@ -306,8 +306,8 @@ impl NetworkManager {
         })
     }
 
-    /// Monitor interfaces across all namespaces
-    #[allow(dead_code)] // Keep for future multi-namespace monitoring
+    /// Monitor interfaces across all namespaces (future multi-namespace monitoring)
+    #[allow(dead_code)]
     pub async fn monitor_all_namespaces(&mut self, namespaces: &[NetworkNamespace]) -> Result<()> {
         for namespace in namespaces {
             if let Err(e) = self.monitor_namespace_interfaces(&namespace.name).await {
@@ -320,8 +320,8 @@ impl NetworkManager {
         Ok(())
     }
 
-    /// Monitor interfaces in a specific namespace
-    #[allow(dead_code)] // Keep for future namespace-specific monitoring
+    /// Monitor interfaces in a specific namespace (future namespace-specific monitoring)
+    #[allow(dead_code)]
     pub async fn monitor_namespace_interfaces(&mut self, namespace: &str) -> Result<()> {
         match self.discover_interfaces_in_namespace(namespace).await {
             Ok(discovered_interfaces) => {

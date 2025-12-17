@@ -89,12 +89,6 @@ impl UiStateManager {
         self.zoom_level = ZOOM_DEFAULT;
     }
 
-    /// Sets the zoom level directly (clamped to valid range).
-    #[allow(dead_code)]
-    pub fn set_zoom_level(&mut self, level: f32) {
-        self.zoom_level = level.clamp(ZOOM_MIN, ZOOM_MAX);
-    }
-
     /// Returns the zoom level as a percentage string (e.g., "100%").
     pub fn zoom_percentage(&self) -> String {
         format!("{}%", (self.zoom_level * 100.0).round() as i32)

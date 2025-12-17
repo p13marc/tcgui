@@ -3,8 +3,10 @@
 //! This module defines message types for future component-based architecture.
 //! Currently these are unused as the interface uses TcInterfaceMessage directly,
 //! but they provide a foundation for future modular development.
+//!
+//! Note: This entire module is currently unused (dead_code allowed at module level).
 
-#![allow(dead_code)] // These types are prepared for future use
+#![allow(dead_code)]
 
 use iced::Task;
 use tcgui_shared::{presets::NetworkPreset, NetworkBandwidthStats};

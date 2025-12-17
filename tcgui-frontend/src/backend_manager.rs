@@ -28,8 +28,8 @@ pub struct BackendGroup {
 /// Namespace grouping structure for organizing interface components within a backend.
 #[derive(Clone)]
 pub struct NamespaceGroup {
-    /// Complete namespace information from backend (for future metadata use)
-    #[allow(dead_code)] // Keep for future use/debugging
+    /// Complete namespace information (used for Debug output and future metadata)
+    #[allow(dead_code)]
     pub namespace: NetworkNamespace,
     /// Map of interface name to TcInterface component for this namespace
     pub tc_interfaces: HashMap<String, TcInterface>,

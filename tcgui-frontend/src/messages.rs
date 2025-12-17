@@ -13,7 +13,8 @@ use tokio::sync::mpsc;
 pub struct ScenarioQueryMessage {
     pub backend_name: String,
     pub request: ScenarioRequest,
-    #[allow(dead_code)] // Not used since we handle responses via ZenohEvent
+    /// Response channel (unused - responses handled via ZenohEvent::ScenarioResponse)
+    #[allow(dead_code)]
     pub response_sender: Option<mpsc::UnboundedSender<(String, ScenarioResponse)>>,
 }
 
@@ -132,12 +133,7 @@ pub enum TcGuiMessage {
         namespace: String,
         interface: String,
     },
-    #[allow(dead_code)] // TODO: Wire up scenario UI
-    GetExecutionStatus {
-        backend_name: String,
-        namespace: String,
-        interface: String,
-    },
+
     ShowScenarioDetails {
         scenario: NetworkScenario,
     },
@@ -160,11 +156,7 @@ pub enum TcGuiMessage {
         backend_name: String,
         response: tcgui_shared::scenario::ScenarioResponse,
     },
-    #[allow(dead_code)] // TODO: Wire up scenario execution response handling
-    ScenarioExecutionResponse {
-        backend_name: String,
-        response: tcgui_shared::scenario::ScenarioExecutionResponse,
-    },
+
     // Backend cleanup
     CleanupStaleBackends,
 }
@@ -205,46 +197,37 @@ pub enum ZenohEvent {
 /// Individual interface component messages
 #[derive(Debug, Clone)]
 pub enum TcInterfaceMessage {
-    // Core messages actually constructed in code
-    #[allow(dead_code)]
-    LossChanged(f32), // Only used in tests but handled in update method
-    LossToggled(bool),      // Used in UI
-    InterfaceToggled(bool), // Used in UI
-    DelayToggled(bool),     // Used in UI
+    // Loss control
+    LossChanged(f32),
+    LossToggled(bool),
+    CorrelationChanged(f32),
 
-    // Feature toggle messages (used in UI)
-    DuplicateToggled(()), // Used in UI
-    ReorderToggled(()),   // Used in UI
-    CorruptToggled(()),   // Used in UI
-    RateLimitToggled(()), // Used in UI
+    // Interface state
+    InterfaceToggled(bool),
 
-    // Parameter control messages for sliders (now actively used)
-    CorrelationChanged(f32),      // Loss correlation slider
-    DelayChanged(f32),            // Delay base slider
-    DelayJitterChanged(f32),      // Delay jitter slider
-    DelayCorrelationChanged(f32), // Delay correlation slider
+    // Delay control
+    DelayToggled(bool),
+    DelayChanged(f32),
+    DelayJitterChanged(f32),
+    DelayCorrelationChanged(f32),
 
-    // Duplicate control messages
-    DuplicatePercentageChanged(f32),  // Duplicate percentage slider
-    DuplicateCorrelationChanged(f32), // Duplicate correlation slider
+    // Duplicate control
+    DuplicateToggled(()),
+    DuplicatePercentageChanged(f32),
+    DuplicateCorrelationChanged(f32),
 
-    // Reorder control messages
-    ReorderPercentageChanged(f32),  // Reorder percentage slider
-    ReorderCorrelationChanged(f32), // Reorder correlation slider
-    ReorderGapChanged(u32),         // Reorder gap slider
+    // Reorder control
+    ReorderToggled(()),
+    ReorderPercentageChanged(f32),
+    ReorderCorrelationChanged(f32),
+    ReorderGapChanged(u32),
 
-    // Corrupt control messages
-    CorruptPercentageChanged(f32),  // Corrupt percentage slider
-    CorruptCorrelationChanged(f32), // Corrupt correlation slider
+    // Corrupt control
+    CorruptToggled(()),
+    CorruptPercentageChanged(f32),
+    CorruptCorrelationChanged(f32),
 
-    // Rate limit control messages
-    RateLimitChanged(u32), // Rate limit kbps slider
-
-    // Preset messages (kept for future preset UI)
-    #[allow(dead_code)]
-    PresetSelected(tcgui_shared::presets::NetworkPreset), // For future preset selector
-    #[allow(dead_code)]
-    ApplyPreset, // For future preset apply button
-    #[allow(dead_code)]
-    TogglePresets, // For future preset toggle
+    // Rate limit control
+    RateLimitToggled(()),
+    RateLimitChanged(u32),
 }

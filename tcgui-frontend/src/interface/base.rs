@@ -26,7 +26,8 @@ pub struct TcInterface {
     bandwidth_display: BandwidthDisplayComponent,
     /// Status display component
     status_display: StatusDisplayComponent,
-    /// Preset management component
+    /// Preset management component (future preset UI - Phase 2.2)
+    #[allow(dead_code)]
     preset_manager: PresetManagerComponent,
 }
 
@@ -266,31 +267,6 @@ impl TcInterface {
                     self.state
                         .add_status_message(format!("Updating rate limit: {} kbps", v), true);
                 }
-                Task::none()
-            }
-            // Preset-related messages
-            TcInterfaceMessage::PresetSelected(preset) => {
-                self.state.current_preset = preset;
-                self.preset_manager.set_applying(false); // Reset applying state
-                Task::none()
-            }
-            TcInterfaceMessage::ApplyPreset => {
-                // Apply the selected preset to the interface state
-                self.preset_manager
-                    .apply_to_interface_state(&mut self.state);
-                // Mark as applying
-                self.state.applying = true;
-                self.state.add_status_message(
-                    format!(
-                        "Applying preset: {}",
-                        self.state.current_preset.display_name()
-                    ),
-                    true,
-                );
-                Task::none()
-            }
-            TcInterfaceMessage::TogglePresets => {
-                // Handled internally by preset manager
                 Task::none()
             }
         }

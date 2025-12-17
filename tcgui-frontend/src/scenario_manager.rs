@@ -218,24 +218,6 @@ impl ScenarioManager {
             .unwrap_or_default()
     }
 
-    /// Get execution status for a specific interface
-    #[allow(dead_code)]
-    pub fn get_execution_status(
-        &self,
-        backend_name: &str,
-        namespace: &str,
-        interface: &str,
-    ) -> Option<ScenarioExecution> {
-        let execution_key = format!("{}/{}", namespace, interface);
-        self.active_executions
-            .get(backend_name)
-            .and_then(|executions| {
-                executions
-                    .get(&execution_key)
-                    .map(|tracked| tracked.execution.clone())
-            })
-    }
-
     /// Check if there's an execution running on an interface
     pub fn is_execution_active(
         &self,
@@ -243,8 +225,10 @@ impl ScenarioManager {
         namespace: &str,
         interface: &str,
     ) -> bool {
-        self.get_execution_status(backend_name, namespace, interface)
-            .is_some()
+        let execution_key = format!("{}/{}", namespace, interface);
+        self.active_executions
+            .get(backend_name)
+            .is_some_and(|executions| executions.contains_key(&execution_key))
     }
 
     /// Get currently selected scenario

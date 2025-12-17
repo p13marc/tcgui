@@ -304,20 +304,7 @@ impl TcGui {
                 );
                 Task::none()
             }
-            TcGuiMessage::GetExecutionStatus {
-                backend_name,
-                namespace,
-                interface,
-            } => {
-                // Status is handled via subscription updates, so just log for now
-                tracing::debug!(
-                    "Execution status requested for {}:{}:{}",
-                    backend_name,
-                    namespace,
-                    interface
-                );
-                Task::none()
-            }
+
             TcGuiMessage::ShowScenarioDetails { scenario } => {
                 self.scenario_manager.show_scenario_details(scenario);
                 Task::none()
@@ -440,34 +427,6 @@ impl TcGui {
                 }
                 Task::none()
             }
-            TcGuiMessage::ScenarioExecutionResponse {
-                backend_name,
-                response,
-            } => {
-                use tcgui_shared::scenario::ScenarioExecutionResponse;
-                match response {
-                    ScenarioExecutionResponse::Error { error } => {
-                        tracing::error!(
-                            "Scenario execution error from {}: {} ({})",
-                            backend_name,
-                            error.message,
-                            error.category_str()
-                        );
-                        if let Some(suggestion) = &error.suggestion {
-                            tracing::info!("Suggestion: {}", suggestion);
-                        }
-                    }
-                    _ => {
-                        tracing::debug!(
-                            "Scenario execution response from {}: {:?}",
-                            backend_name,
-                            response
-                        );
-                    }
-                }
-                Task::none()
-            }
-
             // UI operations
             TcGuiMessage::ToggleNamespaceVisibility(backend_name, namespace_name) => {
                 handle_toggle_namespace_visibility(&mut self.ui_state, backend_name, namespace_name)

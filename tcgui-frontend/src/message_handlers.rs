@@ -1087,16 +1087,6 @@ pub fn handle_tc_interface_message(
                             })
                         }
                     }
-                    // Preset messages - handled internally by TcInterface, no backend action needed
-                    TcInterfaceMessage::PresetSelected(_) => Task::none(),
-                    TcInterfaceMessage::ApplyPreset => {
-                        // Apply preset will trigger parameter updates which will auto-apply if qdisc is enabled
-                        Task::none()
-                    }
-                    TcInterfaceMessage::TogglePresets => {
-                        // Toggle preset visibility - handled internally by TcInterface
-                        Task::none()
-                    }
                 };
 
                 let backend_copy = backend_name.clone();
