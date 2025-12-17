@@ -6,12 +6,12 @@ This document outlines the implementation plan for improving the TC GUI codebase
 
 | Task | Priority | Effort | Status |
 |------|----------|--------|--------|
-| 1. Replace debug println with tracing | High | 1-2 hours | Pending |
-| 2. Implement publisher cleanup | High | 3-4 hours | Pending |
-| 3. Split main.rs into modules | High | 1-2 days | Pending |
-| 4. Migrate to structured TC config | Medium | 4-6 hours | Pending |
-| 5. Replace polling with netlink events | Medium | 2-3 days | Pending |
-| 6. Remove hot reload feature | Low | 1-2 hours | Pending |
+| 1. Replace debug println with tracing | High | 1-2 hours | ✅ Done |
+| 2. Implement publisher cleanup | High | 3-4 hours | ✅ Done |
+| 3. Split main.rs into modules | High | 1-2 days | ✅ Done (partial - extracted tc_config module + helpers) |
+| 4. Migrate to structured TC config | Medium | 4-6 hours | ✅ Done |
+| 5. Replace polling with netlink events | Medium | 2-3 days | ✅ Done |
+| 6. Remove hot reload feature | Low | 1-2 hours | ✅ Done |
 
 ---
 
