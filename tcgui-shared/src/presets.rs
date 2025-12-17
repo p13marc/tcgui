@@ -280,6 +280,20 @@ impl NetworkPreset {
         self.get_configuration().name
     }
 
+    /// Get short name for compact display (used in horizontal preset selector)
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            NetworkPreset::Custom => "Custom",
+            NetworkPreset::SatelliteLink => "Sat",
+            NetworkPreset::CellularNetwork => "Cell",
+            NetworkPreset::PoorWiFi => "WiFi",
+            NetworkPreset::WanLink => "WAN",
+            NetworkPreset::UnreliableConnection => "Unrel",
+            NetworkPreset::HighLatencyLowBandwidth => "HiLat",
+            NetworkPreset::TestAll => "Test",
+        }
+    }
+
     /// Get description for this preset
     pub fn description(&self) -> String {
         self.get_configuration().description

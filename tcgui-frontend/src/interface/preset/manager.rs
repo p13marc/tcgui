@@ -3,8 +3,8 @@
 //! This component handles the display and management of network presets,
 //! allowing users to quickly apply common traffic control configurations.
 
-use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length};
+use iced::widget::{button, row, text};
+use iced::Element;
 use tcgui_shared::presets::NetworkPreset;
 
 use crate::interface::state::InterfaceState;
@@ -116,28 +116,22 @@ impl PresetManagerComponent {
 
     /// Render the preset selector UI
     ///
-    /// Takes a reference to the current preset from state to ensure display is in sync
+    /// Takes a reference to the current preset from state to ensure display is in sync.
+    /// Uses a horizontal scrollable row when expanded to avoid vertical layout shifts.
     pub fn view(&self, current_preset: &NetworkPreset) -> Element<'_, TcInterfaceMessage> {
         let current_label = current_preset.display_name();
 
-        let dropdown_button = button(row![
-            text(current_label).size(11),
-            text(if self.show_presets { " ▲" } else { " ▼" }).size(9),
-        ])
-        .padding([2, 6])
-        .on_press(TcInterfaceMessage::TogglePresetDropdown);
-
         if self.show_presets {
+            // When expanded, show a horizontal row of preset buttons
             let preset_buttons: Vec<Element<'_, _>> = self
                 .available_presets
                 .iter()
                 .map(|preset| {
                     let is_selected = preset == current_preset;
-                    let label = preset.display_name();
+                    let label = preset.short_name();
 
-                    button(text(label).size(11))
-                        .padding([2, 6])
-                        .width(Length::Fill)
+                    button(text(label).size(10))
+                        .padding([2, 4])
                         .style(if is_selected {
                             button::primary
                         } else {
@@ -148,30 +142,12 @@ impl PresetManagerComponent {
                 })
                 .collect();
 
-            // Use a container with absolute-like positioning via layering
-            // The dropdown appears below the button without affecting row layout
-            container(
-                column![
-                    dropdown_button,
-                    container(column(preset_buttons).spacing(1))
-                        .padding(4)
-                        .style(|_theme| container::Style {
-                            background: Some(iced::Background::Color(iced::Color::WHITE)),
-                            border: iced::Border {
-                                color: iced::Color::from_rgb(0.8, 0.8, 0.8),
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                ]
-                .spacing(2),
-            )
-            .width(Length::Fixed(150.0))
-            .into()
+            row(preset_buttons).spacing(2).into()
         } else {
-            container(dropdown_button)
-                .width(Length::Fixed(150.0))
+            // When collapsed, show a button with current preset name
+            button(row![text(current_label).size(11), text(" ▼").size(9),])
+                .padding([2, 6])
+                .on_press(TcInterfaceMessage::TogglePresetDropdown)
                 .into()
         }
     }

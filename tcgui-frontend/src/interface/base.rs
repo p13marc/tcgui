@@ -266,8 +266,6 @@ impl TcInterface {
                     self.state
                         .add_status_message(format!("Updating rate limit: {} kbps", v), true);
                 }
-                // Mark as custom since user manually changed a setting
-                self.state.current_preset = tcgui_shared::presets::NetworkPreset::Custom;
                 Task::none()
             }
             // Preset messages
@@ -297,9 +295,11 @@ impl TcInterface {
 
     /// Render the main interface row with core controls
     fn render_main_row(&self) -> Element<'_, TcInterfaceMessage> {
+        use iced::widget::container;
+        use iced::Length;
+
         // Colors
         let text_primary = Color::from_rgb(0.1, 0.1, 0.1);
-        let _text_secondary = Color::from_rgb(0.4, 0.4, 0.4);
 
         // Interface name and icon
         let interface_icon = if self.state.is_up() {
@@ -336,15 +336,28 @@ impl TcInterface {
         // Status display
         let status_display = self.render_status_display();
 
+        // Use fixed-width containers for table-like alignment
         row![
-            interface_name,
-            interface_checkbox,
-            preset_selector,
-            feature_toggles,
-            bandwidth_display,
-            status_display
+            container(interface_name)
+                .width(Length::Fixed(120.0))
+                .align_y(iced::alignment::Vertical::Center),
+            container(interface_checkbox)
+                .width(Length::Fixed(50.0))
+                .align_y(iced::alignment::Vertical::Center),
+            container(preset_selector)
+                .width(Length::Fixed(130.0))
+                .align_y(iced::alignment::Vertical::Center),
+            container(feature_toggles)
+                .width(Length::Fixed(280.0))
+                .align_y(iced::alignment::Vertical::Center),
+            container(bandwidth_display)
+                .width(Length::Fixed(180.0))
+                .align_y(iced::alignment::Vertical::Center),
+            container(status_display)
+                .width(Length::Fill)
+                .align_y(iced::alignment::Vertical::Center),
         ]
-        .spacing(8)
+        .spacing(4)
         .align_y(iced::Alignment::Center)
         .into()
     }
