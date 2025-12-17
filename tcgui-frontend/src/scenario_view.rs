@@ -11,6 +11,7 @@ use tcgui_shared::scenario::{ExecutionState, NetworkScenario, ScenarioExecution}
 use crate::backend_manager::BackendManager;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::{ScenarioManager, ScenarioSortOption};
+use crate::theme::Theme;
 use crate::view::{scaled, scaled_padding, scaled_spacing};
 
 /// Format a duration in milliseconds to a human-readable string
@@ -47,6 +48,24 @@ pub struct ScenarioColorPalette {
     pub text_secondary: Color,
     pub background_card: Color,
     pub background_light: Color,
+    pub border_color: Color,
+}
+
+impl ScenarioColorPalette {
+    /// Create a color palette from a theme
+    pub fn from_theme(theme: &Theme) -> Self {
+        Self {
+            primary_blue: theme.colors.info,
+            success_green: theme.colors.success,
+            warning_orange: theme.colors.warning,
+            error_red: theme.colors.error,
+            text_primary: theme.colors.text_primary,
+            text_secondary: theme.colors.text_secondary,
+            background_card: theme.colors.surface,
+            background_light: theme.colors.background,
+            border_color: theme.colors.border,
+        }
+    }
 }
 
 impl Default for ScenarioColorPalette {
@@ -60,6 +79,7 @@ impl Default for ScenarioColorPalette {
             text_secondary: Color::from_rgb(0.5, 0.5, 0.5),
             background_card: Color::from_rgb(0.98, 0.99, 1.0),
             background_light: Color::from_rgb(0.97, 0.98, 1.0),
+            border_color: Color::from_rgb(0.88, 0.92, 0.98),
         }
     }
 }
@@ -69,8 +89,9 @@ pub fn render_scenario_view<'a>(
     backend_manager: &'a BackendManager,
     scenario_manager: &'a ScenarioManager,
     zoom: f32,
+    theme: &'a Theme,
 ) -> Element<'a, TcGuiMessage> {
-    let colors = ScenarioColorPalette::default();
+    let colors = ScenarioColorPalette::from_theme(theme);
 
     // Check if we have connected backends
     let connected_backends: Vec<String> = backend_manager.connected_backend_names();
@@ -104,7 +125,7 @@ pub fn render_scenario_view<'a>(
             border: iced::Border {
                 radius: 8.0.into(),
                 width: 1.0,
-                color: Color::from_rgb(0.88, 0.92, 0.98),
+                color: colors.border_color,
             },
             ..container::Style::default()
         }),
@@ -157,7 +178,7 @@ fn render_no_backends<'a>(colors: ScenarioColorPalette, zoom: f32) -> Element<'a
         border: iced::Border {
             radius: 8.0.into(),
             width: 1.0,
-            color: Color::from_rgb(0.88, 0.92, 0.98),
+            color: colors.border_color,
         },
         ..container::Style::default()
     })
@@ -382,7 +403,7 @@ fn render_backend_scenarios<'a>(
             border: iced::Border {
                 radius: 8.0.into(),
                 width: 1.0,
-                color: Color::from_rgb(0.88, 0.92, 0.98),
+                color: colors.border_color,
             },
             ..container::Style::default()
         })

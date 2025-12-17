@@ -96,7 +96,7 @@ pub fn render_main_view<'a>(
             }
         }
         crate::ui_state::AppTab::Scenarios => {
-            scenario_view::render_scenario_view(backend_manager, _scenario_manager, zoom)
+            scenario_view::render_scenario_view(backend_manager, _scenario_manager, zoom, theme)
         }
     };
 
