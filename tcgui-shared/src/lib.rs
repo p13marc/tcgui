@@ -1428,6 +1428,54 @@ impl Default for BackendMetadata {
     }
 }
 
+/// Type classification for network namespaces.
+///
+/// Used to categorize namespaces for filtering in the frontend UI.
+/// Allows users to show/hide interfaces based on namespace origin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum NamespaceType {
+    /// Default/root namespace (host interfaces)
+    #[default]
+    Default,
+    /// Traditional network namespace created with `ip netns`
+    Traditional,
+    /// Container namespace (Docker, Podman, etc.)
+    Container {
+        /// Container runtime name (e.g., "docker", "podman")
+        runtime: String,
+        /// Container ID
+        container_id: String,
+        /// Container image name
+        image: String,
+    },
+}
+
+impl NamespaceType {
+    /// Returns true if this is the default/host namespace
+    pub fn is_default(&self) -> bool {
+        matches!(self, NamespaceType::Default)
+    }
+
+    /// Returns true if this is a traditional network namespace
+    pub fn is_traditional(&self) -> bool {
+        matches!(self, NamespaceType::Traditional)
+    }
+
+    /// Returns true if this is a container namespace
+    pub fn is_container(&self) -> bool {
+        matches!(self, NamespaceType::Container { .. })
+    }
+
+    /// Returns the display label for UI filtering
+    pub fn filter_label(&self) -> &'static str {
+        match self {
+            NamespaceType::Default => "Host",
+            NamespaceType::Traditional => "Namespaces",
+            NamespaceType::Container { .. } => "Containers",
+        }
+    }
+}
+
 /// Network namespace information with contained interfaces.
 ///
 /// Represents a Linux network namespace and all the network interfaces
@@ -1440,6 +1488,8 @@ pub struct NetworkNamespace {
     pub id: Option<u32>,
     /// Whether the namespace is currently active and accessible
     pub is_active: bool,
+    /// Type classification for filtering purposes
+    pub namespace_type: NamespaceType,
     /// List of network interfaces within this namespace
     pub interfaces: Vec<NetworkInterface>,
 }

@@ -16,7 +16,8 @@ use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::{
-    errors::TcguiError, topics, InterfaceListUpdate, NetworkInterface, NetworkNamespace,
+    errors::TcguiError, topics, InterfaceListUpdate, NamespaceType, NetworkInterface,
+    NetworkNamespace,
 };
 
 use super::ServiceHealth;
@@ -357,6 +358,7 @@ impl NetworkService {
                 name: ns.name,
                 id: None,
                 is_active: true,
+                namespace_type: NamespaceType::Default,
                 interfaces: vec![], // Will be populated separately
             })
             .collect();
@@ -381,6 +383,7 @@ impl NetworkService {
                 name: namespace.to_string(),
                 id: None,
                 is_active: true,
+                namespace_type: NamespaceType::Default,
                 interfaces: interfaces.to_vec(),
             }],
             timestamp,
@@ -575,6 +578,7 @@ mod tests {
             name: "test-ns".to_string(),
             id: None,
             is_active: true,
+            namespace_type: NamespaceType::Default,
             interfaces: vec![],
         };
 

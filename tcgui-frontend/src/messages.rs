@@ -88,6 +88,10 @@ pub enum TcGuiMessage {
     ZoomReset,
     // Theme toggle
     ToggleTheme,
+    // Namespace type filter toggles
+    ToggleHostFilter,
+    ToggleNamespaceTypeFilter,
+    ToggleContainerFilter,
     // TC and Interface operations (trigger queries)
     ApplyTc {
         backend_name: String,

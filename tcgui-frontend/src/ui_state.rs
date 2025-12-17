@@ -38,6 +38,51 @@ pub const ZOOM_MAX: f32 = 2.0;
 pub const ZOOM_STEP: f32 = 0.1;
 pub const ZOOM_DEFAULT: f32 = 1.0;
 
+/// Filter settings for namespace types in the UI.
+///
+/// Controls which types of namespaces are visible in the interface list.
+#[derive(Debug, Clone)]
+pub struct NamespaceFilter {
+    /// Show host/default namespace interfaces
+    pub show_host: bool,
+    /// Show traditional network namespace interfaces
+    pub show_namespaces: bool,
+    /// Show container namespace interfaces
+    pub show_containers: bool,
+}
+
+impl Default for NamespaceFilter {
+    fn default() -> Self {
+        Self {
+            show_host: true,
+            show_namespaces: true,
+            show_containers: true,
+        }
+    }
+}
+
+impl NamespaceFilter {
+    /// Returns true if all filters are enabled
+    #[allow(dead_code)]
+    pub fn all_enabled(&self) -> bool {
+        self.show_host && self.show_namespaces && self.show_containers
+    }
+
+    /// Returns true if no filters are enabled
+    #[allow(dead_code)]
+    pub fn none_enabled(&self) -> bool {
+        !self.show_host && !self.show_namespaces && !self.show_containers
+    }
+
+    /// Enable all filters
+    #[allow(dead_code)]
+    pub fn enable_all(&mut self) {
+        self.show_host = true;
+        self.show_namespaces = true;
+        self.show_containers = true;
+    }
+}
+
 /// Manager for UI state and visibility toggles.
 #[derive(Clone)]
 pub struct UiStateManager {
@@ -53,6 +98,8 @@ pub struct UiStateManager {
     zoom_level: f32,
     /// Current theme (light/dark)
     theme: Theme,
+    /// Namespace type filter for interface visibility
+    namespace_filter: NamespaceFilter,
 }
 
 impl Default for UiStateManager {
@@ -64,6 +111,7 @@ impl Default for UiStateManager {
             interface_selection_dialog: InterfaceSelectionDialog::default(),
             zoom_level: ZOOM_DEFAULT,
             theme: Theme::default(),
+            namespace_filter: NamespaceFilter::default(),
         }
     }
 }
@@ -107,6 +155,32 @@ impl UiStateManager {
     /// Toggles between light and dark theme.
     pub fn toggle_theme(&mut self) {
         self.theme = self.theme.toggle();
+    }
+
+    /// Gets the namespace filter settings.
+    pub fn namespace_filter(&self) -> &NamespaceFilter {
+        &self.namespace_filter
+    }
+
+    /// Toggles the host namespace filter.
+    pub fn toggle_host_filter(&mut self) {
+        self.namespace_filter.show_host = !self.namespace_filter.show_host;
+    }
+
+    /// Toggles the traditional namespace filter.
+    pub fn toggle_namespace_filter(&mut self) {
+        self.namespace_filter.show_namespaces = !self.namespace_filter.show_namespaces;
+    }
+
+    /// Toggles the container namespace filter.
+    pub fn toggle_container_filter(&mut self) {
+        self.namespace_filter.show_containers = !self.namespace_filter.show_containers;
+    }
+
+    /// Enables all namespace filters.
+    #[allow(dead_code)]
+    pub fn enable_all_namespace_filters(&mut self) {
+        self.namespace_filter.enable_all();
     }
 
     /// Toggles the visibility of a backend in the UI.

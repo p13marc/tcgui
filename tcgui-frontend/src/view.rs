@@ -9,9 +9,10 @@ use crate::scenario_manager::ScenarioManager;
 use crate::scenario_view;
 use crate::theme::{Theme, ThemeMode};
 use crate::ui_state::UiStateManager;
-use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::widget::{button, checkbox, column, container, row, scrollable, space, text};
 use iced::{Color, Element, Length};
 use std::collections::HashMap;
+use tcgui_shared::NamespaceType;
 
 /// Helper function to scale a font size by the zoom factor.
 /// Takes a base size and zoom level, returns the scaled size as f32 for Iced Pixels.
@@ -240,10 +241,89 @@ fn render_header<'a>(
             color: Some(colors.text_secondary),
         });
 
+    // Namespace type filter checkboxes
+    let filter = ui_state.namespace_filter();
+    let filter_colors = colors.clone();
+    let host_checkbox = checkbox(filter.show_host)
+        .label("Host")
+        .on_toggle(|_| TcGuiMessage::ToggleHostFilter)
+        .size(scaled(14, zoom))
+        .text_size(scaled(12, zoom))
+        .style(move |_, status| {
+            let active = matches!(status, checkbox::Status::Active { .. });
+            checkbox::Style {
+                background: iced::Background::Color(if active {
+                    filter_colors.primary_blue
+                } else {
+                    filter_colors.background_card
+                }),
+                icon_color: filter_colors.background_card,
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    width: 1.0,
+                    color: filter_colors.text_secondary,
+                },
+                text_color: Some(filter_colors.text_primary),
+            }
+        });
+
+    let filter_colors = colors.clone();
+    let ns_checkbox = checkbox(filter.show_namespaces)
+        .label("NS")
+        .on_toggle(|_| TcGuiMessage::ToggleNamespaceTypeFilter)
+        .size(scaled(14, zoom))
+        .text_size(scaled(12, zoom))
+        .style(move |_, status| {
+            let active = matches!(status, checkbox::Status::Active { .. });
+            checkbox::Style {
+                background: iced::Background::Color(if active {
+                    filter_colors.primary_blue
+                } else {
+                    filter_colors.background_card
+                }),
+                icon_color: filter_colors.background_card,
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    width: 1.0,
+                    color: filter_colors.text_secondary,
+                },
+                text_color: Some(filter_colors.text_primary),
+            }
+        });
+
+    let filter_colors = colors.clone();
+    let container_checkbox = checkbox(filter.show_containers)
+        .label("Containers")
+        .on_toggle(|_| TcGuiMessage::ToggleContainerFilter)
+        .size(scaled(14, zoom))
+        .text_size(scaled(12, zoom))
+        .style(move |_, status| {
+            let active = matches!(status, checkbox::Status::Active { .. });
+            checkbox::Style {
+                background: iced::Background::Color(if active {
+                    filter_colors.primary_blue
+                } else {
+                    filter_colors.background_card
+                }),
+                icon_color: filter_colors.background_card,
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    width: 1.0,
+                    color: filter_colors.text_secondary,
+                },
+                text_color: Some(filter_colors.text_primary),
+            }
+        });
+
+    let filter_row = row![host_checkbox, ns_checkbox, container_checkbox,]
+        .spacing(scaled_spacing(12, zoom))
+        .align_y(iced::Alignment::Center);
+
     let header_content = column![
         row![
             status_line,
             space::horizontal(),
+            filter_row,
             theme_button,
             zoom_indicator,
         ]
@@ -662,6 +742,19 @@ fn render_backend_namespaces<'a>(
 
     for (namespace_name, namespace_group) in sorted_namespaces {
         if !namespace_group.tc_interfaces.is_empty() {
+            // Apply namespace type filter
+            let ns_type = &namespace_group.namespace.namespace_type;
+            let filter = ui_state.namespace_filter();
+            let should_show = match ns_type {
+                NamespaceType::Default => filter.show_host,
+                NamespaceType::Traditional => filter.show_namespaces,
+                NamespaceType::Container { .. } => filter.show_containers,
+            };
+
+            if !should_show {
+                continue;
+            }
+
             let namespace_key = format!("{}/{}", backend_name, namespace_name);
             let is_hidden = ui_state.is_namespace_hidden(backend_name, namespace_name);
 

@@ -488,6 +488,18 @@ impl TcGui {
                 self.ui_state.toggle_theme();
                 Task::none()
             }
+            TcGuiMessage::ToggleHostFilter => {
+                self.ui_state.toggle_host_filter();
+                Task::none()
+            }
+            TcGuiMessage::ToggleNamespaceTypeFilter => {
+                self.ui_state.toggle_namespace_filter();
+                Task::none()
+            }
+            TcGuiMessage::ToggleContainerFilter => {
+                self.ui_state.toggle_container_filter();
+                Task::none()
+            }
 
             // Maintenance operations
             TcGuiMessage::CleanupStaleBackends => handle_cleanup_stale_backends(
