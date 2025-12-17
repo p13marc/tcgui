@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use iced::Task;
-use tcgui_shared::{presets::NetworkPreset, NetworkBandwidthStats};
+use tcgui_shared::{presets::CustomPreset, NetworkBandwidthStats};
 
 /// Main interface message type that routes to specific components
 /// Currently unused - prepared for future modular architecture
@@ -92,7 +92,7 @@ pub enum DisplayMessage {
 /// Currently unused - prepared for future modular architecture
 #[derive(Debug, Clone)]
 pub enum PresetMessage {
-    PresetSelected(NetworkPreset),
+    PresetSelected(CustomPreset),
     ApplyPreset,
     ToggleVisibility,
 }

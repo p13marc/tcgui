@@ -179,6 +179,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -198,6 +200,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -216,6 +220,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -234,6 +240,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
@@ -252,6 +260,8 @@ mod tests {
             no_multicast: true,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();

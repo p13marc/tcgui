@@ -73,6 +73,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();

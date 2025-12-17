@@ -7,6 +7,7 @@ pub mod commands;
 pub mod config;
 pub mod interfaces;
 pub mod network;
+pub mod preset_loader;
 pub mod scenario;
 pub mod services;
 pub mod tc_commands;

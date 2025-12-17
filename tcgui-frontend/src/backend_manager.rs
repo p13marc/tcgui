@@ -7,8 +7,8 @@
 use crate::interface::TcInterface;
 use std::collections::{HashMap, HashSet};
 use tcgui_shared::{
-    BackendHealthStatus, InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent,
-    NetworkNamespace,
+    presets::PresetList, BackendHealthStatus, InterfaceEventType, InterfaceListUpdate,
+    InterfaceStateEvent, NetworkNamespace,
 };
 use tracing::info;
 
@@ -23,6 +23,8 @@ pub struct BackendGroup {
     pub disconnected_at: Option<u64>,
     /// Map of namespace name to NamespaceGroup for this backend
     pub namespaces: HashMap<String, NamespaceGroup>,
+    /// Available presets (built-in and custom) from this backend
+    pub preset_list: PresetList,
 }
 
 /// Namespace grouping structure for organizing interface components within a backend.
@@ -82,6 +84,7 @@ impl BackendManager {
                 last_seen: current_time,
                 disconnected_at: None,
                 namespaces: HashMap::new(),
+                preset_list: PresetList::default(),
             });
 
         // Mark backend as connected and update last seen
@@ -197,6 +200,7 @@ impl BackendManager {
                         .as_secs(),
                     disconnected_at: None,
                     namespaces: HashMap::new(),
+                    preset_list: PresetList::default(),
                 });
 
             // Clear disconnection timestamp since backend is alive
@@ -343,6 +347,46 @@ impl BackendManager {
                     .sum::<usize>()
             })
             .sum()
+    }
+
+    /// Updates the preset list for a specific backend.
+    pub fn update_preset_list(&mut self, backend_name: &str, preset_list: PresetList) {
+        if let Some(backend_group) = self.backends.get_mut(backend_name) {
+            info!(
+                "Updated preset list for backend '{}' with {} presets",
+                backend_name,
+                preset_list.len()
+            );
+            backend_group.preset_list = preset_list;
+        } else {
+            // Create backend entry if it doesn't exist yet
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            info!(
+                "Creating backend '{}' entry for preset list with {} presets",
+                backend_name,
+                preset_list.len()
+            );
+            self.backends.insert(
+                backend_name.to_string(),
+                BackendGroup {
+                    is_connected: false,
+                    last_seen: current_time,
+                    disconnected_at: None,
+                    namespaces: HashMap::new(),
+                    preset_list,
+                },
+            );
+        }
+    }
+
+    /// Gets the preset list for a specific backend.
+    /// This method is prepared for future frontend preset UI integration.
+    #[allow(dead_code)]
+    pub fn get_preset_list(&self, backend_name: &str) -> Option<&PresetList> {
+        self.backends.get(backend_name).map(|bg| &bg.preset_list)
     }
 }
 

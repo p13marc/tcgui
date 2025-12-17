@@ -1,0 +1,20 @@
+// Satellite Link Preset
+// High latency satellite connection with low loss
+{
+    id: "satellite-link",
+    name: "Satellite Link",
+    description: "High latency satellite connection (500ms delay, reliable)",
+
+    loss: {
+        percentage: 1.0,
+        correlation: 10.0,
+    },
+    delay: {
+        base_ms: 500.0,
+        jitter_ms: 20.0,
+        correlation: 25.0,
+    },
+    rate_limit: {
+        rate_kbps: 2000,  // 2 Mbps typical satellite
+    },
+}

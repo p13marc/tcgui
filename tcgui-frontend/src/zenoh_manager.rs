@@ -2,9 +2,9 @@ use iced::task::{sipper, Never, Sipper};
 use iced::Subscription;
 use std::sync::Arc;
 use tcgui_shared::{
-    scenario::ScenarioExecutionUpdate, topics, BackendHealthStatus, BandwidthUpdate,
-    InterfaceControlResponse, InterfaceListUpdate, InterfaceStateEvent, TcConfigUpdate, TcResponse,
-    ZenohConfig,
+    presets::PresetList, scenario::ScenarioExecutionUpdate, topics, BackendHealthStatus,
+    BandwidthUpdate, InterfaceControlResponse, InterfaceListUpdate, InterfaceStateEvent,
+    TcConfigUpdate, TcResponse, ZenohConfig,
 };
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -141,6 +141,53 @@ fn handle_tc_config_update_sample(sample: zenoh::sample::Sample) -> Option<Zenoh
         },
         ZenohEvent::TcConfigUpdate
     )
+}
+
+/// Handles zenoh sample processing for preset list updates
+fn handle_preset_list_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
+    let topic = sample.key_expr().as_str();
+
+    // Extract backend name from topic
+    if let Some(backend_name) = topics::extract_backend_name(sample.key_expr()) {
+        // Convert payload to bytes
+        let payload_bytes = sample.payload().to_bytes();
+
+        // Convert bytes to UTF-8 string
+        match std::str::from_utf8(&payload_bytes) {
+            Ok(payload_str) => {
+                // Deserialize JSON to target type
+                match serde_json::from_str::<PresetList>(payload_str) {
+                    Ok(preset_list) => {
+                        // Log successful processing
+                        info!(
+                            "Frontend received preset list from '{}' with {} presets",
+                            backend_name,
+                            preset_list.len()
+                        );
+                        // Create and send the event
+                        Some(ZenohEvent::PresetListUpdate {
+                            backend_name,
+                            preset_list,
+                        })
+                    }
+                    Err(e) => {
+                        error!("Failed to deserialize preset list: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to extract preset list payload: {}", e);
+                None
+            }
+        }
+    } else {
+        error!(
+            "Could not extract backend name from preset list topic: {}",
+            topic
+        );
+        None
+    }
 }
 
 /// Handles zenoh sample processing for scenario execution updates
@@ -424,6 +471,28 @@ impl ZenohManager {
                             }
                         };
 
+                        // Declare subscriber for preset list updates with history
+                        let preset_list_topic = "tcgui/*/presets/list";
+                        let preset_list_subscriber = match session
+                            .declare_subscriber(preset_list_topic)
+                            .history(HistoryConfig::default().detect_late_publishers())
+                            .recovery(RecoveryConfig::default().heartbeat())
+                            .subscriber_detection()
+                            .await
+                        {
+                            Ok(subscriber) => {
+                                info!(
+                                    "Subscribed to all preset list updates with history: {}",
+                                    preset_list_topic
+                                );
+                                subscriber
+                            }
+                            Err(e) => {
+                                error!("Failed to subscribe to preset list updates: {}", e);
+                                continue; // Retry connection
+                            }
+                        };
+
                         // Declare liveliness subscriber to detect backend presence
                         let liveliness_topic = "tcgui/*/health";
                         let liveliness_subscriber = match session
@@ -533,6 +602,21 @@ impl ZenohManager {
                                         }
                                         Err(e) => {
                                             error!("Error receiving scenario execution update: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Handle preset list updates
+                                sample_result = preset_list_subscriber.recv_async() => {
+                                    match sample_result {
+                                        Ok(sample) => {
+                                            if let Some(event) = handle_preset_list_update_sample(sample) {
+                                                let _ = output.send(event).await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Error receiving preset list update: {}", e);
                                             break;
                                         }
                                     }

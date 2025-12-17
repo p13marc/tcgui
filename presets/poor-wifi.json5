@@ -1,0 +1,30 @@
+// Poor WiFi Preset
+// Congested WiFi with packet loss and occasional corruption
+{
+    id: "poor-wifi",
+    name: "Poor WiFi",
+    description: "Congested WiFi with packet loss and occasional corruption",
+
+    loss: {
+        percentage: 8.0,
+        correlation: 25.0,
+    },
+    delay: {
+        base_ms: 80.0,
+        jitter_ms: 30.0,
+        correlation: 15.0,
+    },
+    duplicate: {
+        percentage: 1.0,
+        correlation: 10.0,
+    },
+    reorder: {
+        percentage: 3.0,
+        correlation: 15.0,
+        gap: 2,
+    },
+    corrupt: {
+        percentage: 0.5,
+        correlation: 5.0,
+    },
+}

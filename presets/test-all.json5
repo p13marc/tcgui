@@ -1,0 +1,33 @@
+// Test All Features Preset
+// Testing preset with all netem features enabled
+{
+    id: "test-all",
+    name: "Test All Features",
+    description: "Testing preset with all netem features enabled",
+
+    loss: {
+        percentage: 5.0,
+        correlation: 15.0,
+    },
+    delay: {
+        base_ms: 100.0,
+        jitter_ms: 20.0,
+        correlation: 25.0,
+    },
+    duplicate: {
+        percentage: 2.0,
+        correlation: 10.0,
+    },
+    reorder: {
+        percentage: 8.0,
+        correlation: 20.0,
+        gap: 3,
+    },
+    corrupt: {
+        percentage: 1.0,
+        correlation: 8.0,
+    },
+    rate_limit: {
+        rate_kbps: 5000,  // 5 Mbps
+    },
+}

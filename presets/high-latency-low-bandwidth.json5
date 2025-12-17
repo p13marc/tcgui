@@ -1,0 +1,20 @@
+// High Latency + Low Bandwidth Preset
+// High delay with severe bandwidth constraints
+{
+    id: "high-latency-low-bandwidth",
+    name: "High Latency + Low Bandwidth",
+    description: "High delay with severe bandwidth constraints",
+
+    loss: {
+        percentage: 3.0,
+        correlation: 20.0,
+    },
+    delay: {
+        base_ms: 800.0,
+        jitter_ms: 50.0,
+        correlation: 35.0,
+    },
+    rate_limit: {
+        rate_kbps: 512,  // 512 kbps
+    },
+}

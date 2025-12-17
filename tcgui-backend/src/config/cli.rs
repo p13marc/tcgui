@@ -19,6 +19,8 @@ pub struct CliConfig {
     pub no_multicast: bool,
     pub scenario_dirs: Vec<String>,
     pub no_default_scenarios: bool,
+    pub preset_dirs: Vec<String>,
+    pub no_default_presets: bool,
 }
 
 impl CliConfig {
@@ -34,6 +36,7 @@ impl CliConfig {
         let exclude_loopback = matches.get_flag("exclude-loopback");
         let no_multicast = matches.get_flag("no-multicast");
         let no_default_scenarios = matches.get_flag("no-default-scenarios");
+        let no_default_presets = matches.get_flag("no-default-presets");
 
         let backend_name = matches
             .get_one::<String>("name")
@@ -53,6 +56,11 @@ impl CliConfig {
             .map(|vals| vals.cloned().collect())
             .unwrap_or_default();
 
+        let preset_dirs: Vec<String> = matches
+            .get_many::<String>("preset-dir")
+            .map(|vals| vals.cloned().collect())
+            .unwrap_or_default();
+
         Ok(Self {
             verbose,
             exclude_loopback,
@@ -63,6 +71,8 @@ impl CliConfig {
             no_multicast,
             scenario_dirs,
             no_default_scenarios,
+            preset_dirs,
+            no_default_presets,
         })
     }
 
@@ -161,6 +171,26 @@ impl CliConfig {
                               (/usr/share/tcgui/scenarios, ~/.config/tcgui/scenarios, ./scenarios). \
                               Only scenarios from explicitly specified --scenario-dir will be loaded."),
             )
+            .arg(
+                Arg::new("preset-dir")
+                    .long("preset-dir")
+                    .value_name("DIRECTORY")
+                    .action(clap::ArgAction::Append)
+                    .help("Additional directory to load preset files from")
+                    .long_help("Additional directory to scan for .json5 preset files. \
+                              Can be specified multiple times. Directories are scanned in order \
+                              with later ones taking priority (can override presets with same ID). \
+                              Default directories: /usr/share/tcgui/presets, ~/.config/tcgui/presets, ./presets"),
+            )
+            .arg(
+                Arg::new("no-default-presets")
+                    .long("no-default-presets")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Disable loading presets from default directories")
+                    .long_help("Disable automatic loading of presets from default directories \
+                              (/usr/share/tcgui/presets, ~/.config/tcgui/presets, ./presets). \
+                              Only presets from explicitly specified --preset-dir will be loaded."),
+            )
     }
 
     /// Validate CLI configuration
@@ -212,11 +242,13 @@ mod tests {
         assert!(!config.exclude_loopback);
         assert!(!config.no_multicast);
         assert!(!config.no_default_scenarios);
+        assert!(!config.no_default_presets);
         assert_eq!(config.backend_name, "default");
         assert_eq!(config.zenoh_mode, "peer");
         assert!(config.zenoh_connect.is_none());
         assert!(config.zenoh_listen.is_none());
         assert!(config.scenario_dirs.is_empty());
+        assert!(config.preset_dirs.is_empty());
     }
 
     #[test]
@@ -239,6 +271,9 @@ mod tests {
                 "--scenario-dir",
                 "/another/dir",
                 "--no-default-scenarios",
+                "--preset-dir",
+                "/custom/presets",
+                "--no-default-presets",
             ])
             .unwrap();
 
@@ -247,6 +282,7 @@ mod tests {
         assert!(config.verbose);
         assert!(config.exclude_loopback);
         assert!(config.no_default_scenarios);
+        assert!(config.no_default_presets);
         assert_eq!(config.backend_name, "test-backend");
         assert_eq!(config.zenoh_mode, "client");
         assert_eq!(
@@ -258,6 +294,7 @@ mod tests {
             config.scenario_dirs,
             vec!["/custom/scenarios", "/another/dir"]
         );
+        assert_eq!(config.preset_dirs, vec!["/custom/presets"]);
     }
 
     #[test]
@@ -272,6 +309,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_ok());
@@ -289,6 +328,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_err());
@@ -306,6 +347,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_err());
@@ -323,6 +366,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_err());

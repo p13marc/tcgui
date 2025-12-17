@@ -71,12 +71,16 @@ tcgui/
 **Pub/Sub (Scenario Updates):**
 - `tcgui/{backend}/scenario/execution/{namespace}/{interface}` - Execution status updates
 
+**Pub/Sub (Preset Updates):**
+- `tcgui/{backend}/presets/list` - Available presets (built-in + custom)
+
 ### Key Backend Components
 
 - `main.rs` - Application entry, Zenoh session, query handlers
 - `network.rs` - Interface discovery via rtnetlink
 - `tc_commands.rs` - TC netem execution with intelligent parameter removal
 - `bandwidth.rs` - `/proc/net/dev` parsing per namespace
+- `preset_loader.rs` - Custom preset loading from directories
 - `scenario/` - Scenario system:
   - `execution.rs` - Scenario execution engine, step timing, pause/resume
   - `manager.rs` - Scenario storage and template loading
@@ -110,6 +114,21 @@ The frontend uses `TcFeatures` with individual `TcFeature<T>` for: Loss, Delay, 
 - Backend uses Linux capabilities (`CAP_NET_ADMIN`) instead of root
 - Set capabilities: `just set-caps` (calls `setcap cap_net_admin+ep`)
 
+## Preset System
+
+Custom presets define reusable network condition configurations. JSON5 format with implicit `enabled: true` for present features.
+
+- **Loading**: `./presets`, `~/.config/tcgui/presets`, `/usr/share/tcgui/presets`
+- **Built-in**: SatelliteLink, CellularNetwork, PoorWiFi, WanLink, UnreliableConnection, etc.
+- **Usage**: Select in UI dropdown or reference by ID in scenario steps
+
+Key components:
+- `tcgui-shared/src/preset_json.rs` - JSON5 parsing for preset files
+- `tcgui-shared/src/presets.rs` - PresetSource, PresetList, CustomPreset types
+- `tcgui-backend/src/preset_loader.rs` - File loading and PresetResolver
+
+See `docs/preset-format.md` for format specification.
+
 ## Scenario System
 
 Scenarios define sequences of TC configurations applied over time. JSON5 format with human-readable durations.
@@ -117,6 +136,7 @@ Scenarios define sequences of TC configurations applied over time. JSON5 format 
 - **Loading**: `./scenarios`, `~/.config/tcgui/scenarios`, `/usr/share/tcgui/scenarios`
 - **Execution**: One scenario per interface, multiple interfaces can run simultaneously
 - **Features**: Pause/resume, loop mode, cleanup on failure, real-time progress
+- **Preset References**: Steps can use `preset: "preset-id"` instead of inline `tc_config`
 
 See `docs/scenario-format.md` for format specification.
 

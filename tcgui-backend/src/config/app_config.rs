@@ -42,6 +42,8 @@ pub struct AppConfig {
     pub bandwidth_monitor_interval_secs: u64,
     pub scenario_dirs: Vec<String>,
     pub no_default_scenarios: bool,
+    pub preset_dirs: Vec<String>,
+    pub no_default_presets: bool,
 }
 
 impl AppConfig {
@@ -65,6 +67,8 @@ impl AppConfig {
             bandwidth_monitor_interval_secs: 2, // Default 2 seconds
             scenario_dirs: cli_config.scenario_dirs.clone(),
             no_default_scenarios: cli_config.no_default_scenarios,
+            preset_dirs: cli_config.preset_dirs.clone(),
+            no_default_presets: cli_config.no_default_presets,
         })
     }
 
@@ -168,6 +172,8 @@ pub struct AppConfigBuilder {
     bandwidth_monitor_interval_secs: Option<u64>,
     scenario_dirs: Option<Vec<String>>,
     no_default_scenarios: Option<bool>,
+    preset_dirs: Option<Vec<String>>,
+    no_default_presets: Option<bool>,
 }
 
 impl AppConfigBuilder {
@@ -181,6 +187,8 @@ impl AppConfigBuilder {
             bandwidth_monitor_interval_secs: None,
             scenario_dirs: None,
             no_default_scenarios: None,
+            preset_dirs: None,
+            no_default_presets: None,
         }
     }
 
@@ -226,6 +234,18 @@ impl AppConfigBuilder {
         self
     }
 
+    /// Set preset directories
+    pub fn preset_dirs(mut self, dirs: Vec<String>) -> Self {
+        self.preset_dirs = Some(dirs);
+        self
+    }
+
+    /// Set no default presets flag
+    pub fn no_default_presets(mut self, no_defaults: bool) -> Self {
+        self.no_default_presets = Some(no_defaults);
+        self
+    }
+
     /// Build the configuration
     pub fn build(self) -> Result<AppConfig> {
         let config = AppConfig {
@@ -238,6 +258,8 @@ impl AppConfigBuilder {
             bandwidth_monitor_interval_secs: self.bandwidth_monitor_interval_secs.unwrap_or(2),
             scenario_dirs: self.scenario_dirs.unwrap_or_default(),
             no_default_scenarios: self.no_default_scenarios.unwrap_or(false),
+            preset_dirs: self.preset_dirs.unwrap_or_default(),
+            no_default_presets: self.no_default_presets.unwrap_or(false),
         };
 
         config.validate()?;
@@ -290,6 +312,8 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec!["/custom/scenarios".to_string()],
             no_default_scenarios: true,
+            preset_dirs: vec!["/custom/presets".to_string()],
+            no_default_presets: true,
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();
@@ -298,6 +322,8 @@ mod tests {
         assert_eq!(app_config.log_level, LogLevel::Info); // Not verbose
         assert_eq!(app_config.scenario_dirs, vec!["/custom/scenarios"]);
         assert!(app_config.no_default_scenarios);
+        assert_eq!(app_config.preset_dirs, vec!["/custom/presets"]);
+        assert!(app_config.no_default_presets);
     }
 
     #[test]
@@ -312,12 +338,16 @@ mod tests {
             no_multicast: false,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         let app_config = AppConfig::from_cli(&cli_config).unwrap();
         assert_eq!(app_config.log_level, LogLevel::Debug); // Verbose enabled
         assert!(app_config.scenario_dirs.is_empty());
         assert!(!app_config.no_default_scenarios);
+        assert!(app_config.preset_dirs.is_empty());
+        assert!(!app_config.no_default_presets);
     }
 
     #[test]
@@ -330,6 +360,8 @@ mod tests {
             bandwidth_monitor_interval_secs: 2,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_ok());
@@ -345,6 +377,8 @@ mod tests {
             bandwidth_monitor_interval_secs: 2,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_err());
@@ -360,6 +394,8 @@ mod tests {
             bandwidth_monitor_interval_secs: 2,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_err());
@@ -372,6 +408,8 @@ mod tests {
             bandwidth_monitor_interval_secs: 0,
             scenario_dirs: vec![],
             no_default_scenarios: false,
+            preset_dirs: vec![],
+            no_default_presets: false,
         };
 
         assert!(config.validate().is_err());

@@ -1,0 +1,30 @@
+// Unreliable Connection Preset
+// Very poor network with high loss, duplication and reordering
+{
+    id: "unreliable-connection",
+    name: "Unreliable Connection",
+    description: "Very poor network with high loss, duplication and reordering",
+
+    loss: {
+        percentage: 15.0,
+        correlation: 30.0,
+    },
+    delay: {
+        base_ms: 200.0,
+        jitter_ms: 100.0,
+        correlation: 40.0,
+    },
+    duplicate: {
+        percentage: 5.0,
+        correlation: 25.0,
+    },
+    reorder: {
+        percentage: 10.0,
+        correlation: 30.0,
+        gap: 5,
+    },
+    corrupt: {
+        percentage: 2.0,
+        correlation: 15.0,
+    },
+}

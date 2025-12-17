@@ -629,6 +629,7 @@ fn render_backend_namespaces<'a>(
                 backend_name,
                 namespace_name,
                 namespace_group,
+                &backend_group.preset_list,
                 namespace_key,
                 is_hidden,
                 namespace_bandwidth_summaries.clone(),
@@ -648,6 +649,7 @@ fn render_namespace_section<'a>(
     backend_name: &'a str,
     namespace_name: &'a str,
     namespace_group: &'a NamespaceGroup,
+    preset_list: &'a tcgui_shared::presets::PresetList,
     namespace_key: String,
     is_hidden: bool,
     namespace_bandwidth_summaries: HashMap<
@@ -686,7 +688,8 @@ fn render_namespace_section<'a>(
             .into()
     } else {
         // Full namespace view with interface cards
-        let interfaces = render_namespace_interfaces(backend_name, namespace_name, namespace_group);
+        let interfaces =
+            render_namespace_interfaces(backend_name, namespace_name, namespace_group, preset_list);
         let interfaces_column: Element<_> =
             column(interfaces).spacing(scaled_spacing(4, zoom)).into();
 
@@ -916,6 +919,7 @@ fn render_namespace_interfaces<'a>(
     backend_name: &'a str,
     namespace_name: &'a str,
     namespace_group: &'a NamespaceGroup,
+    preset_list: &'a tcgui_shared::presets::PresetList,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     // Sort interfaces alphabetically for consistent order
     let mut sorted_interfaces: Vec<_> = namespace_group.tc_interfaces.iter().collect();
@@ -927,7 +931,7 @@ fn render_namespace_interfaces<'a>(
             let name_clone = name.clone();
             let backend_clone = backend_name.to_string();
             let namespace_clone = namespace_name.to_string();
-            interface.view().map(move |msg| {
+            interface.view(preset_list).map(move |msg| {
                 TcGuiMessage::TcInterfaceMessage(
                     backend_clone.clone(),
                     namespace_clone.clone(),

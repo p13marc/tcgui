@@ -9,6 +9,7 @@ use iced::keyboard::{Event as KeyboardEvent, Key, Modifiers};
 use iced::mouse::{Event as MouseEvent, ScrollDelta};
 use iced::{Element, Subscription, Task};
 use tcgui_shared::ZenohConfig;
+use tracing::info;
 
 use crate::backend_manager::BackendManager;
 use crate::message_handlers::*;
@@ -491,6 +492,22 @@ impl TcGui {
                 &mut self.ui_state,
                 &mut self.scenario_manager,
             ),
+
+            // Preset list updates from backend
+            TcGuiMessage::PresetListUpdate {
+                backend_name,
+                preset_list,
+            } => {
+                info!(
+                    "Received preset list from '{}' with {} presets",
+                    backend_name,
+                    preset_list.len()
+                );
+                // Store preset list in backend manager for future use
+                self.backend_manager
+                    .update_preset_list(&backend_name, preset_list);
+                Task::none()
+            }
         }
     }
 
@@ -557,6 +574,13 @@ impl TcGui {
                 } => TcGuiMessage::ScenarioListResponse {
                     backend_name,
                     response,
+                },
+                ZenohEvent::PresetListUpdate {
+                    backend_name,
+                    preset_list,
+                } => TcGuiMessage::PresetListUpdate {
+                    backend_name,
+                    preset_list,
                 },
             }),
             // Timer for periodic backend cleanup (every 3 seconds)

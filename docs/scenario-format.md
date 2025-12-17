@@ -55,7 +55,7 @@ Files must have the `.json5` extension.
             // Required: Description of this step
             description: "What happens during this step",
             
-            // Required: TC configuration for this step
+            // Option 1: Inline TC configuration for this step
             tc_config: {
                 // All fields are optional - presence enables the feature
                 loss: { ... },
@@ -65,6 +65,9 @@ Files must have the `.json5` extension.
                 corrupt: { ... },
                 rate_limit: { ... },
             },
+            
+            // Option 2: Reference a preset by ID (mutually exclusive with tc_config)
+            // preset: "satellite-link",
         },
         // ... more steps
     ],
@@ -142,6 +145,72 @@ corrupt: {
 ```json5
 rate_limit: {
     rate_kbps: 1000,      // 1-1000000: Rate limit in kbps (default: 1000)
+}
+```
+
+## Using Preset References
+
+Instead of inline `tc_config`, steps can reference a preset by ID. This is useful for:
+- Reusing common network conditions across multiple scenarios
+- Keeping scenarios DRY (Don't Repeat Yourself)
+- Using built-in presets like "satellite-link", "cellular-network", etc.
+
+### Preset Reference Syntax
+
+```json5
+{
+    duration: "1m",
+    description: "Apply satellite conditions",
+    preset: "satellite-link"  // Reference by preset ID
+}
+```
+
+### Available Built-in Presets
+
+| Preset ID | Description |
+|-----------|-------------|
+| `satellite-link` or `satellite` | High latency satellite connection (500ms delay) |
+| `cellular-network` or `cellular` or `mobile` | Mobile network with variable latency |
+| `poor-wifi` or `wifi` | Congested WiFi with packet loss and corruption |
+| `wan-link` or `wan` | Wide Area Network with moderate latency |
+| `unreliable-connection` or `unreliable` | Very poor network with high loss |
+| `high-latency-low-bandwidth` or `highlatency` | High delay with bandwidth constraints |
+| `test-all` or `test` | Testing preset with all features enabled |
+
+### Custom Presets
+
+Custom presets can be defined in JSON5 files. See [Preset Format](preset-format.md) for details.
+
+### Example: Scenario Using Presets
+
+```json5
+{
+    id: "vpn-degradation",
+    name: "VPN Connection Issues",
+    description: "Simulate VPN connection degradation",
+    
+    steps: [
+        {
+            duration: "1m",
+            description: "Normal VPN connection",
+            preset: "wan-link"
+        },
+        {
+            duration: "30s",
+            description: "VPN under stress",
+            preset: "unreliable-connection"
+        },
+        {
+            duration: "1m",
+            description: "Recovery",
+            preset: "wan-link"
+        },
+        {
+            duration: "30s",
+            description: "Clear all TC rules",
+            tc_config: {}
+        },
+    ],
 }
 ```
 

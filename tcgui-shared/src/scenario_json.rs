@@ -98,8 +98,12 @@ pub struct ScenarioStepJson {
     /// Duration as a string like "30s", "500ms", "1m"
     pub duration: String,
     pub description: String,
+    /// Inline TC configuration (mutually exclusive with `preset`)
     #[serde(default)]
     pub tc_config: TcConfigJson,
+    /// Reference to a preset by ID (mutually exclusive with `tc_config`)
+    /// When both are provided, `preset` takes precedence
+    pub preset: Option<String>,
 }
 
 /// Intermediate struct for TC config with implicit enabled
@@ -114,6 +118,7 @@ pub struct TcConfigJson {
     pub rate_limit: Option<RateLimitConfigJson>,
 }
 
+/// Loss configuration for JSON5 parsing (presence implies enabled)
 #[derive(Debug, Clone, Deserialize)]
 pub struct LossConfigJson {
     #[serde(default)]
@@ -122,6 +127,7 @@ pub struct LossConfigJson {
     pub correlation: f32,
 }
 
+/// Delay configuration for JSON5 parsing (presence implies enabled)
 #[derive(Debug, Clone, Deserialize)]
 pub struct DelayConfigJson {
     #[serde(default)]
@@ -132,6 +138,7 @@ pub struct DelayConfigJson {
     pub correlation: f32,
 }
 
+/// Duplicate configuration for JSON5 parsing (presence implies enabled)
 #[derive(Debug, Clone, Deserialize)]
 pub struct DuplicateConfigJson {
     #[serde(default)]
@@ -140,6 +147,7 @@ pub struct DuplicateConfigJson {
     pub correlation: f32,
 }
 
+/// Reorder configuration for JSON5 parsing (presence implies enabled)
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReorderConfigJson {
     #[serde(default)]
@@ -154,6 +162,7 @@ fn default_gap() -> u32 {
     5
 }
 
+/// Corrupt configuration for JSON5 parsing (presence implies enabled)
 #[derive(Debug, Clone, Deserialize)]
 pub struct CorruptConfigJson {
     #[serde(default)]
@@ -162,6 +171,7 @@ pub struct CorruptConfigJson {
     pub correlation: f32,
 }
 
+/// Rate limit configuration for JSON5 parsing (presence implies enabled)
 #[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitConfigJson {
     #[serde(default = "default_rate")]
@@ -237,31 +247,87 @@ impl TcConfigJson {
     }
 }
 
+/// Trait for resolving preset IDs to TC configurations
+pub trait PresetResolver {
+    /// Resolve a preset ID to its TC configuration
+    fn resolve(&self, preset_id: &str) -> Option<TcNetemConfig>;
+}
+
+impl ScenarioStepJson {
+    /// Convert to ScenarioStep, optionally resolving preset references
+    pub fn to_scenario_step<R: PresetResolver>(
+        &self,
+        step_index: usize,
+        preset_resolver: Option<&R>,
+    ) -> Result<ScenarioStep, ScenarioParseError> {
+        let duration_ms = parse_duration_string(&self.duration).map_err(|e| {
+            ScenarioParseError::ValidationError(format!(
+                "Invalid duration '{}' in step {}: {}",
+                self.duration,
+                step_index + 1,
+                e
+            ))
+        })?;
+
+        // Determine TC config: preset takes precedence over inline tc_config
+        let tc_config = if let Some(preset_id) = &self.preset {
+            if let Some(resolver) = preset_resolver {
+                resolver.resolve(preset_id).ok_or_else(|| {
+                    ScenarioParseError::ValidationError(format!(
+                        "Unknown preset '{}' in step {}",
+                        preset_id,
+                        step_index + 1
+                    ))
+                })?
+            } else {
+                return Err(ScenarioParseError::ValidationError(format!(
+                    "Preset '{}' referenced in step {} but no preset resolver provided",
+                    preset_id,
+                    step_index + 1
+                )));
+            }
+        } else {
+            self.tc_config.to_tc_netem_config()
+        };
+
+        Ok(ScenarioStep {
+            duration_ms,
+            description: self.description.clone(),
+            tc_config,
+        })
+    }
+}
+
 impl ScenarioFile {
     /// Convert to NetworkScenario
     /// Returns an error if any duration string is invalid
+    /// Convert to NetworkScenario without preset resolution
+    /// Returns an error if any duration string is invalid or if preset references are used
     pub fn to_network_scenario(self) -> Result<NetworkScenario, ScenarioParseError> {
+        // Use a dummy resolver that always fails - this method doesn't support presets
+        struct NoPresets;
+        impl PresetResolver for NoPresets {
+            fn resolve(&self, _: &str) -> Option<TcNetemConfig> {
+                None
+            }
+        }
+        self.to_network_scenario_with_presets(Some(&NoPresets))
+    }
+
+    /// Convert to NetworkScenario with optional preset resolution
+    /// Returns an error if any duration string is invalid or preset is not found
+    pub fn to_network_scenario_with_presets<R: PresetResolver>(
+        self,
+        preset_resolver: Option<&R>,
+    ) -> Result<NetworkScenario, ScenarioParseError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         let mut steps: Vec<ScenarioStep> = Vec::with_capacity(self.steps.len());
-        for (i, step) in self.steps.into_iter().enumerate() {
-            let duration_ms = parse_duration_string(&step.duration).map_err(|e| {
-                ScenarioParseError::ValidationError(format!(
-                    "Invalid duration '{}' in step {}: {}",
-                    step.duration,
-                    i + 1,
-                    e
-                ))
-            })?;
-
-            steps.push(ScenarioStep {
-                duration_ms,
-                description: step.description,
-                tc_config: step.tc_config.to_tc_netem_config(),
-            });
+        for (i, step) in self.steps.iter().enumerate() {
+            steps.push(step.to_scenario_step(i, preset_resolver)?);
         }
 
         // Calculate total duration from steps
@@ -638,5 +704,137 @@ mod tests {
 
         let result = parse_scenario(json5);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_scenario_with_preset_reference() {
+        // Test that scenarios with preset references parse correctly (though they need a resolver)
+        let json5 = r#"
+        {
+            id: "test",
+            name: "Test with preset",
+            steps: [
+                {
+                    duration: "30s",
+                    description: "Use satellite preset",
+                    preset: "satellite-link"
+                }
+            ]
+        }
+        "#;
+
+        // Should parse the JSON5 successfully
+        let scenario_file = parse_scenario_json5(json5).unwrap();
+        assert_eq!(
+            scenario_file.steps[0].preset,
+            Some("satellite-link".to_string())
+        );
+
+        // Without a resolver, converting to NetworkScenario should fail
+        let result = scenario_file.to_network_scenario();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_scenario_with_preset_and_resolver() {
+        use crate::TcNetemConfig;
+
+        // Create a simple preset resolver for testing
+        struct TestResolver;
+        impl PresetResolver for TestResolver {
+            fn resolve(&self, preset_id: &str) -> Option<TcNetemConfig> {
+                match preset_id {
+                    "my-preset" => Some(TcNetemConfig {
+                        loss: crate::TcLossConfig {
+                            enabled: true,
+                            percentage: 5.0,
+                            correlation: 10.0,
+                        },
+                        delay: crate::TcDelayConfig {
+                            enabled: true,
+                            base_ms: 100.0,
+                            jitter_ms: 20.0,
+                            correlation: 0.0,
+                        },
+                        ..Default::default()
+                    }),
+                    _ => None,
+                }
+            }
+        }
+
+        let json5 = r#"
+        {
+            id: "test",
+            name: "Test with preset",
+            steps: [
+                {
+                    duration: "30s",
+                    description: "Use custom preset",
+                    preset: "my-preset"
+                },
+                {
+                    duration: "10s",
+                    description: "Inline config",
+                    tc_config: {
+                        loss: { percentage: 2 }
+                    }
+                }
+            ]
+        }
+        "#;
+
+        let scenario_file = parse_scenario_json5(json5).unwrap();
+        let resolver = TestResolver;
+        let scenario = scenario_file
+            .to_network_scenario_with_presets(Some(&resolver))
+            .unwrap();
+
+        // First step should use preset config
+        assert!(scenario.steps[0].tc_config.loss.enabled);
+        assert_eq!(scenario.steps[0].tc_config.loss.percentage, 5.0);
+        assert!(scenario.steps[0].tc_config.delay.enabled);
+        assert_eq!(scenario.steps[0].tc_config.delay.base_ms, 100.0);
+
+        // Second step should use inline config
+        assert!(scenario.steps[1].tc_config.loss.enabled);
+        assert_eq!(scenario.steps[1].tc_config.loss.percentage, 2.0);
+        assert!(!scenario.steps[1].tc_config.delay.enabled);
+    }
+
+    #[test]
+    fn test_preset_reference_unknown_preset() {
+        struct EmptyResolver;
+        impl PresetResolver for EmptyResolver {
+            fn resolve(&self, _: &str) -> Option<TcNetemConfig> {
+                None
+            }
+        }
+
+        let json5 = r#"
+        {
+            id: "test",
+            name: "Test",
+            steps: [
+                {
+                    duration: "10s",
+                    description: "Unknown preset",
+                    preset: "non-existent"
+                }
+            ]
+        }
+        "#;
+
+        let scenario_file = parse_scenario_json5(json5).unwrap();
+        let resolver = EmptyResolver;
+        let result = scenario_file.to_network_scenario_with_presets(Some(&resolver));
+        assert!(result.is_err());
+
+        // Verify the error message mentions the unknown preset
+        if let Err(ScenarioParseError::ValidationError(msg)) = result {
+            assert!(msg.contains("non-existent"));
+        } else {
+            panic!("Expected ValidationError");
+        }
     }
 }

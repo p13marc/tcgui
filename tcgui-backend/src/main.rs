@@ -3,6 +3,7 @@ pub mod config;
 mod interfaces;
 mod netlink_events;
 mod network;
+pub mod preset_loader;
 pub mod scenario;
 pub mod services;
 mod tc_commands;
@@ -23,6 +24,7 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 
 use tcgui_shared::{
     errors::{BackendError, TcguiError},
+    presets::PresetList,
     topics, BackendHealthStatus, BackendMetadata, InterfaceControlOperation,
     InterfaceControlRequest, InterfaceControlResponse, NetworkInterface, TcConfigUpdate,
     TcConfiguration, TcNetemConfig, TcOperation, TcRequest, TcResponse, ZenohConfig,
@@ -31,6 +33,7 @@ use tcgui_shared::{
 use bandwidth::BandwidthMonitor;
 use netlink_events::NetlinkEventListener;
 use network::NetworkManager;
+use preset_loader::PresetLoader;
 use scenario::{ScenarioExecutionHandlers, ScenarioManager, ScenarioZenohHandlers};
 use tc_commands::TcCommandManager;
 
@@ -44,19 +47,23 @@ struct TcBackend {
     scenario_manager: Option<std::sync::Arc<ScenarioManager>>,
     scenario_handlers: Option<ScenarioZenohHandlers>,
     execution_handlers: Option<ScenarioExecutionHandlers>,
+    _preset_loader: PresetLoader,
+    preset_list: PresetList,
     exclude_loopback: bool,
     backend_name: String,
     tc_config_publishers: HashMap<String, AdvancedPublisher<'static>>, // namespace/interface -> publisher
 }
 
 impl TcBackend {
-    #[instrument(skip(zenoh_config, scenario_dirs), fields(backend_name = %backend_name, exclude_loopback))]
+    #[instrument(skip(zenoh_config, scenario_dirs, preset_dirs), fields(backend_name = %backend_name, exclude_loopback))]
     async fn new(
         exclude_loopback: bool,
         backend_name: String,
         zenoh_config: ZenohConfig,
         scenario_dirs: Vec<String>,
         no_default_scenarios: bool,
+        preset_dirs: Vec<String>,
+        no_default_presets: bool,
     ) -> Result<Self> {
         // Initialize Zenoh session
         let config = zenoh_config
@@ -131,6 +138,26 @@ impl TcBackend {
             backend_name.clone(),
         );
 
+        // Initialize preset loader with configuration
+        let mut preset_loader = PresetLoader::with_defaults(!no_default_presets);
+        let preset_dirs_paths: Vec<std::path::PathBuf> = preset_dirs
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        preset_loader.add_directories(preset_dirs_paths);
+        let (custom_presets, preset_errors) = preset_loader.load_all_with_errors();
+        for error in preset_errors {
+            warn!("Failed to load preset: {}", error);
+        }
+        let preset_list = PresetList::new(custom_presets.clone());
+        if !custom_presets.is_empty() {
+            info!(
+                "[BACKEND] Loaded {} custom preset(s): {:?}",
+                custom_presets.len(),
+                custom_presets.iter().map(|p| &p.id).collect::<Vec<_>>()
+            );
+        }
+
         Ok(Self {
             session,
             interfaces: HashMap::new(),
@@ -141,6 +168,8 @@ impl TcBackend {
             scenario_manager: Some(scenario_manager),
             scenario_handlers: Some(scenario_handlers),
             execution_handlers: Some(execution_handlers),
+            _preset_loader: preset_loader,
+            preset_list,
             exclude_loopback,
             backend_name,
             tc_config_publishers: HashMap::new(),
@@ -236,6 +265,9 @@ impl TcBackend {
 
         // Send initial backend status
         self.send_backend_status("Backend started").await?;
+
+        // Publish preset list to frontend
+        self.publish_preset_list().await?;
 
         // Initial interface discovery across all namespaces
         let discovered_interfaces = self
@@ -800,6 +832,25 @@ impl TcBackend {
         Ok(())
     }
 
+    /// Publish the preset list to the frontend
+    #[instrument(skip(self), fields(backend_name = %self.backend_name))]
+    async fn publish_preset_list(&self) -> Result<()> {
+        let payload = serde_json::to_string(&self.preset_list)?;
+        let preset_list_topic = topics::preset_list(&self.backend_name);
+        self.session
+            .put(&preset_list_topic, payload)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to publish preset list: {}", e),
+            })?;
+
+        info!(
+            "[BACKEND] Published preset list with {} presets",
+            self.preset_list.len()
+        );
+        Ok(())
+    }
+
     /// Get or create a TC configuration publisher for a specific interface
     #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace, interface))]
     async fn get_tc_config_publisher(
@@ -980,6 +1031,8 @@ async fn main() -> Result<()> {
         config_manager.zenoh,
         config_manager.app.scenario_dirs.clone(),
         config_manager.app.no_default_scenarios,
+        config_manager.app.preset_dirs.clone(),
+        config_manager.app.no_default_presets,
     )
     .await?;
     backend.run().await?;

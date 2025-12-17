@@ -1,0 +1,20 @@
+// WAN Link Preset
+// Wide Area Network with moderate latency and low loss
+{
+    id: "wan-link",
+    name: "WAN Link",
+    description: "Wide Area Network with moderate latency and low loss",
+
+    loss: {
+        percentage: 0.5,
+        correlation: 5.0,
+    },
+    delay: {
+        base_ms: 50.0,
+        jitter_ms: 10.0,
+        correlation: 20.0,
+    },
+    rate_limit: {
+        rate_kbps: 50000,  // 50 Mbps
+    },
+}

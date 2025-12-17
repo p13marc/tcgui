@@ -1,0 +1,25 @@
+// Cellular Network Preset
+// Mobile network with variable latency and some packet reordering
+{
+    id: "cellular-network",
+    name: "Cellular Network",
+    description: "Mobile network with variable latency and some packet reordering",
+
+    loss: {
+        percentage: 2.0,
+        correlation: 15.0,
+    },
+    delay: {
+        base_ms: 150.0,
+        jitter_ms: 50.0,
+        correlation: 30.0,
+    },
+    reorder: {
+        percentage: 5.0,
+        correlation: 20.0,
+        gap: 3,
+    },
+    rate_limit: {
+        rate_kbps: 10000,  // 10 Mbps
+    },
+}

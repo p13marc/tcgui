@@ -3,7 +3,7 @@
 //! This module leverages the structured configuration types from Sprint 1
 //! to provide clean state management across all interface components.
 
-use tcgui_shared::{presets::NetworkPreset, InterfaceFeatureStates, NetworkBandwidthStats};
+use tcgui_shared::{InterfaceFeatureStates, NetworkBandwidthStats};
 
 /// Centralized state for a network interface and all its components
 #[derive(Debug, Clone)]
@@ -29,8 +29,8 @@ pub struct InterfaceState {
     /// Status message history (bounded to prevent memory growth)
     pub status_messages: Vec<String>,
 
-    /// Currently selected preset
-    pub current_preset: NetworkPreset,
+    /// Currently selected preset ID (None means custom/manual settings)
+    pub current_preset_id: Option<String>,
 
     // Note: show_presets field removed as it was unused
     /// Whether a TC operation is currently in progress
@@ -51,7 +51,7 @@ impl InterfaceState {
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,
             status_messages: vec!["Ready.".to_string()],
-            current_preset: NetworkPreset::Custom,
+            current_preset_id: None, // None means custom/manual settings
             // show_presets field removed
             applying: false,
             applying_interface_state: false,

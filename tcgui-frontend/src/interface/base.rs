@@ -6,6 +6,7 @@
 
 use iced::widget::{checkbox, column, row, slider, text};
 use iced::{Color, Element, Task};
+use tcgui_shared::presets::PresetList;
 use tcgui_shared::NetworkBandwidthStats;
 
 use super::state::InterfaceState;
@@ -271,8 +272,8 @@ impl TcInterface {
             // Preset messages
             TcInterfaceMessage::PresetSelected(preset) => {
                 tracing::debug!("Preset selected: {:?}", preset);
-                let preset_name = preset.display_name();
-                if self.preset_manager.apply_preset(preset, &mut self.state) {
+                let preset_name = preset.name.clone();
+                if self.preset_manager.apply_preset(&preset, &mut self.state) {
                     self.state
                         .add_status_message(format!("Applying preset: {}", preset_name), false);
                 }
@@ -293,15 +294,18 @@ impl TcInterface {
     }
 
     /// Render the complete interface view
-    pub fn view(&self) -> Element<'_, TcInterfaceMessage> {
-        let main_row = self.render_main_row();
+    pub fn view<'a>(&'a self, preset_list: &'a PresetList) -> Element<'a, TcInterfaceMessage> {
+        let main_row = self.render_main_row(preset_list);
         let expandable_rows = self.render_expandable_features();
 
         column![main_row, expandable_rows].spacing(4).into()
     }
 
     /// Render the main interface row with core controls
-    fn render_main_row(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_main_row<'a>(
+        &'a self,
+        preset_list: &'a PresetList,
+    ) -> Element<'a, TcInterfaceMessage> {
         use iced::widget::container;
         use iced::Length;
 
@@ -332,7 +336,9 @@ impl TcInterface {
             .text_size(12);
 
         // Preset selector
-        let preset_selector = self.preset_manager.view(&self.state.current_preset);
+        let preset_selector = self
+            .preset_manager
+            .view(preset_list, &self.state.current_preset_id);
 
         // Feature toggles (compact checkboxes)
         let feature_toggles = self.render_feature_toggles();

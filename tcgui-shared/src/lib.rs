@@ -46,6 +46,7 @@ use zenoh::key_expr::{
 };
 
 pub mod errors;
+pub mod preset_json;
 pub mod presets;
 pub mod scenario;
 pub mod scenario_json;
@@ -65,7 +66,8 @@ pub mod topics {
         pub tc_config_keys: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}",
         pub scenario_query_keys: "tcgui/${backend:*}/query/scenario",
         pub scenario_execution_query_keys: "tcgui/${backend:*}/query/scenario/execution",
-        pub scenario_execution_updates_keys: "tcgui/${backend:*}/scenario/execution/${namespace:*}/${interface:*}"
+        pub scenario_execution_updates_keys: "tcgui/${backend:*}/scenario/execution/${namespace:*}/${interface:*}",
+        pub preset_list_keys: "tcgui/${backend:*}/presets/list"
     );
 
     kedefine!(
@@ -167,6 +169,13 @@ pub mod topics {
             interface = interface
         )
         .expect("Failed to format scenario execution updates topic - this should never happen with valid parameters")
+    }
+
+    /// Get preset list topic key expression for a specific backend
+    pub fn preset_list(backend_name: &str) -> OwnedKeyExpr {
+        keformat!(preset_list_keys::formatter(), backend = backend_name).expect(
+            "Failed to format preset list topic - this should never happen with valid backend name",
+        )
     }
 
     /// Extract backend name from a topic key expression
@@ -292,7 +301,7 @@ pub struct TcRequest {
 }
 
 /// Structured TC configuration for all netem features
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TcNetemConfig {
     pub loss: TcLossConfig,
     pub delay: TcDelayConfig,

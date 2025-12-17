@@ -1,5 +1,5 @@
 use tcgui_shared::{
-    presets::NetworkPreset,
+    presets::{CustomPreset, PresetList},
     scenario::{
         NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionResponse,
         ScenarioExecutionUpdate, ScenarioRequest, ScenarioResponse,
@@ -57,6 +57,11 @@ pub enum TcGuiMessage {
         alive: bool,
     },
     TcConfigUpdate(TcConfigUpdate),
+    // Preset list update from backend
+    PresetListUpdate {
+        backend_name: String,
+        preset_list: PresetList,
+    },
     // Query/Reply responses (commented out until response handling is implemented)
     // TcResponse { backend_name: String, request: TcRequest, response: TcResponse },
     // InterfaceControlResponse { backend_name: String, request: InterfaceControlRequest, response: InterfaceControlResponse },
@@ -181,6 +186,11 @@ pub enum ZenohEvent {
         alive: bool,
     },
     TcConfigUpdate(TcConfigUpdate),
+    // Preset list update from backend
+    PresetListUpdate {
+        backend_name: String,
+        preset_list: PresetList,
+    },
     // Scenario events
     ScenarioExecutionUpdate(Box<ScenarioExecutionUpdate>),
     // Query channels
@@ -238,7 +248,7 @@ pub enum TcInterfaceMessage {
     RateLimitChanged(u32),
 
     // Preset control
-    PresetSelected(NetworkPreset),
+    PresetSelected(CustomPreset),
     TogglePresetDropdown,
     ClearAllFeatures,
 }
