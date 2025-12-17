@@ -5,20 +5,15 @@
 //! - Environment variable configuration
 //! - Configuration validation
 //! - Builder pattern for configuration construction
-//! - Hot reloading capabilities
 
 pub mod app_config;
 pub mod cli;
 pub mod feature_flags;
-pub mod hot_reload;
 pub mod zenoh_config;
 
 pub use app_config::{AppConfig, AppConfigBuilder, LogLevel};
 pub use cli::CliConfig;
 pub use feature_flags::{Feature, FeatureFlags, FeatureProfile, FeatureToggleManager};
-pub use hot_reload::{
-    ConfigHotReloadManager, ConfigReloadEvent, ConfigSource, HotReloadableConfig,
-};
 pub use zenoh_config::ZenohConfigManager;
 
 use anyhow::Result;
