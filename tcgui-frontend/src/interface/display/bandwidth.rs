@@ -9,6 +9,7 @@ use tcgui_shared::NetworkBandwidthStats;
 
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
+use crate::view::{scaled, scaled_spacing};
 
 /// Component for bandwidth statistics display
 #[derive(Debug, Clone)]
@@ -54,7 +55,7 @@ impl BandwidthDisplayComponent {
     }
 
     /// Render the bandwidth display
-    pub fn view<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+    pub fn view<'a>(&'a self, theme: &'a Theme, zoom: f32) -> Element<'a, TcInterfaceMessage> {
         if let Some(stats) = &self.stats {
             let rx_rate = Self::format_rate(stats.rx_bytes_per_sec);
             let tx_rate = Self::format_rate(stats.tx_bytes_per_sec);
@@ -63,26 +64,32 @@ impl BandwidthDisplayComponent {
             let tx_color = theme.colors.tx_color;
 
             row![
-                text("📈").size(11),
-                text(rx_rate).size(11).style(move |_| text::Style {
-                    color: Some(rx_color)
-                }),
-                text("📤").size(11),
-                text(tx_rate).size(11).style(move |_| text::Style {
-                    color: Some(tx_color)
-                })
+                text("📈").size(scaled(11, zoom)),
+                text(rx_rate)
+                    .size(scaled(11, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(rx_color)
+                    }),
+                text("📤").size(scaled(11, zoom)),
+                text(tx_rate)
+                    .size(scaled(11, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(tx_color)
+                    })
             ]
-            .spacing(2)
+            .spacing(scaled_spacing(2, zoom))
             .into()
         } else {
             let text_secondary = theme.colors.text_secondary;
             row![
-                text("📊").size(11),
-                text("--").size(11).style(move |_| text::Style {
-                    color: Some(text_secondary)
-                })
+                text("📊").size(scaled(11, zoom)),
+                text("--")
+                    .size(scaled(11, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_secondary)
+                    })
             ]
-            .spacing(2)
+            .spacing(scaled_spacing(2, zoom))
             .into()
         }
     }

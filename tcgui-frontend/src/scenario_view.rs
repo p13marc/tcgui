@@ -193,16 +193,16 @@ fn render_backend_scenarios<'a>(
     scenario_manager: &'a ScenarioManager,
     _backend_manager: &'a BackendManager,
     colors: ScenarioColorPalette,
-    _zoom: f32,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut backend_content = column![];
     let is_loading = scenario_manager.is_loading(backend_name);
 
     // Backend header with refresh button
     let refresh_button = if is_loading {
-        button(text("⏳ Loading...").size(12)).style(button::secondary)
+        button(text("⏳ Loading...").size(scaled(12, zoom))).style(button::secondary)
     } else {
-        button(text("🔄 Refresh").size(12))
+        button(text("🔄 Refresh").size(scaled(12, zoom)))
             .on_press(TcGuiMessage::ListScenarios {
                 backend_name: backend_name.to_string(),
             })
@@ -212,14 +212,14 @@ fn render_backend_scenarios<'a>(
     backend_content = backend_content.push(
         row![
             text(format!("🖥️ Backend: {}", backend_name))
-                .size(18)
+                .size(scaled(18, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary)
                 }),
             space().width(Length::Fill),
             refresh_button
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center),
     );
 
@@ -230,11 +230,14 @@ fn render_backend_scenarios<'a>(
         let sort_ascending = scenario_manager.is_sort_ascending();
 
         // Sort buttons
-        let mut sort_buttons = row![text("Sort:").size(12).style(move |_| text::Style {
-            color: Some(colors.text_secondary)
-        })]
-        .spacing(4)
-        .align_y(iced::Alignment::Center);
+        let mut sort_buttons =
+            row![text("Sort:")
+                .size(scaled(12, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.text_secondary)
+                })]
+            .spacing(scaled_spacing(4, zoom))
+            .align_y(iced::Alignment::Center);
 
         for option in ScenarioSortOption::all() {
             let is_active = current_sort == *option;
@@ -245,7 +248,7 @@ fn render_backend_scenarios<'a>(
                 option.label().to_string()
             };
 
-            let btn = button(text(label).size(11))
+            let btn = button(text(label).size(scaled(11, zoom)))
                 .on_press(TcGuiMessage::ScenarioSortOptionChanged(*option))
                 .style(if is_active {
                     button::primary
@@ -259,12 +262,12 @@ fn render_backend_scenarios<'a>(
         let search_filter = scenario_manager.get_search_filter().to_string();
         let search_input = text_input("Search scenarios...", &search_filter)
             .on_input(TcGuiMessage::ScenarioSearchFilterChanged)
-            .size(13)
+            .size(scaled(13, zoom))
             .width(200);
 
         backend_content = backend_content.push(
             row![search_input, space().width(Length::Fill), sort_buttons]
-                .spacing(12)
+                .spacing(scaled_spacing(12, zoom))
                 .align_y(iced::Alignment::Center),
         );
     }
@@ -287,37 +290,40 @@ fn render_backend_scenarios<'a>(
 
         backend_content = backend_content.push(
             column![
-                text(header_text).size(16).style(move |_| text::Style {
-                    color: Some(colors.text_primary)
-                }),
-                render_scenario_list(&available_scenarios, backend_name, colors.clone())
+                text(header_text)
+                    .size(scaled(16, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_primary)
+                    }),
+                render_scenario_list(&available_scenarios, backend_name, colors.clone(), zoom)
             ]
-            .spacing(8),
+            .spacing(scaled_spacing(8, zoom)),
         );
     }
 
     // Show load errors if any
     if let Some(load_errors) = scenario_manager.get_load_errors(backend_name) {
         if !load_errors.is_empty() {
-            let mut error_items: Column<'_, TcGuiMessage> = column![].spacing(4);
+            let mut error_items: Column<'_, TcGuiMessage> =
+                column![].spacing(scaled_spacing(4, zoom));
             for load_error in load_errors {
                 error_items = error_items.push(
                     container(
                         column![
                             text(format!("File: {}", load_error.file_path))
-                                .size(11)
+                                .size(scaled(11, zoom))
                                 .style(move |_| text::Style {
                                     color: Some(colors.text_primary),
                                 }),
                             text(format!("  {}", load_error.error.message))
-                                .size(10)
+                                .size(scaled(10, zoom))
                                 .style(move |_| text::Style {
                                     color: Some(colors.error_red),
                                 }),
                         ]
-                        .spacing(2),
+                        .spacing(scaled_spacing(2, zoom)),
                     )
-                    .padding([4, 8])
+                    .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
                     .style(move |_| container::Style {
                         background: Some(iced::Background::Color(Color::from_rgba(
                             0.9, 0.2, 0.2, 0.05,
@@ -337,13 +343,13 @@ fn render_backend_scenarios<'a>(
                         "⚠️ Failed to load {} scenario files",
                         load_errors.len()
                     ))
-                    .size(14)
+                    .size(scaled(14, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.warning_orange)
                     }),
                     error_items
                 ]
-                .spacing(6),
+                .spacing(scaled_spacing(6, zoom)),
             );
         }
     }
@@ -354,7 +360,7 @@ fn render_backend_scenarios<'a>(
         backend_content = backend_content.push(
             column![
                 text("🎮 Active Executions")
-                    .size(16)
+                    .size(scaled(16, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.success_green)
                     }),
@@ -362,10 +368,11 @@ fn render_backend_scenarios<'a>(
                     &active_executions,
                     backend_name,
                     scenario_manager,
-                    colors.clone()
+                    colors.clone(),
+                    zoom
                 )
             ]
-            .spacing(8),
+            .spacing(scaled_spacing(8, zoom)),
         );
     }
 
@@ -380,10 +387,14 @@ fn render_backend_scenarios<'a>(
         };
 
         backend_content = backend_content.push(
-            container(text(message).size(14).style(move |_| text::Style {
-                color: Some(colors.text_secondary),
-            }))
-            .padding(16)
+            container(
+                text(message)
+                    .size(scaled(14, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary),
+                    }),
+            )
+            .padding(scaled_padding(16, zoom))
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(colors.background_light)),
                 border: iced::Border {
@@ -396,8 +407,8 @@ fn render_backend_scenarios<'a>(
         );
     }
 
-    container(backend_content.spacing(12))
-        .padding(16)
+    container(backend_content.spacing(scaled_spacing(12, zoom)))
+        .padding(scaled_padding(16, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(colors.background_card)),
             border: iced::Border {
@@ -415,15 +426,20 @@ fn render_scenario_list<'a>(
     scenarios: &[NetworkScenario],
     backend_name: &str,
     colors: ScenarioColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut list_content = column![];
 
     for scenario in scenarios {
-        list_content =
-            list_content.push(render_scenario_card(scenario, backend_name, colors.clone()));
+        list_content = list_content.push(render_scenario_card(
+            scenario,
+            backend_name,
+            colors.clone(),
+            zoom,
+        ));
     }
 
-    list_content.spacing(8).into()
+    list_content.spacing(scaled_spacing(8, zoom)).into()
 }
 
 /// Renders a single scenario card
@@ -431,17 +447,18 @@ fn render_scenario_card<'a>(
     scenario: &NetworkScenario,
     backend_name: &str,
     colors: ScenarioColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     container(
         column![
             row![
                 text(format!("📋 {}", scenario.name))
-                    .size(16)
+                    .size(scaled(16, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary)
                     }),
                 space().width(Length::Fill),
-                button(text("▶️ Execute").size(12))
+                button(text("▶️ Execute").size(scaled(12, zoom)))
                     .on_press(TcGuiMessage::ShowInterfaceSelectionDialog {
                         backend_name: backend_name.to_string(),
                         scenario_id: scenario.id.clone(),
@@ -451,46 +468,50 @@ fn render_scenario_card<'a>(
                         text_color: Color::WHITE,
                         ..button::Style::default()
                     }),
-                button(text("👁 Details").size(12))
+                button(text("👁 Details").size(scaled(12, zoom)))
                     .on_press(TcGuiMessage::ShowScenarioDetails {
                         scenario: scenario.clone()
                     })
                     .style(button::secondary),
             ]
-            .spacing(8)
+            .spacing(scaled_spacing(8, zoom))
             .align_y(iced::Alignment::Center),
             row![
                 text(format!("ID: {}", scenario.id))
-                    .size(12)
+                    .size(scaled(12, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary)
                     }),
-                text("•").size(12).style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
-                }),
+                text("•")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary)
+                    }),
                 text(format!("{} steps", scenario.steps.len()))
-                    .size(12)
+                    .size(scaled(12, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_secondary)
                     }),
-                text("•").size(12).style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
-                }),
+                text("•")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary)
+                    }),
                 text(format!(
                     "~{:.1}s",
                     scenario.estimated_total_duration_ms() as f64 / 1000.0
                 ))
-                .size(12)
+                .size(scaled(12, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary)
                 })
             ]
-            .spacing(4)
+            .spacing(scaled_spacing(4, zoom))
             .align_y(iced::Alignment::Center),
             if !scenario.description.is_empty() {
                 Element::<'_, TcGuiMessage>::from(
                     text(scenario.description.clone())
-                        .size(13)
+                        .size(scaled(13, zoom))
                         .style(move |_: &iced::Theme| text::Style {
                             color: Some(colors.text_secondary),
                         }),
@@ -499,9 +520,9 @@ fn render_scenario_card<'a>(
                 space().height(0).into()
             }
         ]
-        .spacing(6),
+        .spacing(scaled_spacing(6, zoom)),
     )
-    .padding(12)
+    .padding(scaled_padding(12, zoom))
     .style(move |_| container::Style {
         background: Some(iced::Background::Color(colors.background_light)),
         border: iced::Border {
@@ -520,6 +541,7 @@ fn render_active_executions<'a>(
     backend_name: &str,
     scenario_manager: &ScenarioManager,
     colors: ScenarioColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut list_content = column![];
 
@@ -534,10 +556,11 @@ fn render_active_executions<'a>(
             backend_name,
             is_collapsed,
             colors.clone(),
+            zoom,
         ));
     }
 
-    list_content.spacing(8).into()
+    list_content.spacing(scaled_spacing(8, zoom)).into()
 }
 
 /// Renders a single execution status card with enhanced progress UI
@@ -546,6 +569,7 @@ fn render_execution_card<'a>(
     backend_name: &str,
     is_timeline_collapsed: bool,
     colors: ScenarioColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let (state_icon, state_color) = match &execution.state {
         ExecutionState::Running => ("▶️", colors.success_green),
@@ -601,7 +625,7 @@ fn render_execution_card<'a>(
     let progress_width = (execution.stats.progress_percent / 100.0).clamp(0.0, 1.0);
 
     // Build step timeline
-    let mut timeline_content = column![].spacing(2);
+    let mut timeline_content = column![].spacing(scaled_spacing(2, zoom));
     for (i, step) in execution.scenario.steps.iter().enumerate() {
         let (icon, step_color) = if i < execution.current_step {
             ("✓", colors.success_green)
@@ -627,13 +651,17 @@ fn render_execution_card<'a>(
         timeline_content = timeline_content.push(
             container(
                 row![
-                    container(text(icon).size(11).style(move |_| text::Style {
-                        color: Some(step_color)
-                    }))
-                    .width(16),
+                    container(
+                        text(icon)
+                            .size(scaled(11, zoom))
+                            .style(move |_| text::Style {
+                                color: Some(step_color)
+                            })
+                    )
+                    .width(scaled(16, zoom)),
                     column![
                         text(format!("Step {}: {}", i + 1, step.description))
-                            .size(11)
+                            .size(scaled(11, zoom))
                             .style(move |_| text::Style {
                                 color: Some(if is_current {
                                     colors.text_primary
@@ -642,17 +670,17 @@ fn render_execution_card<'a>(
                                 })
                             }),
                         text(format_duration(step.duration_ms))
-                            .size(10)
+                            .size(scaled(10, zoom))
                             .style(move |_| text::Style {
                                 color: Some(colors.text_secondary)
                             })
                     ]
-                    .spacing(1)
+                    .spacing(scaled_spacing(1, zoom))
                 ]
-                .spacing(6)
+                .spacing(scaled_spacing(6, zoom))
                 .align_y(iced::Alignment::Center),
             )
-            .padding([3, 6])
+            .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
             .width(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(step_bg)),
@@ -666,7 +694,7 @@ fn render_execution_card<'a>(
     }
 
     // Build the main card content
-    let mut card_content = column![].spacing(8);
+    let mut card_content = column![].spacing(scaled_spacing(8, zoom));
 
     // Header row with name, loop indicator, and controls
     let loop_info = if execution.loop_execution {
@@ -681,14 +709,14 @@ fn render_execution_card<'a>(
                 "{} {}{}",
                 state_icon, execution.scenario.name, loop_info
             ))
-            .size(16)
+            .size(scaled(16, zoom))
             .style(move |_| text::Style {
                 color: Some(colors.text_primary)
             }),
             space().width(Length::Fill),
-            render_execution_controls(execution, backend_name, colors.clone())
+            render_execution_controls(execution, backend_name, colors.clone(), zoom)
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center),
     );
 
@@ -699,26 +727,28 @@ fn render_execution_card<'a>(
                 "{}:{}",
                 execution.target_namespace, execution.target_interface
             ))
-            .size(12)
+            .size(scaled(12, zoom))
             .style(move |_| text::Style {
                 color: Some(colors.text_secondary)
             }),
-            text("•").size(12).style(move |_| text::Style {
-                color: Some(colors.text_secondary)
-            }),
+            text("•")
+                .size(scaled(12, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.text_secondary)
+                }),
             text(progress_text.clone())
-                .size(12)
+                .size(scaled(12, zoom))
                 .style(move |_| text::Style {
                     color: Some(state_color)
                 }),
             space().width(Length::Fill),
             text(time_remaining_text)
-                .size(11)
+                .size(scaled(11, zoom))
                 .style(move |_| text::Style {
                     color: Some(state_color)
                 })
         ]
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center),
     );
 
@@ -727,7 +757,7 @@ fn render_execution_card<'a>(
         container(
             container(space().width(Length::Fill).height(Length::Fill))
                 .width(Length::FillPortion((progress_width * 100.0) as u16))
-                .height(6)
+                .height(scaled(6, zoom))
                 .style(move |_| container::Style {
                     background: Some(iced::Background::Color(bar_color)),
                     border: iced::Border {
@@ -738,7 +768,7 @@ fn render_execution_card<'a>(
                 }),
         )
         .width(Length::Fill)
-        .height(6)
+        .height(scaled(6, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(bar_bg_color)),
             border: iced::Border {
@@ -752,16 +782,18 @@ fn render_execution_card<'a>(
     // Current step details
     card_content = card_content.push(
         row![
-            text("Current:").size(11).style(move |_| text::Style {
-                color: Some(colors.text_secondary)
-            }),
+            text("Current:")
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.text_secondary)
+                }),
             text(current_step_text)
-                .size(11)
+                .size(scaled(11, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary)
                 })
         ]
-        .spacing(4),
+        .spacing(scaled_spacing(4, zoom)),
     );
 
     // Show error message if failed
@@ -771,26 +803,27 @@ fn render_execution_card<'a>(
             error.category_str(),
             error.message
         ))
-        .size(11)
+        .size(scaled(11, zoom))
         .style(move |_| text::Style {
             color: Some(colors.error_red),
         }),];
 
         // Show step info if available
         if let Some(step_idx) = error.step_index {
-            error_content =
-                error_content.push(text(format!("  At step {}", step_idx + 1)).size(10).style(
-                    move |_| text::Style {
+            error_content = error_content.push(
+                text(format!("  At step {}", step_idx + 1))
+                    .size(scaled(10, zoom))
+                    .style(move |_| text::Style {
                         color: Some(colors.error_red),
-                    },
-                ));
+                    }),
+            );
         }
 
         // Show suggestion if available
         if let Some(suggestion) = &error.suggestion {
             error_content = error_content.push(
                 text(format!("  Suggestion: {}", suggestion))
-                    .size(10)
+                    .size(scaled(10, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.warning_orange),
                     }),
@@ -799,7 +832,7 @@ fn render_execution_card<'a>(
 
         card_content = card_content.push(
             container(error_content)
-                .padding([4, 8])
+                .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
                 .width(Length::Fill)
                 .style(move |_| container::Style {
                     background: Some(iced::Background::Color(Color::from_rgba(
@@ -839,12 +872,12 @@ fn render_execution_card<'a>(
     card_content = card_content.push(
         button(
             text(timeline_header_text)
-                .size(12)
+                .size(scaled(12, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary),
                 }),
         )
-        .padding([4, 0])
+        .padding([scaled_padding(4, zoom), 0.0])
         .style(move |_, _| button::Style {
             background: Some(iced::Background::Color(Color::TRANSPARENT)),
             text_color: colors.text_secondary,
@@ -863,7 +896,7 @@ fn render_execution_card<'a>(
     }
 
     container(card_content)
-        .padding(12)
+        .padding(scaled_padding(12, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(colors.background_light)),
             border: iced::Border {
@@ -881,10 +914,11 @@ fn render_execution_controls<'a>(
     execution: &ScenarioExecution,
     backend_name: &str,
     colors: ScenarioColorPalette,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     match &execution.state {
         ExecutionState::Running => row![
-            button(text("⏸️").size(14))
+            button(text("⏸️").size(scaled(14, zoom)))
                 .on_press(TcGuiMessage::PauseScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -895,7 +929,7 @@ fn render_execution_controls<'a>(
                     text_color: Color::WHITE,
                     ..button::Style::default()
                 }),
-            button(text("⏹️").size(14))
+            button(text("⏹️").size(scaled(14, zoom)))
                 .on_press(TcGuiMessage::StopScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -907,10 +941,10 @@ fn render_execution_controls<'a>(
                     ..button::Style::default()
                 })
         ]
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .into(),
         ExecutionState::Paused { .. } => row![
-            button(text("▶️").size(14))
+            button(text("▶️").size(scaled(14, zoom)))
                 .on_press(TcGuiMessage::ResumeScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -921,7 +955,7 @@ fn render_execution_controls<'a>(
                     text_color: Color::WHITE,
                     ..button::Style::default()
                 }),
-            button(text("⏹️").size(14))
+            button(text("⏹️").size(scaled(14, zoom)))
                 .on_press(TcGuiMessage::StopScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -933,11 +967,11 @@ fn render_execution_controls<'a>(
                     ..button::Style::default()
                 })
         ]
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .into(),
         ExecutionState::Stopped | ExecutionState::Completed | ExecutionState::Failed { .. } => {
             text("Finished")
-                .size(12)
+                .size(scaled(12, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary),
                 })
@@ -950,7 +984,7 @@ fn render_execution_controls<'a>(
 fn render_scenario_details<'a>(
     scenario: &NetworkScenario,
     colors: ScenarioColorPalette,
-    _zoom: f32,
+    zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let mut details_content = column![];
 
@@ -958,16 +992,16 @@ fn render_scenario_details<'a>(
     details_content = details_content.push(
         row![
             text(format!("📋 Scenario Details: {}", scenario.name))
-                .size(20)
+                .size(scaled(20, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary)
                 }),
             space().width(Length::Fill),
-            button(text("✕ Close").size(12))
+            button(text("✕ Close").size(scaled(12, zoom)))
                 .on_press(TcGuiMessage::HideScenarioDetails)
                 .style(button::secondary)
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center),
     );
 
@@ -975,14 +1009,14 @@ fn render_scenario_details<'a>(
     details_content = details_content.push(
         column![
             text(format!("ID: {}", scenario.id))
-                .size(14)
+                .size(scaled(14, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_secondary)
                 }),
             if !scenario.description.is_empty() {
                 Element::<'_, TcGuiMessage>::from(
                     text(scenario.description.clone())
-                        .size(14)
+                        .size(scaled(14, zoom))
                         .style(move |_: &iced::Theme| text::Style {
                             color: Some(colors.text_primary),
                         }),
@@ -995,20 +1029,22 @@ fn render_scenario_details<'a>(
                 scenario.steps.len(),
                 scenario.estimated_total_duration_ms() as f64 / 1000.0
             ))
-            .size(13)
+            .size(scaled(13, zoom))
             .style(move |_| text::Style {
                 color: Some(colors.text_secondary)
             })
         ]
-        .spacing(6),
+        .spacing(scaled_spacing(6, zoom)),
     );
 
     // Steps breakdown
     if !scenario.steps.is_empty() {
         let mut steps_content = column![];
-        steps_content = steps_content.push(text("Steps:").size(16).style(move |_| text::Style {
-            color: Some(colors.text_primary),
-        }));
+        steps_content = steps_content.push(text("Steps:").size(scaled(16, zoom)).style(
+            move |_| text::Style {
+                color: Some(colors.text_primary),
+            },
+        ));
 
         for (i, step) in scenario.steps.iter().enumerate() {
             let timing_info = format_duration(step.duration_ms);
@@ -1017,19 +1053,19 @@ fn render_scenario_details<'a>(
                 container(
                     column![
                         text(format!("{}. {}", i + 1, step.description))
-                            .size(14)
+                            .size(scaled(14, zoom))
                             .style(move |_| text::Style {
                                 color: Some(colors.text_primary)
                             }),
                         text(format!("Timing: {}", timing_info))
-                            .size(12)
+                            .size(scaled(12, zoom))
                             .style(move |_| text::Style {
                                 color: Some(colors.text_secondary)
                             })
                     ]
-                    .spacing(2),
+                    .spacing(scaled_spacing(2, zoom)),
                 )
-                .padding([8, 12])
+                .padding([scaled_padding(8, zoom), scaled_padding(12, zoom)])
                 .style(move |_| container::Style {
                     background: Some(iced::Background::Color(colors.background_light)),
                     border: iced::Border {
@@ -1042,11 +1078,11 @@ fn render_scenario_details<'a>(
             );
         }
 
-        details_content = details_content.push(steps_content.spacing(6));
+        details_content = details_content.push(steps_content.spacing(scaled_spacing(6, zoom)));
     }
 
-    container(details_content.spacing(16))
-        .padding(16)
+    container(details_content.spacing(scaled_spacing(16, zoom)))
+        .padding(scaled_padding(16, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(colors.background_card)),
             border: iced::Border {

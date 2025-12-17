@@ -10,6 +10,7 @@ use tcgui_shared::presets::{CustomPreset, PresetList};
 
 use crate::interface::state::InterfaceState;
 use crate::messages::TcInterfaceMessage;
+use crate::view::{scaled, scaled_spacing};
 
 /// Component for preset management UI and logic
 #[derive(Debug, Clone)]
@@ -150,6 +151,7 @@ impl PresetManagerComponent {
         &self,
         preset_list: &'a PresetList,
         current_preset_id: &Option<String>,
+        zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         let current_label = current_preset_id
             .as_ref()
@@ -169,8 +171,8 @@ impl PresetManagerComponent {
                         .unwrap_or(false);
                     let label = Self::short_name(preset);
 
-                    button(text(label).size(10))
-                        .padding([2, 4])
+                    button(text(label).size(scaled(10, zoom)))
+                        .padding([2.0 * zoom, 4.0 * zoom])
                         .style(if is_selected {
                             button::primary
                         } else {
@@ -183,20 +185,23 @@ impl PresetManagerComponent {
 
             // Add Clear button at the end
             buttons.push(
-                button(text("Clear").size(10))
-                    .padding([2, 4])
+                button(text("Clear").size(scaled(10, zoom)))
+                    .padding([2.0 * zoom, 4.0 * zoom])
                     .style(button::danger)
                     .on_press(TcInterfaceMessage::ClearAllFeatures)
                     .into(),
             );
 
-            row(buttons).spacing(2).into()
+            row(buttons).spacing(scaled_spacing(2, zoom)).into()
         } else {
             // When collapsed, show a button with current preset name
-            button(row![text(current_label).size(11), text(" ▼").size(9),])
-                .padding([2, 6])
-                .on_press(TcInterfaceMessage::TogglePresetDropdown)
-                .into()
+            button(row![
+                text(current_label).size(scaled(11, zoom)),
+                text(" ▼").size(scaled(9, zoom)),
+            ])
+            .padding([2.0 * zoom, 6.0 * zoom])
+            .on_press(TcInterfaceMessage::TogglePresetDropdown)
+            .into()
         }
     }
 }

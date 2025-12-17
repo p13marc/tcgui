@@ -8,6 +8,7 @@ use iced::{Color, Element};
 
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
+use crate::view::scaled;
 
 /// Status indicator types
 /// Note: Some variants currently unused but kept for future extensibility
@@ -95,10 +96,10 @@ impl StatusDisplayComponent {
     }
 
     /// Render the status display
-    pub fn view<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+    pub fn view<'a>(&'a self, theme: &'a Theme, zoom: f32) -> Element<'a, TcInterfaceMessage> {
         let color = self.status_color(theme);
         text(self.status_icon())
-            .size(13)
+            .size(scaled(13, zoom))
             .style(move |_| text::Style { color: Some(color) })
             .into()
     }

@@ -12,6 +12,7 @@ use tcgui_shared::NetworkBandwidthStats;
 use super::state::InterfaceState;
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
+use crate::view::{scaled, scaled_spacing};
 // Component message imports removed - using TcInterfaceMessage directly
 use super::display::{BandwidthDisplayComponent, StatusDisplayComponent};
 use super::preset::PresetManagerComponent;
@@ -299,11 +300,14 @@ impl TcInterface {
         &'a self,
         preset_list: &'a PresetList,
         theme: &'a Theme,
+        zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
-        let main_row = self.render_main_row(preset_list, theme);
-        let expandable_rows = self.render_expandable_features(theme);
+        let main_row = self.render_main_row(preset_list, theme, zoom);
+        let expandable_rows = self.render_expandable_features(theme, zoom);
 
-        column![main_row, expandable_rows].spacing(4).into()
+        column![main_row, expandable_rows]
+            .spacing(scaled_spacing(4, zoom))
+            .into()
     }
 
     /// Render the main interface row with core controls
@@ -311,6 +315,7 @@ impl TcInterface {
         &'a self,
         preset_list: &'a PresetList,
         theme: &'a Theme,
+        zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         use iced::widget::container;
         use iced::Length;
@@ -330,7 +335,7 @@ impl TcInterface {
         };
 
         let interface_name = text(format!("{} {}", interface_icon, self.state.name))
-            .size(14)
+            .size(scaled(14, zoom))
             .style(move |_| text::Style {
                 color: Some(text_primary),
             });
@@ -338,61 +343,67 @@ impl TcInterface {
         // Core checkboxes - use row with styled text for theme support
         let interface_checkbox = row![
             checkbox(self.state.interface_enabled).on_toggle(TcInterfaceMessage::InterfaceToggled),
-            text("ON").size(12).style(move |_| text::Style {
-                color: Some(text_primary)
-            })
+            text("ON")
+                .size(scaled(12, zoom))
+                .style(move |_| text::Style {
+                    color: Some(text_primary)
+                })
         ]
-        .spacing(2);
+        .spacing(scaled_spacing(2, zoom));
 
         // Preset selector
-        let preset_selector = self
-            .preset_manager
-            .view(preset_list, &self.state.current_preset_id);
+        let preset_selector =
+            self.preset_manager
+                .view(preset_list, &self.state.current_preset_id, zoom);
 
         // Feature toggles (compact checkboxes)
-        let feature_toggles = self.render_feature_toggles(theme);
+        let feature_toggles = self.render_feature_toggles(theme, zoom);
 
         // Bandwidth display
-        let bandwidth_display = self.render_bandwidth_display(theme);
+        let bandwidth_display = self.render_bandwidth_display(theme, zoom);
 
         // Status display
-        let status_display = self.render_status_display(theme);
+        let status_display = self.render_status_display(theme, zoom);
 
         // Use fixed-width containers for table-like alignment
         // Preset selector expands when open to show all options
         let preset_width = if self.preset_manager.is_expanded() {
             Length::Shrink // Let it expand to fit all buttons
         } else {
-            Length::Fixed(130.0)
+            Length::Fixed(130.0 * zoom)
         };
 
         row![
             container(interface_name)
-                .width(Length::Fixed(120.0))
+                .width(Length::Fixed(120.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(interface_checkbox)
-                .width(Length::Fixed(50.0))
+                .width(Length::Fixed(50.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(preset_selector)
                 .width(preset_width)
                 .align_y(iced::alignment::Vertical::Center),
             container(feature_toggles)
-                .width(Length::Fixed(280.0))
+                .width(Length::Fixed(280.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(bandwidth_display)
-                .width(Length::Fixed(180.0))
+                .width(Length::Fixed(180.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(status_display)
                 .width(Length::Fill)
                 .align_y(iced::alignment::Vertical::Center),
         ]
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     /// Render feature toggle checkboxes
-    fn render_feature_toggles<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+    fn render_feature_toggles<'a>(
+        &'a self,
+        theme: &'a Theme,
+        zoom: f32,
+    ) -> Element<'a, TcInterfaceMessage> {
         let text_color = theme.colors.text_primary;
 
         row![
@@ -400,311 +411,339 @@ impl TcInterface {
             row![
                 checkbox(self.state.features.loss.enabled)
                     .on_toggle(TcInterfaceMessage::LossToggled),
-                text("LSS").size(12).style(move |_| text::Style {
-                    color: Some(text_color)
-                })
+                text("LSS")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_color)
+                    })
             ]
-            .spacing(2),
+            .spacing(scaled_spacing(2, zoom)),
             row![
                 checkbox(self.state.features.delay.enabled)
                     .on_toggle(TcInterfaceMessage::DelayToggled),
-                text("DLY").size(12).style(move |_| text::Style {
-                    color: Some(text_color)
-                })
+                text("DLY")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_color)
+                    })
             ]
-            .spacing(2),
+            .spacing(scaled_spacing(2, zoom)),
             row![
                 checkbox(self.state.features.duplicate.enabled)
                     .on_toggle(|_| TcInterfaceMessage::DuplicateToggled(())),
-                text("DUP").size(12).style(move |_| text::Style {
-                    color: Some(text_color)
-                })
+                text("DUP")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_color)
+                    })
             ]
-            .spacing(2),
+            .spacing(scaled_spacing(2, zoom)),
             row![
                 checkbox(self.state.features.reorder.enabled)
                     .on_toggle(|_| TcInterfaceMessage::ReorderToggled(())),
-                text("RO").size(12).style(move |_| text::Style {
-                    color: Some(text_color)
-                })
+                text("RO")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_color)
+                    })
             ]
-            .spacing(2),
+            .spacing(scaled_spacing(2, zoom)),
             row![
                 checkbox(self.state.features.corrupt.enabled)
                     .on_toggle(|_| TcInterfaceMessage::CorruptToggled(())),
-                text("CR").size(12).style(move |_| text::Style {
-                    color: Some(text_color)
-                })
+                text("CR")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_color)
+                    })
             ]
-            .spacing(2),
+            .spacing(scaled_spacing(2, zoom)),
             row![
                 checkbox(self.state.features.rate_limit.enabled)
                     .on_toggle(|_| TcInterfaceMessage::RateLimitToggled(())),
-                text("RL").size(12).style(move |_| text::Style {
-                    color: Some(text_color)
-                })
+                text("RL")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_color)
+                    })
             ]
-            .spacing(2),
+            .spacing(scaled_spacing(2, zoom)),
         ]
-        .spacing(4)
+        .spacing(scaled_spacing(4, zoom))
         .into()
     }
 
     /// Render bandwidth display
-    fn render_bandwidth_display<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
-        self.bandwidth_display.view(theme)
+    fn render_bandwidth_display<'a>(
+        &'a self,
+        theme: &'a Theme,
+        zoom: f32,
+    ) -> Element<'a, TcInterfaceMessage> {
+        self.bandwidth_display.view(theme, zoom)
     }
 
     /// Render status indicator
-    fn render_status_display<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
-        self.status_display.view(theme)
+    fn render_status_display<'a>(
+        &'a self,
+        theme: &'a Theme,
+        zoom: f32,
+    ) -> Element<'a, TcInterfaceMessage> {
+        self.status_display.view(theme, zoom)
     }
 
     /// Render expandable feature rows with parameter sliders
     fn render_expandable_features<'a>(
         &'a self,
         _theme: &'a Theme,
+        zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         let mut feature_rows = Vec::new();
 
         // Loss feature controls
         if self.state.features.loss.enabled {
-            let loss_controls = self.render_loss_controls();
+            let loss_controls = self.render_loss_controls(zoom);
             feature_rows.push(loss_controls);
         }
 
         // Delay feature controls
         if self.state.features.delay.enabled {
-            let delay_controls = self.render_delay_controls();
+            let delay_controls = self.render_delay_controls(zoom);
             feature_rows.push(delay_controls);
         }
 
         // Duplicate feature controls
         if self.state.features.duplicate.enabled {
-            let duplicate_controls = self.render_duplicate_controls();
+            let duplicate_controls = self.render_duplicate_controls(zoom);
             feature_rows.push(duplicate_controls);
         }
 
         // Reorder feature controls
         if self.state.features.reorder.enabled {
-            let reorder_controls = self.render_reorder_controls();
+            let reorder_controls = self.render_reorder_controls(zoom);
             feature_rows.push(reorder_controls);
         }
 
         // Corrupt feature controls
         if self.state.features.corrupt.enabled {
-            let corrupt_controls = self.render_corrupt_controls();
+            let corrupt_controls = self.render_corrupt_controls(zoom);
             feature_rows.push(corrupt_controls);
         }
 
         // Rate limit feature controls
         if self.state.features.rate_limit.enabled {
-            let rate_limit_controls = self.render_rate_limit_controls();
+            let rate_limit_controls = self.render_rate_limit_controls(zoom);
             feature_rows.push(rate_limit_controls);
         }
 
-        column(feature_rows).spacing(8).padding(4).into()
+        column(feature_rows)
+            .spacing(scaled_spacing(8, zoom))
+            .padding(scaled_spacing(4, zoom))
+            .into()
     }
 
     /// Render loss feature controls with sliders
-    fn render_loss_controls(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_loss_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let loss_config = &self.state.features.loss.config;
 
         row![
-            text("Loss:").size(12).width(50),
+            text("Loss:").size(scaled(12, zoom)).width(50.0 * zoom),
             slider(
                 0.0..=100.0,
                 loss_config.percentage,
                 TcInterfaceMessage::LossChanged
             )
-            .width(120)
+            .width(120.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", loss_config.percentage))
-                .size(12)
-                .width(50),
-            text("Corr:").size(12).width(40),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
+            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
             slider(
                 0.0..=100.0,
                 loss_config.correlation,
                 TcInterfaceMessage::CorrelationChanged
             )
-            .width(100)
+            .width(100.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", loss_config.correlation))
-                .size(12)
-                .width(50),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     /// Render duplicate feature controls with sliders
-    fn render_duplicate_controls(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_duplicate_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let duplicate_config = &self.state.features.duplicate.config;
 
         row![
-            text("Duplicate:").size(12).width(80),
+            text("Duplicate:").size(scaled(12, zoom)).width(80.0 * zoom),
             slider(
                 0.0..=100.0,
                 duplicate_config.percentage,
                 TcInterfaceMessage::DuplicatePercentageChanged
             )
-            .width(120)
+            .width(120.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", duplicate_config.percentage))
-                .size(12)
-                .width(50),
-            text("Corr:").size(12).width(40),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
+            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
             slider(
                 0.0..=100.0,
                 duplicate_config.correlation,
                 TcInterfaceMessage::DuplicateCorrelationChanged
             )
-            .width(100)
+            .width(100.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", duplicate_config.correlation))
-                .size(12)
-                .width(50),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     /// Render reorder feature controls with sliders
-    fn render_reorder_controls(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_reorder_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let reorder_config = &self.state.features.reorder.config;
 
         row![
-            text("Reorder:").size(12).width(60),
+            text("Reorder:").size(scaled(12, zoom)).width(60.0 * zoom),
             slider(
                 0.0..=100.0,
                 reorder_config.percentage,
                 TcInterfaceMessage::ReorderPercentageChanged
             )
-            .width(100)
+            .width(100.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", reorder_config.percentage))
-                .size(12)
-                .width(50),
-            text("Gap:").size(12).width(35),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
+            text("Gap:").size(scaled(12, zoom)).width(35.0 * zoom),
             slider(1.0..=10.0, reorder_config.gap as f32, |v| {
                 TcInterfaceMessage::ReorderGapChanged(v as u32)
             })
-            .width(80)
+            .width(80.0 * zoom)
             .step(1.0),
-            text(format!("{}", reorder_config.gap)).size(12).width(35),
-            text("Corr:").size(12).width(40),
+            text(format!("{}", reorder_config.gap))
+                .size(scaled(12, zoom))
+                .width(35.0 * zoom),
+            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
             slider(
                 0.0..=100.0,
                 reorder_config.correlation,
                 TcInterfaceMessage::ReorderCorrelationChanged
             )
-            .width(80)
+            .width(80.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", reorder_config.correlation))
-                .size(12)
-                .width(50),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     /// Render corrupt feature controls with sliders
-    fn render_corrupt_controls(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_corrupt_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let corrupt_config = &self.state.features.corrupt.config;
 
         row![
-            text("Corrupt:").size(12).width(70),
+            text("Corrupt:").size(scaled(12, zoom)).width(70.0 * zoom),
             slider(
                 0.0..=100.0,
                 corrupt_config.percentage,
                 TcInterfaceMessage::CorruptPercentageChanged
             )
-            .width(120)
+            .width(120.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", corrupt_config.percentage))
-                .size(12)
-                .width(50),
-            text("Corr:").size(12).width(40),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
+            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
             slider(
                 0.0..=100.0,
                 corrupt_config.correlation,
                 TcInterfaceMessage::CorruptCorrelationChanged
             )
-            .width(100)
+            .width(100.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", corrupt_config.correlation))
-                .size(12)
-                .width(50),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     /// Render rate limit feature controls with sliders
-    fn render_rate_limit_controls(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_rate_limit_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let rate_config = &self.state.features.rate_limit.config;
 
         row![
-            text("Rate Limit:").size(12).width(80),
+            text("Rate Limit:")
+                .size(scaled(12, zoom))
+                .width(80.0 * zoom),
             slider(1.0..=1000000.0, rate_config.rate_kbps as f32, |v| {
                 TcInterfaceMessage::RateLimitChanged(v as u32)
             })
-            .width(150)
+            .width(150.0 * zoom)
             .step(1.0),
             text(format!("{} kbps", rate_config.rate_kbps))
-                .size(12)
-                .width(80),
+                .size(scaled(12, zoom))
+                .width(80.0 * zoom),
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     /// Render delay feature controls with sliders
-    fn render_delay_controls(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_delay_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let delay_config = &self.state.features.delay.config;
 
         row![
-            text("Delay:").size(12).width(50),
+            text("Delay:").size(scaled(12, zoom)).width(50.0 * zoom),
             slider(
                 0.0..=5000.0,
                 delay_config.base_ms,
                 TcInterfaceMessage::DelayChanged
             )
-            .width(100)
+            .width(100.0 * zoom)
             .step(1.0),
             text(format!("{:.0}ms", delay_config.base_ms))
-                .size(12)
-                .width(50),
-            text("Jitter:").size(12).width(50),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
+            text("Jitter:").size(scaled(12, zoom)).width(50.0 * zoom),
             slider(
                 0.0..=1000.0,
                 delay_config.jitter_ms,
                 TcInterfaceMessage::DelayJitterChanged
             )
-            .width(100)
+            .width(100.0 * zoom)
             .step(1.0),
             text(format!("{:.0}ms", delay_config.jitter_ms))
-                .size(12)
-                .width(50),
-            text("Corr:").size(12).width(40),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
+            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
             slider(
                 0.0..=100.0,
                 delay_config.correlation,
                 TcInterfaceMessage::DelayCorrelationChanged
             )
-            .width(80)
+            .width(80.0 * zoom)
             .step(0.1),
             text(format!("{:.1}%", delay_config.correlation))
-                .size(12)
-                .width(50),
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom),
         ]
-        .spacing(8)
+        .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
         .into()
     }

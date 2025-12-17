@@ -736,6 +736,7 @@ fn render_namespace_section<'a>(
             namespace_group,
             preset_list,
             theme,
+            zoom,
         );
         let interfaces_column: Element<_> =
             column(interfaces).spacing(scaled_spacing(4, zoom)).into();
@@ -968,6 +969,7 @@ fn render_namespace_interfaces<'a>(
     namespace_group: &'a NamespaceGroup,
     preset_list: &'a tcgui_shared::presets::PresetList,
     theme: &'a Theme,
+    zoom: f32,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     // Sort interfaces alphabetically for consistent order
     let mut sorted_interfaces: Vec<_> = namespace_group.tc_interfaces.iter().collect();
@@ -979,7 +981,7 @@ fn render_namespace_interfaces<'a>(
             let name_clone = name.clone();
             let backend_clone = backend_name.to_string();
             let namespace_clone = namespace_name.to_string();
-            interface.view(preset_list, theme).map(move |msg| {
+            interface.view(preset_list, theme, zoom).map(move |msg| {
                 TcGuiMessage::TcInterfaceMessage(
                     backend_clone.clone(),
                     namespace_clone.clone(),
