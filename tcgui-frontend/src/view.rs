@@ -777,6 +777,7 @@ fn render_backend_namespaces<'a>(
                 &backend_group.preset_list,
                 namespace_key,
                 is_hidden,
+                ns_type,
                 namespace_bandwidth_summaries.clone(),
                 colors.clone(),
                 zoom,
@@ -798,6 +799,7 @@ fn render_namespace_section<'a>(
     preset_list: &'a tcgui_shared::presets::PresetList,
     namespace_key: String,
     is_hidden: bool,
+    namespace_type: &'a NamespaceType,
     namespace_bandwidth_summaries: HashMap<
         String,
         (String, tcgui_shared::NetworkBandwidthStats, f64, String),
@@ -811,6 +813,7 @@ fn render_namespace_section<'a>(
         namespace_name,
         namespace_key.clone(),
         is_hidden,
+        namespace_type,
         namespace_bandwidth_summaries.clone(),
         colors.clone(),
         zoom,
@@ -869,11 +872,13 @@ fn render_namespace_section<'a>(
 }
 
 /// Renders the namespace header with title and controls
+#[allow(clippy::too_many_arguments)]
 fn render_namespace_header<'a>(
     backend_name: &'a str,
     namespace_name: &'a str,
     namespace_key: String,
     is_hidden: bool,
+    namespace_type: &'a NamespaceType,
     namespace_bandwidth_summaries: HashMap<
         String,
         (String, tcgui_shared::NetworkBandwidthStats, f64, String),
@@ -881,20 +886,58 @@ fn render_namespace_header<'a>(
     colors: ColorPalette,
     zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
-    // Modern namespace header with enhanced styling
-    let namespace_icon = if namespace_name == "default" {
-        "🏠"
-    } else {
-        "🏷️"
+    // Determine icon and display info based on namespace type
+    let (namespace_icon, display_name, subtitle) = match namespace_type {
+        NamespaceType::Default => ("🏠", namespace_name.to_string(), None),
+        NamespaceType::Traditional => ("📁", namespace_name.to_string(), None),
+        NamespaceType::Container {
+            runtime,
+            container_id,
+            image,
+        } => {
+            // Use container-specific icons
+            let icon = match runtime.to_lowercase().as_str() {
+                "docker" => "🐳",
+                "podman" => "🦭",
+                _ => "📦",
+            };
+            // Strip "container:" prefix from display name
+            let name = namespace_name
+                .strip_prefix("container:")
+                .unwrap_or(namespace_name)
+                .to_string();
+            let sub = format!("{} | {} | {}", runtime, container_id, image);
+            (icon, name, Some(sub))
+        }
     };
-    let namespace_title = text(format!(
-        "{} {} ({})",
-        namespace_icon, namespace_name, backend_name
-    ))
-    .size(scaled(20, zoom))
-    .style(move |_| text::Style {
-        color: Some(colors.text_primary),
-    });
+
+    let namespace_title = if let Some(sub) = subtitle {
+        column![
+            text(format!(
+                "{} {} ({})",
+                namespace_icon, display_name, backend_name
+            ))
+            .size(scaled(20, zoom))
+            .style(move |_| text::Style {
+                color: Some(colors.text_primary),
+            }),
+            text(sub)
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.text_secondary),
+                })
+        ]
+        .spacing(scaled_spacing(2, zoom))
+    } else {
+        column![text(format!(
+            "{} {} ({})",
+            namespace_icon, display_name, backend_name
+        ))
+        .size(scaled(20, zoom))
+        .style(move |_| text::Style {
+            color: Some(colors.text_primary),
+        })]
+    };
 
     // Enhanced toggle button with modern styling
     let toggle_button = render_toggle_button(

@@ -53,6 +53,9 @@ dirs = "5"
 # Regex for pattern matching
 regex = { workspace = true }
 
+# Container runtime API (Docker/Podman compatible)
+bollard = "0.18"
+
 [dev-dependencies]
 rand = "0.8"
 tempfile = "3.0"

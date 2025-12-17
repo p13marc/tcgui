@@ -31,6 +31,8 @@ use tcgui_shared::{
     NamespaceType, NetworkInterface, NetworkNamespace,
 };
 
+use crate::container::{Container, ContainerManager};
+
 /// Network interface manager for multi-namespace operations.
 ///
 /// This struct provides comprehensive network interface management across
@@ -70,6 +72,11 @@ pub struct NetworkManager {
     interface_list_publisher: AdvancedPublisher<'static>,
     /// Publisher for interface state events
     interface_events_publisher: AdvancedPublisher<'static>,
+    /// Container runtime manager for Docker/Podman discovery
+    container_manager: ContainerManager,
+    /// Cache of last discovered containers for namespace type lookup
+    /// Key is "container:<name>" to match namespace naming
+    cached_containers: std::sync::Arc<tokio::sync::RwLock<HashMap<String, Container>>>,
 }
 
 impl NetworkManager {
@@ -129,13 +136,38 @@ impl NetworkManager {
                 ),
             })?;
 
+        // Initialize container manager for Docker/Podman discovery
+        let container_manager = ContainerManager::new().await;
+        if container_manager.is_available() {
+            info!(
+                "Container runtimes available: {:?}",
+                container_manager.available_runtimes()
+            );
+        } else {
+            info!("No container runtimes detected");
+        }
+
+        let cached_containers = std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+
         Ok(Self {
             rt_handle,
             namespace_interfaces: HashMap::new(),
             backend_name,
             interface_list_publisher,
             interface_events_publisher,
+            container_manager,
+            cached_containers,
         })
+    }
+
+    /// Returns a reference to the container cache for sharing with other components.
+    ///
+    /// This allows components like BandwidthMonitor to access container namespace paths
+    /// for executing commands inside container network namespaces.
+    pub fn container_cache(
+        &self,
+    ) -> std::sync::Arc<tokio::sync::RwLock<HashMap<String, Container>>> {
+        self.cached_containers.clone()
     }
 
     /// Discovers network interfaces within a specific namespace.
@@ -562,6 +594,139 @@ impl NetworkManager {
         Ok(accessible_namespaces)
     }
 
+    /// Discovers running containers and returns them with their network namespaces.
+    ///
+    /// This method queries Docker and Podman runtimes (if available) to find
+    /// running containers and their network namespace information.
+    ///
+    /// # Returns
+    ///
+    /// A vector of discovered containers with namespace paths
+    pub async fn discover_containers(&self) -> Vec<Container> {
+        if !self.container_manager.is_available() {
+            return Vec::new();
+        }
+
+        match self.container_manager.discover_containers().await {
+            Ok(containers) => {
+                info!("Discovered {} running containers", containers.len());
+                containers
+            }
+            Err(e) => {
+                warn!("Failed to discover containers: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Discovers interfaces inside a container's network namespace using nsenter.
+    ///
+    /// # Arguments
+    ///
+    /// * `container` - The container to discover interfaces in
+    ///
+    /// # Returns
+    ///
+    /// A map of interface index to NetworkInterface for interfaces inside the container
+    pub async fn discover_interfaces_in_container(
+        &self,
+        container: &Container,
+    ) -> Result<HashMap<u32, NetworkInterface>, BackendError> {
+        let namespace_name = format!("container:{}", container.name);
+        info!(
+            "Discovering interfaces in container {} ({})",
+            container.name, container.short_id
+        );
+
+        // Use the container manager to discover interfaces
+        match self
+            .container_manager
+            .discover_container_interfaces(container)
+            .await
+        {
+            Ok(interface_names) => {
+                let mut interfaces = HashMap::new();
+
+                for (idx, name) in interface_names.iter().enumerate() {
+                    // Check if interface is UP by querying via nsenter
+                    let is_up = self
+                        .check_interface_up_in_container(container, name)
+                        .await
+                        .unwrap_or(false);
+
+                    // Check TC qdisc
+                    let has_tc_qdisc = self
+                        .check_tc_qdisc_in_container(container, name)
+                        .await
+                        .unwrap_or(false);
+
+                    // Determine interface type
+                    // Container eth interfaces are typically veth pairs on the host side
+                    let interface_type = if name == "lo" {
+                        InterfaceType::Loopback
+                    } else if name.starts_with("eth") || name.starts_with("veth") {
+                        InterfaceType::Veth
+                    } else {
+                        InterfaceType::Virtual
+                    };
+
+                    let interface = NetworkInterface {
+                        name: name.clone(),
+                        index: idx as u32 + 1, // 1-based index within container
+                        namespace: namespace_name.clone(),
+                        is_up,
+                        has_tc_qdisc,
+                        interface_type,
+                    };
+
+                    interfaces.insert(interface.index, interface);
+                }
+
+                Ok(interfaces)
+            }
+            Err(e) => {
+                error!(
+                    "Failed to discover interfaces in container {}: {}",
+                    container.name, e
+                );
+                Err(BackendError::NetworkError {
+                    message: format!(
+                        "Failed to discover interfaces in container {}: {}",
+                        container.name, e
+                    ),
+                })
+            }
+        }
+    }
+
+    /// Check if an interface is UP inside a container
+    async fn check_interface_up_in_container(
+        &self,
+        container: &Container,
+        interface: &str,
+    ) -> Result<bool> {
+        let output = self
+            .container_manager
+            .exec_in_netns(container, &["ip", "-o", "link", "show", interface])
+            .await?;
+
+        Ok(output.contains("state UP") || output.contains(",UP,") || output.contains("<UP,"))
+    }
+
+    /// Check TC qdisc inside a container
+    async fn check_tc_qdisc_in_container(
+        &self,
+        container: &Container,
+        interface: &str,
+    ) -> Result<bool> {
+        let output = self
+            .container_manager
+            .exec_in_netns(container, &["tc", "qdisc", "show", "dev", interface])
+            .await?;
+
+        Ok(output.contains("netem"))
+    }
+
     /// Discovers network interfaces across all available namespaces.
     ///
     /// This is the primary interface discovery method that combines namespace discovery
@@ -631,8 +796,41 @@ impl NetworkManager {
             }
         }
 
+        // Also discover container interfaces
+        let containers = self.discover_containers().await;
+
+        // Update the container cache for namespace type lookup
+        {
+            let mut cache = self.cached_containers.write().await;
+            cache.clear();
+            for container in &containers {
+                let key = format!("container:{}", container.name);
+                cache.insert(key, container.clone());
+            }
+        }
+
+        for container in &containers {
+            match self.discover_interfaces_in_container(container).await {
+                Ok(interfaces) => {
+                    for (index, interface) in interfaces {
+                        // Use a unique composite key for container interfaces
+                        // Container namespace names start with "container:" prefix
+                        let composite_key = index + (interface.namespace.len() as u32 * 1000000);
+                        all_interfaces.insert(composite_key, interface);
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to discover interfaces in container {}: {}",
+                        container.name, e
+                    );
+                    // Continue with other containers
+                }
+            }
+        }
+
         info!(
-            "Discovered {} interfaces across all namespaces",
+            "Discovered {} interfaces across all namespaces and containers",
             all_interfaces.len()
         );
         Ok(all_interfaces)
@@ -679,15 +877,46 @@ impl NetworkManager {
                 .push(interface.clone());
         }
 
-        // Convert to NetworkNamespace structs
+        // Get the container cache for namespace type lookup
+        let container_cache = self.cached_containers.read().await;
+
+        // Convert to NetworkNamespace structs with proper namespace types
         let namespaces: Vec<NetworkNamespace> = namespace_map
             .into_iter()
-            .map(|(name, interfaces)| NetworkNamespace {
-                name: name.clone(),
-                id: None,
-                is_active: true,
-                namespace_type: NamespaceType::Default,
-                interfaces,
+            .map(|(name, interfaces)| {
+                let namespace_type = if name == "default" {
+                    NamespaceType::Default
+                } else if name.starts_with("container:") {
+                    // Look up container metadata from cache
+                    if let Some(container) = container_cache.get(&name) {
+                        NamespaceType::Container {
+                            runtime: format!("{:?}", container.runtime),
+                            container_id: container.short_id.clone(),
+                            image: container.image.clone(),
+                        }
+                    } else {
+                        // Fallback if container not in cache
+                        NamespaceType::Container {
+                            runtime: "unknown".to_string(),
+                            container_id: name
+                                .strip_prefix("container:")
+                                .unwrap_or(&name)
+                                .to_string(),
+                            image: "unknown".to_string(),
+                        }
+                    }
+                } else {
+                    // Traditional ip netns namespace
+                    NamespaceType::Traditional
+                };
+
+                NetworkNamespace {
+                    name: name.clone(),
+                    id: None,
+                    is_active: true,
+                    namespace_type,
+                    interfaces,
+                }
             })
             .collect();
 

@@ -5,6 +5,7 @@
 pub mod bandwidth;
 pub mod commands;
 pub mod config;
+pub mod container;
 pub mod interfaces;
 pub mod network;
 pub mod preset_loader;

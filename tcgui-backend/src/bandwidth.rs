@@ -37,13 +37,17 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
-use tracing::{error, instrument};
+use tokio::sync::RwLock;
+use tracing::{error, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
+use crate::container::Container;
 use tcgui_shared::{
     errors::TcguiError, topics, BandwidthUpdate, NetworkBandwidthStats, NetworkInterface,
 };
@@ -67,6 +71,8 @@ pub struct BandwidthMonitor {
     backend_name: String,
     /// Publishers for bandwidth updates (one per interface)
     bandwidth_publishers: HashMap<String, AdvancedPublisher<'static>>,
+    /// Shared container cache for resolving container namespace paths
+    container_cache: Option<Arc<RwLock<HashMap<String, Container>>>>,
 }
 
 impl BandwidthMonitor {
@@ -87,7 +93,29 @@ impl BandwidthMonitor {
             previous_stats: HashMap::new(),
             backend_name,
             bandwidth_publishers: HashMap::new(),
+            container_cache: None,
         }
+    }
+
+    /// Sets the container cache for resolving container namespace paths
+    pub fn set_container_cache(&mut self, cache: Arc<RwLock<HashMap<String, Container>>>) {
+        self.container_cache = Some(cache);
+    }
+
+    /// Check if a namespace is a container namespace
+    fn is_container_namespace(namespace: &str) -> bool {
+        namespace.starts_with("container:")
+    }
+
+    /// Get the namespace path for a container namespace from the cache
+    async fn get_container_namespace_path(&self, namespace: &str) -> Option<PathBuf> {
+        if let Some(cache) = &self.container_cache {
+            let cache_guard = cache.read().await;
+            if let Some(container) = cache_guard.get(namespace) {
+                return container.namespace_path.clone();
+            }
+        }
+        None
     }
 
     /// Monitors bandwidth for all provided interfaces and sends updates.
@@ -268,6 +296,45 @@ impl BandwidthMonitor {
             tokio::fs::read_to_string("/proc/net/dev")
                 .await
                 .map_err(TcguiError::IoError)?
+        } else if Self::is_container_namespace(namespace) {
+            // Read from container namespace using nsenter
+            let ns_path = self.get_container_namespace_path(namespace).await;
+
+            if let Some(path) = ns_path {
+                let output = Command::new("nsenter")
+                    .arg(format!("--net={}", path.display()))
+                    .args(["cat", "/proc/net/dev"])
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+
+                    if stderr.contains("Operation not permitted")
+                        || stderr.contains("Permission denied")
+                    {
+                        warn!(
+                            "Cannot access container namespace {}: insufficient permissions",
+                            namespace
+                        );
+                        return Ok(HashMap::new());
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Failed to read /proc/net/dev in container namespace {}: {}",
+                            namespace,
+                            stderr
+                        ));
+                    }
+                }
+
+                String::from_utf8(output.stdout)?
+            } else {
+                warn!(
+                    "Container namespace {} has no path in cache, cannot read bandwidth stats",
+                    namespace
+                );
+                return Ok(HashMap::new());
+            }
         } else {
             // Read from named namespace using ip netns exec
             let output = Command::new("ip")

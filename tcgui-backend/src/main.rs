@@ -1,5 +1,6 @@
 mod bandwidth;
 pub mod config;
+mod container;
 mod interfaces;
 mod netlink_events;
 mod network;
@@ -108,7 +109,11 @@ impl TcBackend {
         // Initialize managers with backend name for topic routing
         let network_manager =
             NetworkManager::new(session.clone(), handle, backend_name.clone()).await?;
-        let bandwidth_monitor = BandwidthMonitor::new(session.clone(), backend_name.clone());
+
+        // Create bandwidth monitor and share container cache for container namespace support
+        let mut bandwidth_monitor = BandwidthMonitor::new(session.clone(), backend_name.clone());
+        bandwidth_monitor.set_container_cache(network_manager.container_cache());
+
         let tc_manager = TcCommandManager::new();
 
         // Initialize scenario management

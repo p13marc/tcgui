@@ -34,6 +34,7 @@
 //! ```
 
 use anyhow::Result;
+use std::path::Path;
 use tokio::process::Command;
 use tracing::{error, info, instrument, warn};
 
@@ -81,6 +82,56 @@ impl TcCommandManager {
         Self {}
     }
 
+    /// Check if a namespace is a container namespace (starts with "container:")
+    fn is_container_namespace(namespace: &str) -> bool {
+        namespace.starts_with("container:")
+    }
+
+    /// Build a command that executes in the appropriate namespace context.
+    ///
+    /// For container namespaces (starting with "container:"), uses nsenter with
+    /// the provided namespace path. For traditional namespaces, uses ip netns exec.
+    /// For default namespace, runs commands directly.
+    fn build_namespaced_command(
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        base_cmd: &str,
+        args: &[&str],
+    ) -> Command {
+        if namespace == "default" {
+            // Default namespace: run command directly
+            let mut cmd = Command::new(base_cmd);
+            cmd.args(args);
+            cmd
+        } else if Self::is_container_namespace(namespace) {
+            // Container namespace: use nsenter with namespace path
+            if let Some(ns_path) = namespace_path {
+                let mut cmd = Command::new("nsenter");
+                cmd.arg(format!("--net={}", ns_path.display()));
+                cmd.arg(base_cmd);
+                cmd.args(args);
+                cmd
+            } else {
+                // Fallback: try using ip netns exec with the container name
+                // This won't work for containers but provides error handling
+                warn!(
+                    "Container namespace {} has no path, falling back to ip netns exec",
+                    namespace
+                );
+                let mut cmd = Command::new("ip");
+                cmd.args(["netns", "exec", namespace, base_cmd]);
+                cmd.args(args);
+                cmd
+            }
+        } else {
+            // Traditional namespace: use ip netns exec
+            let mut cmd = Command::new("ip");
+            cmd.args(["netns", "exec", namespace, base_cmd]);
+            cmd.args(args);
+            cmd
+        }
+    }
+
     /// Check if there's an existing qdisc on the interface and return its details.
     ///
     /// # Arguments
@@ -94,17 +145,24 @@ impl TcCommandManager {
     /// * `Err` - On command execution failures
     #[instrument(skip(self), fields(namespace, interface))]
     pub async fn check_existing_qdisc(&self, namespace: &str, interface: &str) -> Result<String> {
-        let mut cmd = if namespace == "default" {
-            let mut cmd = Command::new("tc");
-            cmd.args(["qdisc", "show", "dev", interface]);
-            cmd
-        } else {
-            let mut cmd = Command::new("ip");
-            cmd.args([
-                "netns", "exec", namespace, "tc", "qdisc", "show", "dev", interface,
-            ]);
-            cmd
-        };
+        self.check_existing_qdisc_with_path(namespace, None, interface)
+            .await
+    }
+
+    /// Check if there's an existing qdisc on the interface, with optional namespace path for containers.
+    #[instrument(skip(self, namespace_path), fields(namespace, interface))]
+    pub async fn check_existing_qdisc_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+    ) -> Result<String> {
+        let mut cmd = Self::build_namespaced_command(
+            namespace,
+            namespace_path,
+            "tc",
+            &["qdisc", "show", "dev", interface],
+        );
 
         let output = cmd.output().await.map_err(|e| TcguiError::TcCommandError {
             message: format!("Failed to execute tc qdisc show command: {}", e),
@@ -136,6 +194,19 @@ impl TcCommandManager {
         interface: &str,
         config: &TcNetemConfig,
     ) -> Result<String> {
+        self.apply_tc_config_structured_with_path(namespace, None, interface, config)
+            .await
+    }
+
+    /// Apply TC config using structured configuration with optional namespace path for containers
+    #[instrument(skip(self, namespace_path), fields(namespace, interface))]
+    pub async fn apply_tc_config_structured_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        config: &TcNetemConfig,
+    ) -> Result<String> {
         // Validate configuration first
         config.validate().map_err(|e| TcguiError::TcCommandError {
             message: format!("TC configuration validation failed: {}", e),
@@ -163,10 +234,10 @@ impl TcCommandManager {
             rate_limit_kbps,
         ) = config.to_legacy_params();
 
-        // Use existing implementation for now
-        #[allow(deprecated)]
-        self.apply_tc_config_in_namespace(
+        // Use existing implementation with namespace path support
+        self.apply_tc_config_in_namespace_with_path(
             namespace,
+            namespace_path,
             interface,
             loss,
             correlation,
@@ -334,6 +405,68 @@ impl TcCommandManager {
         corrupt_correlation: Option<f32>,
         rate_limit_kbps: Option<u32>,
     ) -> Result<String> {
+        self.apply_tc_config_in_namespace_with_path(
+            namespace,
+            None,
+            interface,
+            loss,
+            correlation,
+            delay_ms,
+            delay_jitter_ms,
+            delay_correlation,
+            duplicate_percent,
+            duplicate_correlation,
+            reorder_percent,
+            reorder_correlation,
+            reorder_gap,
+            corrupt_percent,
+            corrupt_correlation,
+            rate_limit_kbps,
+        )
+        .await
+    }
+
+    /// Applies traffic control configuration with optional namespace path for containers
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(
+        skip(self, namespace_path),
+        fields(
+            namespace,
+            interface,
+            loss,
+            correlation,
+            delay_ms,
+            delay_jitter_ms,
+            delay_correlation,
+            duplicate_percent,
+            duplicate_correlation,
+            reorder_percent,
+            reorder_correlation,
+            reorder_gap,
+            corrupt_percent,
+            corrupt_correlation,
+            rate_limit_kbps
+        )
+    )]
+    pub async fn apply_tc_config_in_namespace_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        loss: f32,
+        correlation: Option<f32>,
+        delay_ms: Option<f32>,
+        delay_jitter_ms: Option<f32>,
+        delay_correlation: Option<f32>,
+        duplicate_percent: Option<f32>,
+        duplicate_correlation: Option<f32>,
+        reorder_percent: Option<f32>,
+        reorder_correlation: Option<f32>,
+        reorder_gap: Option<u32>,
+        corrupt_percent: Option<f32>,
+        corrupt_correlation: Option<f32>,
+        rate_limit_kbps: Option<u32>,
+    ) -> Result<String> {
         info!(
             "Applying TC config: namespace={}, interface={}, loss={}%, correlation={:?}, delay={}ms, jitter={}ms, delay_corr={:?}, duplicate={}%, dup_corr={:?}, reorder={}%, reorder_corr={:?}, gap={:?}, corrupt={}%, corrupt_corr={:?}, rate={}kbps",
             namespace, interface, loss, correlation,
@@ -345,7 +478,10 @@ impl TcCommandManager {
         );
 
         // First check if there's already a qdisc on this interface
-        match self.check_existing_qdisc(namespace, interface).await {
+        match self
+            .check_existing_qdisc_with_path(namespace, namespace_path, interface)
+            .await
+        {
             Ok(qdisc_info) => {
                 if qdisc_info.is_empty() {
                     // No existing qdisc, safe to add
@@ -353,8 +489,9 @@ impl TcCommandManager {
                         "No existing qdisc found on {}/{}, adding new netem qdisc",
                         namespace, interface
                     );
-                    self.execute_tc_command(
+                    self.execute_tc_command_with_path(
                         namespace,
+                        namespace_path,
                         interface,
                         "add",
                         loss,
@@ -398,12 +535,17 @@ impl TcCommandManager {
                         if needs_recreation {
                             info!("Parameters need to be removed, deleting and recreating netem qdisc");
                             match self
-                                .remove_tc_config_in_namespace(namespace, interface)
+                                .remove_tc_config_in_namespace_with_path(
+                                    namespace,
+                                    namespace_path,
+                                    interface,
+                                )
                                 .await
                             {
                                 Ok(_) => {
-                                    self.execute_tc_command(
+                                    self.execute_tc_command_with_path(
                                         namespace,
+                                        namespace_path,
                                         interface,
                                         "add",
                                         loss,
@@ -424,8 +566,9 @@ impl TcCommandManager {
                                 }
                                 Err(e) => {
                                     warn!("Failed to delete existing qdisc: {}, trying replace anyway", e);
-                                    self.execute_tc_command(
+                                    self.execute_tc_command_with_path(
                                         namespace,
+                                        namespace_path,
                                         interface,
                                         "replace",
                                         loss,
@@ -447,8 +590,9 @@ impl TcCommandManager {
                             }
                         } else {
                             info!("No parameter removal needed, using replace");
-                            self.execute_tc_command(
+                            self.execute_tc_command_with_path(
                                 namespace,
+                                namespace_path,
                                 interface,
                                 "replace",
                                 loss,
@@ -470,8 +614,9 @@ impl TcCommandManager {
                     } else if qdisc_info.contains("noqueue") {
                         // noqueue qdisc can be directly replaced with add command
                         info!("Existing noqueue qdisc found on {}/{}, adding netem qdisc (will replace noqueue)", namespace, interface);
-                        self.execute_tc_command(
+                        self.execute_tc_command_with_path(
                             namespace,
+                            namespace_path,
                             interface,
                             "add",
                             loss,
@@ -494,13 +639,18 @@ impl TcCommandManager {
                         info!("Existing qdisc found on {}/{} ({}), attempting to remove and add netem", namespace, interface, qdisc_info.trim());
 
                         match self
-                            .remove_tc_config_in_namespace(namespace, interface)
+                            .remove_tc_config_in_namespace_with_path(
+                                namespace,
+                                namespace_path,
+                                interface,
+                            )
                             .await
                         {
                             Ok(_) => {
                                 info!("Existing qdisc removed, adding netem qdisc");
-                                self.execute_tc_command(
+                                self.execute_tc_command_with_path(
                                     namespace,
+                                    namespace_path,
                                     interface,
                                     "add",
                                     loss,
@@ -523,8 +673,9 @@ impl TcCommandManager {
                                 // If removal failed, try add anyway (might work for some qdiscs)
                                 warn!("Failed to remove existing qdisc from {}/{}: {}, trying add anyway", namespace, interface, remove_error);
                                 info!("Attempting to add netem qdisc despite removal failure");
-                                self.execute_tc_command(
+                                self.execute_tc_command_with_path(
                                     namespace,
+                                    namespace_path,
                                     interface,
                                     "add",
                                     loss,
@@ -552,8 +703,9 @@ impl TcCommandManager {
 
                 // Fallback to the old try-add-then-replace logic
                 let result = self
-                    .execute_tc_command(
+                    .execute_tc_command_with_path(
                         namespace,
+                        namespace_path,
                         interface,
                         "add",
                         loss,
@@ -576,8 +728,9 @@ impl TcCommandManager {
                     Ok(message) => Ok(message),
                     Err(_) => {
                         info!("Add failed, trying replace");
-                        self.execute_tc_command(
+                        self.execute_tc_command_with_path(
                             namespace,
+                            namespace_path,
                             interface,
                             "replace",
                             loss,
@@ -603,6 +756,7 @@ impl TcCommandManager {
 
     /// Execute TC command with specified action (add or replace)
     #[allow(clippy::too_many_arguments)] // Legacy method maintained for backward compatibility
+    #[allow(dead_code)] // Wrapper method for backward compatibility
     #[instrument(
         skip(self),
         fields(
@@ -627,6 +781,71 @@ impl TcCommandManager {
     async fn execute_tc_command(
         &self,
         namespace: &str,
+        interface: &str,
+        action: &str, // "add" or "replace"
+        loss: f32,
+        correlation: Option<f32>,
+        delay_ms: Option<f32>,
+        delay_jitter_ms: Option<f32>,
+        delay_correlation: Option<f32>,
+        duplicate_percent: Option<f32>,
+        duplicate_correlation: Option<f32>,
+        reorder_percent: Option<f32>,
+        reorder_correlation: Option<f32>,
+        reorder_gap: Option<u32>,
+        corrupt_percent: Option<f32>,
+        corrupt_correlation: Option<f32>,
+        rate_limit_kbps: Option<u32>,
+    ) -> Result<String> {
+        self.execute_tc_command_with_path(
+            namespace,
+            None,
+            interface,
+            action,
+            loss,
+            correlation,
+            delay_ms,
+            delay_jitter_ms,
+            delay_correlation,
+            duplicate_percent,
+            duplicate_correlation,
+            reorder_percent,
+            reorder_correlation,
+            reorder_gap,
+            corrupt_percent,
+            corrupt_correlation,
+            rate_limit_kbps,
+        )
+        .await
+    }
+
+    /// Execute TC command with specified action and optional namespace path for containers
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(
+        skip(self, namespace_path),
+        fields(
+            namespace,
+            interface,
+            action,
+            loss,
+            correlation,
+            delay_ms,
+            delay_jitter_ms,
+            delay_correlation,
+            duplicate_percent,
+            duplicate_correlation,
+            reorder_percent,
+            reorder_correlation,
+            reorder_gap,
+            corrupt_percent,
+            corrupt_correlation,
+            rate_limit_kbps
+        )
+    )]
+    async fn execute_tc_command_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
         interface: &str,
         action: &str, // "add" or "replace"
         loss: f32,
@@ -730,12 +949,31 @@ impl TcCommandManager {
             active_params.join(", ")
         );
 
-        // Build base command depending on namespace
+        // Build base command depending on namespace type
         let mut cmd = if namespace == "default" {
+            // Default namespace: run tc directly
             let mut cmd = Command::new("tc");
             cmd.args(["qdisc", action, "dev", interface, "root", "netem"]);
             cmd
+        } else if Self::is_container_namespace(namespace) {
+            // Container namespace: use nsenter with the namespace path
+            if let Some(ns_path) = namespace_path {
+                let mut cmd = Command::new("nsenter");
+                cmd.arg(format!("--net={}", ns_path.display()));
+                cmd.args(["tc", "qdisc", action, "dev", interface, "root", "netem"]);
+                cmd
+            } else {
+                // No namespace path provided - this will likely fail but log a warning
+                warn!(
+                    "Container namespace {} TC command called without namespace path, operation may fail",
+                    namespace
+                );
+                let mut cmd = Command::new("tc");
+                cmd.args(["qdisc", action, "dev", interface, "root", "netem"]);
+                cmd
+            }
         } else {
+            // Traditional namespace: use ip netns exec
             let mut cmd = Command::new("ip");
             cmd.args([
                 "netns", "exec", namespace, "tc", "qdisc", action, "dev", interface, "root",
@@ -947,6 +1185,18 @@ impl TcCommandManager {
         namespace: &str,
         interface: &str,
     ) -> Result<String> {
+        self.remove_tc_config_in_namespace_with_path(namespace, None, interface)
+            .await
+    }
+
+    /// Removes traffic control configuration with optional namespace path for containers
+    #[instrument(skip(self, namespace_path), fields(namespace, interface))]
+    pub async fn remove_tc_config_in_namespace_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+    ) -> Result<String> {
         info!(
             "Removing TC config for interface: {} in namespace: {}",
             interface, namespace
@@ -956,6 +1206,22 @@ impl TcCommandManager {
             let mut cmd = Command::new("tc");
             cmd.args(["qdisc", "del", "dev", interface, "root"]);
             cmd
+        } else if Self::is_container_namespace(namespace) {
+            // Container namespace: use nsenter with the namespace path
+            if let Some(ns_path) = namespace_path {
+                let mut cmd = Command::new("nsenter");
+                cmd.arg(format!("--net={}", ns_path.display()));
+                cmd.args(["tc", "qdisc", "del", "dev", interface, "root"]);
+                cmd
+            } else {
+                warn!(
+                    "Container namespace {} remove called without namespace path, operation may fail",
+                    namespace
+                );
+                let mut cmd = Command::new("tc");
+                cmd.args(["qdisc", "del", "dev", interface, "root"]);
+                cmd
+            }
         } else {
             let mut cmd = Command::new("ip");
             cmd.args([

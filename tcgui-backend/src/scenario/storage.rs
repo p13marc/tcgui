@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_storage_stats_calculation() {
-        let scenarios = vec![
+        let scenarios = [
             create_test_scenario("test1", "Scenario 1"),
             create_test_scenario("test2", "Scenario 2"),
         ];
