@@ -250,9 +250,13 @@ fn render_header<'a>(
         .size(scaled(14, zoom))
         .text_size(scaled(12, zoom))
         .style(move |_, status| {
-            let active = matches!(status, checkbox::Status::Active { .. });
+            let is_checked = match status {
+                checkbox::Status::Active { is_checked }
+                | checkbox::Status::Hovered { is_checked }
+                | checkbox::Status::Disabled { is_checked } => is_checked,
+            };
             checkbox::Style {
-                background: iced::Background::Color(if active {
+                background: iced::Background::Color(if is_checked {
                     filter_colors.primary_blue
                 } else {
                     filter_colors.background_card
@@ -274,9 +278,13 @@ fn render_header<'a>(
         .size(scaled(14, zoom))
         .text_size(scaled(12, zoom))
         .style(move |_, status| {
-            let active = matches!(status, checkbox::Status::Active { .. });
+            let is_checked = match status {
+                checkbox::Status::Active { is_checked }
+                | checkbox::Status::Hovered { is_checked }
+                | checkbox::Status::Disabled { is_checked } => is_checked,
+            };
             checkbox::Style {
-                background: iced::Background::Color(if active {
+                background: iced::Background::Color(if is_checked {
                     filter_colors.primary_blue
                 } else {
                     filter_colors.background_card
@@ -298,9 +306,13 @@ fn render_header<'a>(
         .size(scaled(14, zoom))
         .text_size(scaled(12, zoom))
         .style(move |_, status| {
-            let active = matches!(status, checkbox::Status::Active { .. });
+            let is_checked = match status {
+                checkbox::Status::Active { is_checked }
+                | checkbox::Status::Hovered { is_checked }
+                | checkbox::Status::Disabled { is_checked } => is_checked,
+            };
             checkbox::Style {
-                background: iced::Background::Color(if active {
+                background: iced::Background::Color(if is_checked {
                     filter_colors.primary_blue
                 } else {
                     filter_colors.background_card
