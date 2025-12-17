@@ -1,78 +1,79 @@
-# Scenario File Format Specification
+# Scenario Format Specification
 
-TC GUI uses JSON5 format for scenario files, providing a human-friendly syntax with comments and trailing commas.
+Scenarios define sequences of TC (Traffic Control) configurations applied over time. They enable automated network condition testing by progressively changing network parameters like latency, packet loss, and bandwidth.
 
-## File Location
+## File Format
 
-Scenarios are loaded from these directories (in priority order, later overrides earlier):
+Scenarios use JSON5 format, which extends JSON with:
+- Comments (`//` and `/* */`)
+- Trailing commas
+- Unquoted keys
+- Human-readable syntax
 
-1. `/usr/share/tcgui/scenarios` - System-wide scenarios
-2. `~/.config/tcgui/scenarios` - User scenarios
-3. `./scenarios` - Local project scenarios
+## File Locations
 
-Use `--no-default-scenarios` flag to disable automatic loading from these directories.
+Scenarios are loaded from the following directories (in priority order, later overrides earlier):
 
-## Basic Structure
+1. **System**: `/usr/share/tcgui/scenarios` - Package-installed scenarios
+2. **User**: `~/.config/tcgui/scenarios` - User-defined scenarios
+3. **Local**: `./scenarios` - Project-local scenarios
+
+Files must have the `.json5` extension.
+
+## Schema
 
 ```json5
 {
-    id: "unique-scenario-id",
-    name: "Human Readable Name",
-    description: "Detailed description of what this scenario simulates",
+    // Required: Unique identifier (used for references)
+    id: "scenario-id",
     
-    // Optional: repeat scenario indefinitely
+    // Required: Human-readable name
+    name: "Scenario Display Name",
+    
+    // Optional: Detailed description
+    description: "What this scenario simulates",
+    
+    // Optional: Loop the scenario continuously (default: false)
     loop_scenario: false,
     
-    // Optional: restore TC config on failure (default: true)
+    // Optional: Restore original TC config on failure/abort (default: true)
     cleanup_on_failure: true,
     
-    // Optional metadata
+    // Optional: Metadata for organization and display
     metadata: {
-        tags: ["tag1", "tag2"],
-        author: "Your Name",
-        version: "1.0",
+        tags: ["tag1", "tag2"],      // For filtering/categorization
+        author: "Author Name",        // Creator attribution
+        version: "1.0",               // Scenario version
     },
     
-    // Required: list of steps
+    // Required: Array of steps to execute in order
     steps: [
-        // ... steps here
+        {
+            // Required: How long this step lasts
+            duration: "30s",
+            
+            // Required: Description of this step
+            description: "What happens during this step",
+            
+            // Required: TC configuration for this step
+            tc_config: {
+                // All fields are optional - presence enables the feature
+                loss: { ... },
+                delay: { ... },
+                duplicate: { ... },
+                reorder: { ... },
+                corrupt: { ... },
+                rate_limit: { ... },
+            },
+        },
+        // ... more steps
     ],
 }
 ```
 
-## Field Reference
-
-### Top-Level Fields
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `id` | string | Yes | - | Unique identifier (alphanumeric, hyphens allowed) |
-| `name` | string | Yes | - | Display name in the UI |
-| `description` | string | No | `""` | Detailed description |
-| `loop_scenario` | boolean | No | `false` | Repeat indefinitely when complete |
-| `cleanup_on_failure` | boolean | No | `true` | Restore original TC config on failure/abort |
-| `metadata` | object | No | `{}` | Additional metadata |
-| `steps` | array | Yes | - | List of scenario steps (min: 1) |
-
-### Metadata Fields
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `tags` | string[] | No | `[]` | Searchable tags |
-| `author` | string | No | `null` | Scenario author |
-| `version` | string | No | `"1.0"` | Scenario version |
-
-### Step Fields
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `duration` | string | Yes | - | How long to apply this step |
-| `description` | string | Yes | - | Step description (shown in UI) |
-| `tc_config` | object | No | `{}` | Traffic control configuration |
-
 ## Duration Format
 
-Durations use human-readable strings:
+Durations support human-readable strings:
 
 | Format | Example | Milliseconds |
 |--------|---------|--------------|
@@ -80,205 +81,236 @@ Durations use human-readable strings:
 | Seconds | `"30s"` | 30,000 |
 | Minutes | `"5m"` | 300,000 |
 | Hours | `"1h"` | 3,600,000 |
-| Combined | `"1m30s"` | 90,000 |
-| Combined | `"1h30m"` | 5,400,000 |
+| Compound | `"1m30s"` | 90,000 |
+| Compound | `"1h30m"` | 5,400,000 |
 
-## TC Configuration
+## TC Configuration Fields
 
-The `tc_config` object controls Linux Traffic Control (tc netem) settings. **Fields are implicitly enabled when present** - no need for `enabled: true`.
+Each TC feature is optional. **Presence automatically enables the feature** - no need for `enabled: true`.
 
-### Available Features
-
-#### Loss Configuration
+### Packet Loss
 
 ```json5
-tc_config: {
-    loss: {
-        percentage: 5.0,      // 0.0-100.0: packet loss percentage
-        correlation: 25.0,    // 0.0-100.0: correlation with previous loss
-    },
+loss: {
+    percentage: 5.0,      // 0.0-100.0: Packet loss percentage
+    correlation: 25.0,    // 0.0-100.0: Correlation with previous packet (default: 0)
 }
 ```
 
-#### Delay Configuration
+### Network Delay
 
 ```json5
-tc_config: {
-    delay: {
-        base_ms: 100.0,       // 0.0-5000.0: base delay in milliseconds
-        jitter_ms: 20.0,      // 0.0-1000.0: random jitter (+/-)
-        correlation: 25.0,    // 0.0-100.0: correlation with previous delay
-    },
+delay: {
+    base_ms: 100.0,       // 0.0-5000.0: Base delay in milliseconds
+    jitter_ms: 20.0,      // 0.0-1000.0: Delay variation (default: 0)
+    correlation: 25.0,    // 0.0-100.0: Jitter correlation (default: 0)
 }
 ```
 
-#### Duplicate Configuration
+### Packet Duplication
 
 ```json5
-tc_config: {
-    duplicate: {
-        percentage: 1.0,      // 0.0-100.0: packet duplication percentage
-        correlation: 0.0,     // 0.0-100.0: correlation
-    },
+duplicate: {
+    percentage: 1.0,      // 0.0-100.0: Duplication percentage
+    correlation: 0.0,     // 0.0-100.0: Correlation (default: 0)
 }
 ```
 
-#### Reorder Configuration
+### Packet Reordering
 
 ```json5
-tc_config: {
-    reorder: {
-        percentage: 5.0,      // 0.0-100.0: reorder percentage
-        correlation: 0.0,     // 0.0-100.0: correlation
-        gap: 5,               // 1-10: reorder gap (packets)
-    },
+reorder: {
+    percentage: 5.0,      // 0.0-100.0: Reorder percentage
+    correlation: 0.0,     // 0.0-100.0: Correlation (default: 0)
+    gap: 5,               // 1-10: Gap parameter (default: 5)
 }
 ```
 
-#### Corrupt Configuration
+Note: Reordering requires some delay to function. If no delay is specified, a minimal 1ms delay is automatically added.
+
+### Packet Corruption
 
 ```json5
-tc_config: {
-    corrupt: {
-        percentage: 0.1,      // 0.0-100.0: corruption percentage
-        correlation: 0.0,     // 0.0-100.0: correlation
-    },
+corrupt: {
+    percentage: 0.1,      // 0.0-100.0: Corruption percentage
+    correlation: 0.0,     // 0.0-100.0: Correlation (default: 0)
 }
 ```
 
-#### Rate Limit Configuration
+### Rate Limiting
 
 ```json5
-tc_config: {
-    rate_limit: {
-        rate_kbps: 1000,      // 1-1000000: rate limit in kbps
-    },
+rate_limit: {
+    rate_kbps: 1000,      // 1-1000000: Rate limit in kbps (default: 1000)
 }
 ```
 
-### Combining Features
+## Examples
 
-Multiple features can be combined in a single step:
-
-```json5
-tc_config: {
-    loss: { percentage: 5 },
-    delay: { base_ms: 100, jitter_ms: 20 },
-    rate_limit: { rate_kbps: 5000 },
-}
-```
-
-### Clearing All Settings
-
-Use an empty `tc_config` to disable all impairments:
+### Basic Latency Test
 
 ```json5
 {
-    duration: "30s",
-    description: "Clean network - no impairments",
-    tc_config: {},
-}
-```
-
-## Parameter Ranges
-
-| Parameter | Min | Max | Unit |
-|-----------|-----|-----|------|
-| Loss percentage | 0.0 | 100.0 | % |
-| Loss correlation | 0.0 | 100.0 | % |
-| Delay base | 0.0 | 5000.0 | ms |
-| Delay jitter | 0.0 | 1000.0 | ms |
-| Delay correlation | 0.0 | 100.0 | % |
-| Duplicate percentage | 0.0 | 100.0 | % |
-| Duplicate correlation | 0.0 | 100.0 | % |
-| Reorder percentage | 0.0 | 100.0 | % |
-| Reorder correlation | 0.0 | 100.0 | % |
-| Reorder gap | 1 | 10 | packets |
-| Corrupt percentage | 0.0 | 100.0 | % |
-| Corrupt correlation | 0.0 | 100.0 | % |
-| Rate limit | 1 | 1,000,000 | kbps |
-
-## Validation Rules
-
-1. **ID**: Must not be empty
-2. **Name**: Must not be empty
-3. **Steps**: At least one step required
-4. **Step duration**: Must be greater than 0
-5. **Step description**: Must not be empty
-6. **Total duration**: Cannot exceed 24 hours
-7. **Parameters**: Must be within valid ranges
-
-## Complete Example
-
-```json5
-// Satellite Link Simulation
-// Simulates high-latency satellite communication with variable conditions
-{
-    id: "satellite-link",
-    name: "Satellite Link Simulation",
-    description: "Simulate geostationary satellite uplink with ~600ms RTT",
-    
-    metadata: {
-        tags: ["satellite", "high-latency", "wan"],
-        author: "Network Team",
-        version: "1.0",
-    },
-    
-    // Don't loop - run once
-    loop_scenario: false,
-    
-    // Restore network on failure
-    cleanup_on_failure: true,
+    id: "latency-test",
+    name: "High Latency Test",
+    description: "Test application behavior under high latency conditions",
     
     steps: [
         {
-            duration: "1m",
-            description: "Clear sky - optimal satellite conditions",
-            tc_config: {
-                delay: { base_ms: 300, jitter_ms: 10 },
-                loss: { percentage: 0.1 },
-            },
-        },
-        {
             duration: "30s",
-            description: "Rain fade - signal degradation",
+            description: "Normal latency",
             tc_config: {
-                delay: { base_ms: 350, jitter_ms: 50 },
-                loss: { percentage: 2, correlation: 30 },
-            },
-        },
-        {
-            duration: "30s",
-            description: "Heavy rain - significant impairment",
-            tc_config: {
-                delay: { base_ms: 400, jitter_ms: 100 },
-                loss: { percentage: 8, correlation: 40 },
-                rate_limit: { rate_kbps: 2000 },
+                delay: { base_ms: 10 },
             },
         },
         {
             duration: "1m",
-            description: "Recovery - conditions improving",
+            description: "High latency",
             tc_config: {
-                delay: { base_ms: 320, jitter_ms: 20 },
-                loss: { percentage: 0.5 },
+                delay: { base_ms: 200, jitter_ms: 50 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Cleanup - no TC config",
+            tc_config: {},
+        },
+    ],
+}
+```
+
+### Progressive Degradation
+
+```json5
+{
+    id: "progressive-degradation",
+    name: "Network Degradation Simulation",
+    description: "Simulate progressively worsening network conditions",
+    
+    metadata: {
+        tags: ["degradation", "testing"],
+        author: "Test Team",
+        version: "1.0",
+    },
+    
+    steps: [
+        {
+            duration: "30s",
+            description: "Good connection",
+            tc_config: {
+                delay: { base_ms: 5 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Degraded connection",
+            tc_config: {
+                loss: { percentage: 2 },
+                delay: { base_ms: 50, jitter_ms: 20 },
+            },
+        },
+        {
+            duration: "30s",
+            description: "Poor connection",
+            tc_config: {
+                loss: { percentage: 10, correlation: 25 },
+                delay: { base_ms: 150, jitter_ms: 75 },
+                duplicate: { percentage: 1 },
             },
         },
     ],
 }
 ```
 
-## JSON5 Features
+### Looping Scenario
 
-TC GUI supports full JSON5 syntax:
+```json5
+{
+    id: "connection-flapping",
+    name: "Connection Flapping",
+    description: "Continuously alternate between good and bad connection",
+    loop_scenario: true,  // Will repeat indefinitely
+    
+    steps: [
+        {
+            duration: "10s",
+            description: "Good connection",
+            tc_config: {},
+        },
+        {
+            duration: "5s",
+            description: "Connection issues",
+            tc_config: {
+                loss: { percentage: 30 },
+                delay: { base_ms: 500 },
+            },
+        },
+    ],
+}
+```
 
-- **Comments**: `// single line` and `/* multi-line */`
-- **Trailing commas**: Allowed in objects and arrays
-- **Unquoted keys**: `id:` instead of `"id":`
-- **Single quotes**: `'value'` same as `"value"`
+### Cleanup Step
 
-## See Also
+An empty `tc_config: {}` removes all TC rules, restoring normal network behavior:
 
-- [Best Practices](best-practices.md) - Guidelines for effective scenario design
-- [Troubleshooting](troubleshooting.md) - Common issues and solutions
-- [Examples](examples.md) - Annotated example scenarios
+```json5
+{
+    duration: "30s",
+    description: "Recovery - clear all TC rules",
+    tc_config: {},
+}
+```
+
+## Execution Behavior
+
+### Step Transitions
+- Steps execute sequentially
+- Each step's TC configuration replaces the previous one
+- The `duration` specifies how long the configuration is active before moving to the next step
+
+### Loop Mode
+- When `loop_scenario: true`, the scenario restarts after the last step
+- Useful for continuous testing or stress testing
+- Can be stopped manually via the UI
+
+### Pause/Resume
+- Scenarios can be paused during execution
+- When paused, the current TC configuration remains active
+- Resuming continues from where it left off
+
+### Cleanup on Failure
+- When `cleanup_on_failure: true` (default), the original TC state is restored if:
+  - The scenario is manually stopped
+  - An error occurs during execution
+  - The backend disconnects
+- Set to `false` to keep the last applied configuration on failure
+
+### Multiple Interfaces
+- A single scenario can be executed on multiple interfaces simultaneously
+- Each interface maintains independent execution state
+- The same scenario can run on different namespaces
+
+## Validation
+
+Scenarios are validated when loaded:
+- `id` and `name` must be non-empty
+- At least one step is required
+- Duration strings must be valid
+- TC parameter values must be within valid ranges
+
+Invalid scenarios are skipped during loading with a warning logged.
+
+## Built-in Scenarios
+
+TC GUI includes several built-in scenarios in the `scenarios/` directory:
+
+| Scenario | Description |
+|----------|-------------|
+| `mobile-degradation` | Mobile device moving away from base station |
+| `network-congestion` | Daily network usage patterns |
+| `intermittent-connectivity` | Connection drops and recovery |
+| `quality-degradation` | Progressive quality degradation |
+| `load-testing` | Network load testing patterns |
+| `fast-degradation` | Quick degradation for testing |
+
+These can be used as-is or as templates for custom scenarios.
