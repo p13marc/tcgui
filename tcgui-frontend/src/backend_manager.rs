@@ -8,7 +8,7 @@ use crate::interface::TcInterface;
 use std::collections::{HashMap, HashSet};
 use tcgui_shared::{
     presets::PresetList, BackendHealthStatus, InterfaceEventType, InterfaceListUpdate,
-    InterfaceStateEvent, NetworkNamespace,
+    InterfaceStateEvent, NamespaceType, NetworkNamespace,
 };
 use tracing::info;
 
@@ -242,6 +242,7 @@ impl BackendManager {
                     name: namespace.clone(),
                     id: None,
                     is_active: true,
+                    namespace_type: NamespaceType::Default,
                     interfaces: Vec::new(),
                 };
                 let namespace_group = NamespaceGroup {
@@ -399,7 +400,7 @@ impl Default for BackendManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::{BackendMetadata, InterfaceType, NetworkInterface};
+    use tcgui_shared::{BackendMetadata, InterfaceType, NamespaceType, NetworkInterface};
 
     fn create_test_interface(name: &str, namespace: &str) -> NetworkInterface {
         NetworkInterface {
@@ -417,6 +418,7 @@ mod tests {
             name: name.to_string(),
             id: Some(1),
             is_active: true,
+            namespace_type: NamespaceType::Default,
             interfaces: interfaces
                 .into_iter()
                 .map(|iface| create_test_interface(iface, name))
@@ -754,6 +756,7 @@ mod tests {
                 name: "default".to_string(),
                 id: Some(1),
                 is_active: true,
+                namespace_type: NamespaceType::Default,
                 interfaces: vec![new_iface],
             }],
             timestamp: 1,

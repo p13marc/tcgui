@@ -433,6 +433,110 @@ Show containers distinctly in the UI:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Frontend Namespace Filtering
+
+Add filter checkboxes in the header to control which namespace types are visible:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ TC GUI                                    Filter: [✓] Host  [✓] NS  [✓] Containers │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Filter Categories:**
+
+1. **Host** (`show_host`): Show the default/root network namespace
+   - Contains physical interfaces (eth0, enp3s0, wlan0, etc.)
+   - Always available
+
+2. **Namespaces** (`show_namespaces`): Show traditional `ip netns` namespaces
+   - Created via `ip netns add`
+   - Located in `/var/run/netns/`
+
+3. **Containers** (`show_containers`): Show container network namespaces
+   - Docker containers
+   - Podman containers
+   - Icons indicate runtime: 🐳 Docker, 🦭 Podman
+
+**Implementation in UiStateManager:**
+
+```rust
+/// Namespace type filter settings
+#[derive(Debug, Clone)]
+pub struct NamespaceFilter {
+    /// Show host/default namespace interfaces
+    pub show_host: bool,
+    /// Show traditional ip netns namespaces
+    pub show_namespaces: bool,
+    /// Show container namespaces (Docker, Podman)
+    pub show_containers: bool,
+}
+
+impl Default for NamespaceFilter {
+    fn default() -> Self {
+        Self {
+            show_host: true,
+            show_namespaces: true,
+            show_containers: true,
+        }
+    }
+}
+```
+
+**UI Messages:**
+
+```rust
+pub enum TcGuiMessage {
+    // ... existing messages
+    ToggleHostFilter,
+    ToggleNamespaceFilter,
+    ToggleContainerFilter,
+}
+```
+
+**Filtering Logic in View:**
+
+```rust
+fn should_show_namespace(namespace: &NetworkNamespace, filter: &NamespaceFilter) -> bool {
+    match &namespace.namespace_type {
+        NamespaceType::Default => filter.show_host,
+        NamespaceType::Traditional => filter.show_namespaces,
+        NamespaceType::Container { .. } => filter.show_containers,
+    }
+}
+```
+
+**Filter UI Component:**
+
+Located in the header bar, next to zoom controls:
+
+```rust
+fn render_namespace_filters(filter: &NamespaceFilter, zoom: f32) -> Element<TcGuiMessage> {
+    row![
+        text("Filter:").size(scaled(12, zoom)),
+        checkbox(filter.show_host)
+            .on_toggle(|_| TcGuiMessage::ToggleHostFilter),
+        text("Host").size(scaled(11, zoom)),
+        checkbox(filter.show_namespaces)
+            .on_toggle(|_| TcGuiMessage::ToggleNamespaceFilter),
+        text("NS").size(scaled(11, zoom)),
+        checkbox(filter.show_containers)
+            .on_toggle(|_| TcGuiMessage::ToggleContainerFilter),
+        text("Containers").size(scaled(11, zoom)),
+    ]
+    .spacing(scaled_spacing(4, zoom))
+}
+```
+
+**Visual Indicators per Namespace Type:**
+
+| Type | Icon | Color Hint |
+|------|------|------------|
+| Host/Default | 🖥️ | Blue |
+| Traditional NS | 📁 | Green |
+| Docker Container | 🐳 | Light Blue |
+| Podman Container | 🦭 | Purple |
+
 ## TC Application Points
 
 ### Where to Apply TC for Containers

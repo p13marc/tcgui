@@ -825,7 +825,7 @@ pub fn zenoh_manager_with_arc(config: Arc<ZenohConfig>) -> impl Sipper<Never, Ze
 mod tests {
     use super::*;
     use tcgui_shared::{
-        topics, BackendMetadata, InterfaceType, NetworkInterface, NetworkNamespace,
+        topics, BackendMetadata, InterfaceType, NamespaceType, NetworkInterface, NetworkNamespace,
     };
     use zenoh::key_expr::{KeyExpr, OwnedKeyExpr};
 
@@ -863,6 +863,7 @@ mod tests {
             name: "default".to_string(),
             id: Some(0),
             is_active: true,
+            namespace_type: NamespaceType::Default,
             interfaces: vec![interface],
         };
 

@@ -28,7 +28,7 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 use tcgui_shared::{
     errors::{BackendError, TcguiError},
     topics, InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent, InterfaceType,
-    NetworkInterface, NetworkNamespace,
+    NamespaceType, NetworkInterface, NetworkNamespace,
 };
 
 /// Network interface manager for multi-namespace operations.
@@ -686,6 +686,7 @@ impl NetworkManager {
                 name: name.clone(),
                 id: None,
                 is_active: true,
+                namespace_type: NamespaceType::Default,
                 interfaces,
             })
             .collect();
