@@ -1,6 +1,7 @@
 mod bandwidth;
 pub mod config;
 mod interfaces;
+mod netlink_events;
 mod network;
 pub mod scenario;
 pub mod services;
@@ -28,6 +29,7 @@ use tcgui_shared::{
 };
 
 use bandwidth::BandwidthMonitor;
+use netlink_events::NetlinkEventListener;
 use network::NetworkManager;
 use scenario::{ScenarioExecutionHandlers, ScenarioManager, ScenarioZenohHandlers};
 use tc_commands::TcCommandManager;
@@ -271,12 +273,23 @@ impl TcBackend {
             }
         }
 
+        // Start netlink event listener for real-time interface change detection
+        // This replaces frequent polling for the default namespace
+        let (netlink_listener, mut netlink_events) = NetlinkEventListener::new(100);
+        if let Err(e) = netlink_listener.start().await {
+            warn!(
+                "Failed to start netlink event listener: {}. Falling back to polling only.",
+                e
+            );
+        }
+
         // Create intervals for periodic tasks
-        let mut interface_monitor_interval = interval(Duration::from_secs(5));
+        // Namespace polling interval increased to 30s since netlink handles default namespace
+        let mut namespace_monitor_interval = interval(Duration::from_secs(30));
         let mut bandwidth_monitor_interval = interval(Duration::from_secs(2));
 
         // Skip the first tick to avoid immediate execution
-        interface_monitor_interval.tick().await;
+        namespace_monitor_interval.tick().await;
         bandwidth_monitor_interval.tick().await;
 
         // Main event loop
@@ -310,40 +323,70 @@ impl TcBackend {
                     }
                 }
 
-                // Periodic interface monitoring
-                _ = interface_monitor_interval.tick() => {
-                    // Refresh interfaces from all namespaces
-                    tracing::info!("[BACKEND] Refreshing interfaces");
+                // Handle real-time netlink events (default namespace only)
+                Some(event) = netlink_events.recv() => {
+                    tracing::debug!("Received netlink event: {:?}", event);
+                    // Trigger a full interface refresh on any link change
+                    // This ensures we capture all details including TC qdisc state
                     match self.network_manager.discover_all_interfaces().await {
                         Ok(discovered_interfaces) => {
                             let updated_interfaces = self.filter_interfaces(discovered_interfaces);
-                            // Only send updates if interfaces actually changed
                             if self.interfaces != updated_interfaces {
-                                tracing::info!("Interface changes detected, sending update to frontend");
+                                tracing::info!("Netlink event triggered interface update");
 
-                                // Find new interfaces to publish initial TC config states
                                 let new_interfaces: Vec<_> = updated_interfaces.values()
                                     .filter(|new_iface| !self.interfaces.contains_key(&new_iface.index))
                                     .map(|i| (i.namespace.clone(), i.name.clone()))
                                     .collect();
 
-                                // Clean up publishers for removed interfaces
                                 self.cleanup_stale_publishers(&updated_interfaces);
-
                                 self.interfaces = updated_interfaces;
+
                                 if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
                                     error!("Failed to send updated interface list: {}", e);
                                 }
 
-                                // Publish initial TC config states for new interfaces
                                 for (namespace, interface_name) in new_interfaces {
                                     let current_config = self.detect_current_tc_config(&namespace, &interface_name).await;
                                     if let Err(e) = self.publish_tc_config(&namespace, &interface_name, current_config).await {
-                                        warn!("Failed to publish initial TC config state for new interface {}:{}: {}", namespace, interface_name, e);
+                                        warn!("Failed to publish TC config for new interface {}:{}: {}", namespace, interface_name, e);
                                     }
                                 }
-                            } else {
-                                tracing::debug!("No interface changes detected, skipping update");
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to refresh interfaces after netlink event: {}", e);
+                        }
+                    }
+                }
+
+                // Periodic namespace monitoring (fallback for named namespaces not covered by netlink)
+                _ = namespace_monitor_interval.tick() => {
+                    tracing::debug!("[BACKEND] Periodic namespace check");
+                    match self.network_manager.discover_all_interfaces().await {
+                        Ok(discovered_interfaces) => {
+                            let updated_interfaces = self.filter_interfaces(discovered_interfaces);
+                            if self.interfaces != updated_interfaces {
+                                tracing::info!("Namespace poll detected interface changes");
+
+                                let new_interfaces: Vec<_> = updated_interfaces.values()
+                                    .filter(|new_iface| !self.interfaces.contains_key(&new_iface.index))
+                                    .map(|i| (i.namespace.clone(), i.name.clone()))
+                                    .collect();
+
+                                self.cleanup_stale_publishers(&updated_interfaces);
+                                self.interfaces = updated_interfaces;
+
+                                if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
+                                    error!("Failed to send updated interface list: {}", e);
+                                }
+
+                                for (namespace, interface_name) in new_interfaces {
+                                    let current_config = self.detect_current_tc_config(&namespace, &interface_name).await;
+                                    if let Err(e) = self.publish_tc_config(&namespace, &interface_name, current_config).await {
+                                        warn!("Failed to publish TC config for new interface {}:{}: {}", namespace, interface_name, e);
+                                    }
+                                }
                             }
                         },
                         Err(e) => {
@@ -354,7 +397,7 @@ impl TcBackend {
 
                 // Periodic bandwidth monitoring (every 2 seconds)
                 _ = bandwidth_monitor_interval.tick() => {
-                    tracing::info!("[BACKEND] Monitoring bandwidth");
+                    tracing::debug!("[BACKEND] Monitoring bandwidth");
                     // Monitor bandwidth for all namespaces
                     if let Err(e) = self.bandwidth_monitor.monitor_and_send(&self.interfaces).await {
                         error!("Failed to monitor bandwidth: {}", e);
