@@ -282,6 +282,13 @@ impl TcInterface {
                 self.preset_manager.toggle_dropdown();
                 Task::none()
             }
+            TcInterfaceMessage::ClearAllFeatures => {
+                tracing::debug!("Clearing all features");
+                self.preset_manager.clear_all_features(&mut self.state);
+                self.state
+                    .add_status_message("Clearing all TC features".to_string(), false);
+                Task::none()
+            }
         }
     }
 

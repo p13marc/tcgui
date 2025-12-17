@@ -235,4 +235,5 @@ pub enum TcInterfaceMessage {
     // Preset control
     PresetSelected(NetworkPreset),
     TogglePresetDropdown,
+    ClearAllFeatures,
 }

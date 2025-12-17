@@ -114,6 +114,23 @@ impl PresetManagerComponent {
         true
     }
 
+    /// Clear all features (disable all TC settings)
+    pub fn clear_all_features(&mut self, state: &mut InterfaceState) {
+        state.current_preset = NetworkPreset::Custom;
+        self.show_presets = false;
+
+        // Disable all features
+        state.features.loss.disable();
+        state.features.delay.disable();
+        state.features.duplicate.disable();
+        state.features.reorder.disable();
+        state.features.corrupt.disable();
+        state.features.rate_limit.disable();
+
+        // Mark as applying to trigger backend update
+        state.applying = true;
+    }
+
     /// Render the preset selector UI
     ///
     /// Takes a reference to the current preset from state to ensure display is in sync.
@@ -122,8 +139,8 @@ impl PresetManagerComponent {
         let current_label = current_preset.display_name();
 
         if self.show_presets {
-            // When expanded, show a horizontal row of preset buttons
-            let preset_buttons: Vec<Element<'_, _>> = self
+            // When expanded, show a horizontal row of preset buttons plus Clear
+            let mut buttons: Vec<Element<'_, _>> = self
                 .available_presets
                 .iter()
                 .map(|preset| {
@@ -142,7 +159,16 @@ impl PresetManagerComponent {
                 })
                 .collect();
 
-            row(preset_buttons).spacing(2).into()
+            // Add Clear button at the end
+            buttons.push(
+                button(text("Clear").size(10))
+                    .padding([2, 4])
+                    .style(button::danger)
+                    .on_press(TcInterfaceMessage::ClearAllFeatures)
+                    .into(),
+            );
+
+            row(buttons).spacing(2).into()
         } else {
             // When collapsed, show a button with current preset name
             button(row![text(current_label).size(11), text(" ▼").size(9),])

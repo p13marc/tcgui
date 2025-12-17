@@ -1185,6 +1185,25 @@ pub fn handle_tc_interface_message(
                     }
                     // Toggle preset dropdown is UI-only, no backend action needed
                     TcInterfaceMessage::TogglePresetDropdown => Task::none(),
+                    // Clear all features - send TC config with all features disabled
+                    TcInterfaceMessage::ClearAllFeatures => Task::done(TcGuiMessage::ApplyTc {
+                        backend_name: backend_name.clone(),
+                        namespace: namespace.clone(),
+                        interface: interface_name.clone(),
+                        loss: 0.0,
+                        correlation: None,
+                        delay_ms: None,
+                        delay_jitter_ms: None,
+                        delay_correlation: None,
+                        duplicate_percent: None,
+                        duplicate_correlation: None,
+                        reorder_percent: None,
+                        reorder_correlation: None,
+                        reorder_gap: None,
+                        corrupt_percent: None,
+                        corrupt_correlation: None,
+                        rate_limit_kbps: None,
+                    }),
                 };
 
                 let backend_copy = backend_name.clone();
