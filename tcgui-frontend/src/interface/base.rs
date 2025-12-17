@@ -26,8 +26,7 @@ pub struct TcInterface {
     bandwidth_display: BandwidthDisplayComponent,
     /// Status display component
     status_display: StatusDisplayComponent,
-    /// Preset management component (future preset UI - Phase 2.2)
-    #[allow(dead_code)]
+    /// Preset management component
     preset_manager: PresetManagerComponent,
 }
 
@@ -267,6 +266,22 @@ impl TcInterface {
                     self.state
                         .add_status_message(format!("Updating rate limit: {} kbps", v), true);
                 }
+                // Mark as custom since user manually changed a setting
+                self.preset_manager.mark_custom(&mut self.state);
+                Task::none()
+            }
+            // Preset messages
+            TcInterfaceMessage::PresetSelected(preset) => {
+                tracing::debug!("Preset selected: {:?}", preset);
+                let preset_name = preset.display_name();
+                if self.preset_manager.apply_preset(preset, &mut self.state) {
+                    self.state
+                        .add_status_message(format!("Applying preset: {}", preset_name), false);
+                }
+                Task::none()
+            }
+            TcInterfaceMessage::TogglePresetDropdown => {
+                self.preset_manager.toggle_dropdown();
                 Task::none()
             }
         }
@@ -309,6 +324,9 @@ impl TcInterface {
             .on_toggle(TcInterfaceMessage::InterfaceToggled)
             .text_size(12);
 
+        // Preset selector
+        let preset_selector = self.preset_manager.view();
+
         // Feature toggles (compact checkboxes)
         let feature_toggles = self.render_feature_toggles();
 
@@ -321,6 +339,7 @@ impl TcInterface {
         row![
             interface_name,
             interface_checkbox,
+            preset_selector,
             feature_toggles,
             bandwidth_display,
             status_display

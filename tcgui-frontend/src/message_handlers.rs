@@ -1087,6 +1087,104 @@ pub fn handle_tc_interface_message(
                             })
                         }
                     }
+                    // Preset messages - apply all TC settings from preset
+                    TcInterfaceMessage::PresetSelected(_) => {
+                        // Preset was applied in TcInterface::update(), now send to backend
+                        Task::done(TcGuiMessage::ApplyTc {
+                            backend_name: backend_name.clone(),
+                            namespace: namespace.clone(),
+                            interface: interface_name.clone(),
+                            loss: if tc_interface.loss_enabled() {
+                                tc_interface.loss()
+                            } else {
+                                0.0
+                            },
+                            correlation: if tc_interface.loss_enabled()
+                                && tc_interface.correlation_value() > 0.0
+                            {
+                                Some(tc_interface.correlation_value())
+                            } else {
+                                None
+                            },
+                            delay_ms: if tc_interface.delay_enabled() {
+                                Some(tc_interface.delay_ms())
+                            } else {
+                                None
+                            },
+                            delay_jitter_ms: if tc_interface.delay_enabled()
+                                && tc_interface.delay_jitter_ms() > 0.0
+                            {
+                                Some(tc_interface.delay_jitter_ms())
+                            } else {
+                                None
+                            },
+                            delay_correlation: if tc_interface.delay_enabled()
+                                && tc_interface.delay_correlation() > 0.0
+                            {
+                                Some(tc_interface.delay_correlation())
+                            } else {
+                                None
+                            },
+                            duplicate_percent: if tc_interface.duplicate_enabled()
+                                && tc_interface.duplicate_percentage() > 0.0
+                            {
+                                Some(tc_interface.duplicate_percentage())
+                            } else {
+                                None
+                            },
+                            duplicate_correlation: if tc_interface.duplicate_enabled()
+                                && tc_interface.duplicate_correlation() > 0.0
+                            {
+                                Some(tc_interface.duplicate_correlation())
+                            } else {
+                                None
+                            },
+                            reorder_percent: if tc_interface.reorder_enabled()
+                                && tc_interface.reorder_percentage() > 0.0
+                            {
+                                Some(tc_interface.reorder_percentage())
+                            } else {
+                                None
+                            },
+                            reorder_correlation: if tc_interface.reorder_enabled()
+                                && tc_interface.reorder_correlation() > 0.0
+                            {
+                                Some(tc_interface.reorder_correlation())
+                            } else {
+                                None
+                            },
+                            reorder_gap: if tc_interface.reorder_enabled()
+                                && tc_interface.reorder_percentage() > 0.0
+                            {
+                                Some(tc_interface.reorder_gap())
+                            } else {
+                                None
+                            },
+                            corrupt_percent: if tc_interface.corrupt_enabled()
+                                && tc_interface.corrupt_percentage() > 0.0
+                            {
+                                Some(tc_interface.corrupt_percentage())
+                            } else {
+                                None
+                            },
+                            corrupt_correlation: if tc_interface.corrupt_enabled()
+                                && tc_interface.corrupt_correlation() > 0.0
+                            {
+                                Some(tc_interface.corrupt_correlation())
+                            } else {
+                                None
+                            },
+                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                                && tc_interface.rate_limit_kbps() > 0
+                            {
+                                Some(tc_interface.rate_limit_kbps())
+                            } else {
+                                None
+                            },
+                        })
+                    }
+                    // Toggle preset dropdown is UI-only, no backend action needed
+                    TcInterfaceMessage::TogglePresetDropdown => Task::none(),
                 };
 
                 let backend_copy = backend_name.clone();

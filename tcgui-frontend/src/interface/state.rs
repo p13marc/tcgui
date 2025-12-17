@@ -29,8 +29,7 @@ pub struct InterfaceState {
     /// Status message history (bounded to prevent memory growth)
     pub status_messages: Vec<String>,
 
-    /// Currently selected preset (future preset UI - Phase 2.2)
-    #[allow(dead_code)]
+    /// Currently selected preset
     pub current_preset: NetworkPreset,
 
     // Note: show_presets field removed as it was unused

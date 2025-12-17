@@ -1,4 +1,5 @@
 use tcgui_shared::{
+    presets::NetworkPreset,
     scenario::{
         NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionResponse,
         ScenarioExecutionUpdate, ScenarioRequest, ScenarioResponse,
@@ -230,4 +231,8 @@ pub enum TcInterfaceMessage {
     // Rate limit control
     RateLimitToggled(()),
     RateLimitChanged(u32),
+
+    // Preset control
+    PresetSelected(NetworkPreset),
+    TogglePresetDropdown,
 }

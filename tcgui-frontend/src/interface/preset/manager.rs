@@ -2,25 +2,23 @@
 //!
 //! This component handles the display and management of network presets,
 //! allowing users to quickly apply common traffic control configurations.
-//!
-//! Note: This module is prepared for future preset UI (Phase 2.2).
-//! Currently unused but kept for planned preset system implementation.
 
-#![allow(dead_code)]
-
+use iced::widget::{button, column, container, row, text};
+use iced::{Element, Length};
 use tcgui_shared::presets::NetworkPreset;
 
-/// Component for preset management UI and logic (future Phase 2.2)
+use crate::interface::state::InterfaceState;
+use crate::messages::TcInterfaceMessage;
+
+/// Component for preset management UI and logic
 #[derive(Debug, Clone)]
 pub struct PresetManagerComponent {
     /// Currently selected preset
     current_preset: NetworkPreset,
     /// Available presets
     available_presets: Vec<NetworkPreset>,
-    /// Whether preset controls are visible
-    show_presets: bool,
-    /// Whether preset application is in progress
-    applying_preset: bool,
+    /// Whether preset dropdown is visible
+    pub show_presets: bool,
 }
 
 impl Default for PresetManagerComponent {
@@ -36,50 +34,139 @@ impl PresetManagerComponent {
             current_preset: NetworkPreset::Custom,
             available_presets: NetworkPreset::all_presets(),
             show_presets: false,
-            applying_preset: false,
         }
     }
 
-    // Removed unused methods:
-    // - current_preset: Available via direct field access if needed
-    // - available_presets: Available via direct field access if needed
-    // - is_visible: Available via direct field access if needed
-    // - is_applying: Available via direct field access if needed
-
-    /// Set preset application state
-    pub fn set_applying(&mut self, applying: bool) {
-        self.applying_preset = applying;
+    /// Toggle the preset dropdown visibility
+    pub fn toggle_dropdown(&mut self) {
+        self.show_presets = !self.show_presets;
     }
 
-    // Removed unused methods:
-    // - update: Message handling logic available if needed
-    // - view: UI rendering logic available if needed (uses PresetMessage which is also unused)
+    /// Apply a preset configuration to the interface state
+    ///
+    /// Returns true if settings were changed (i.e., not Custom preset)
+    pub fn apply_preset(&mut self, preset: NetworkPreset, state: &mut InterfaceState) -> bool {
+        self.current_preset = preset.clone();
+        state.current_preset = preset.clone();
+        self.show_presets = false; // Close dropdown after selection
 
-    /// Apply the selected preset to the interface state
-    pub fn apply_to_interface_state(&self, state: &mut crate::interface::state::InterfaceState) {
-        // Apply the preset configuration to the interface state
-        state.current_preset = self.current_preset.clone();
-
-        // TODO: Extract configuration from preset and apply to feature states
-        // For now, we'll just set the current preset
-        match self.current_preset {
-            NetworkPreset::Custom => {
-                // Don't change anything for custom preset
-            }
-            _ => {
-                // TODO: Apply preset-specific configuration
-                // This would involve extracting the preset's configuration
-                // and applying it to the feature states
-            }
+        // Custom preset doesn't change settings
+        if matches!(preset, NetworkPreset::Custom) {
+            return false;
         }
 
-        // Note: applying_preset state updated through set_applying method
+        let config = preset.get_configuration();
+
+        // Apply loss settings
+        if config.loss > 0.0 {
+            state.features.loss.enable();
+            state.features.loss.config.percentage = config.loss;
+            state.features.loss.config.correlation = config.correlation.unwrap_or(0.0);
+        } else {
+            state.features.loss.disable();
+        }
+
+        // Apply delay settings
+        if config.delay_enabled {
+            state.features.delay.enable();
+            state.features.delay.config.base_ms = config.delay_ms.unwrap_or(0.0);
+            state.features.delay.config.jitter_ms = config.delay_jitter_ms.unwrap_or(0.0);
+            state.features.delay.config.correlation = config.delay_correlation.unwrap_or(0.0);
+        } else {
+            state.features.delay.disable();
+        }
+
+        // Apply duplicate settings
+        if config.duplicate_enabled {
+            state.features.duplicate.enable();
+            state.features.duplicate.config.percentage = config.duplicate_percent.unwrap_or(0.0);
+            state.features.duplicate.config.correlation =
+                config.duplicate_correlation.unwrap_or(0.0);
+        } else {
+            state.features.duplicate.disable();
+        }
+
+        // Apply reorder settings
+        if config.reorder_enabled {
+            state.features.reorder.enable();
+            state.features.reorder.config.percentage = config.reorder_percent.unwrap_or(0.0);
+            state.features.reorder.config.correlation = config.reorder_correlation.unwrap_or(0.0);
+            state.features.reorder.config.gap = config.reorder_gap.unwrap_or(5);
+        } else {
+            state.features.reorder.disable();
+        }
+
+        // Apply corrupt settings
+        if config.corrupt_enabled {
+            state.features.corrupt.enable();
+            state.features.corrupt.config.percentage = config.corrupt_percent.unwrap_or(0.0);
+            state.features.corrupt.config.correlation = config.corrupt_correlation.unwrap_or(0.0);
+        } else {
+            state.features.corrupt.disable();
+        }
+
+        // Apply rate limit settings
+        if config.rate_limit_enabled {
+            state.features.rate_limit.enable();
+            state.features.rate_limit.config.rate_kbps = config.rate_limit_kbps.unwrap_or(1000);
+        } else {
+            state.features.rate_limit.disable();
+        }
+
+        // Mark as applying to trigger backend update
+        state.applying = true;
+        true
     }
 
-    // Removed unused methods:
-    // - matches_interface_state: Preset matching logic available if needed
-    // - reset: Reset logic available if needed
-    // - preset_info: Information formatting logic available if needed
+    /// Mark that the user manually changed settings (switches to Custom preset)
+    pub fn mark_custom(&mut self, state: &mut InterfaceState) {
+        self.current_preset = NetworkPreset::Custom;
+        state.current_preset = NetworkPreset::Custom;
+    }
+
+    /// Render the preset selector UI
+    pub fn view(&self) -> Element<'_, TcInterfaceMessage> {
+        let current_label = self.current_preset.display_name();
+
+        let dropdown_button = button(row![
+            text(current_label).size(11),
+            text(if self.show_presets { " ▲" } else { " ▼" }).size(9),
+        ])
+        .padding([2, 6])
+        .on_press(TcInterfaceMessage::TogglePresetDropdown);
+
+        if self.show_presets {
+            let preset_buttons: Vec<Element<'_, _>> = self
+                .available_presets
+                .iter()
+                .map(|preset| {
+                    let is_selected = *preset == self.current_preset;
+                    let label = preset.display_name();
+
+                    button(text(label).size(11))
+                        .padding([2, 6])
+                        .width(Length::Fill)
+                        .style(if is_selected {
+                            button::primary
+                        } else {
+                            button::secondary
+                        })
+                        .on_press(TcInterfaceMessage::PresetSelected(preset.clone()))
+                        .into()
+                })
+                .collect();
+
+            column![
+                dropdown_button,
+                container(column(preset_buttons).spacing(1))
+                    .padding(4)
+                    .width(Length::Fixed(180.0))
+            ]
+            .into()
+        } else {
+            dropdown_button.into()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -91,78 +178,107 @@ mod tests {
         let component = PresetManagerComponent::new();
         assert_eq!(component.current_preset, NetworkPreset::Custom);
         assert!(!component.show_presets);
-        assert!(!component.applying_preset);
-        assert!(!component.available_presets.is_empty());
+        assert_eq!(component.available_presets.len(), 8);
     }
 
     #[test]
-    fn test_preset_selection() {
-        let mut component = PresetManagerComponent::new();
-
-        // Find a non-custom preset to test with
-        let test_preset = component
-            .available_presets
-            .iter()
-            .find(|p| !matches!(p, NetworkPreset::Custom))
-            .cloned()
-            .unwrap_or(NetworkPreset::Custom);
-
-        // Set preset directly since update method was removed
-        component.current_preset = test_preset.clone();
-        assert_eq!(component.current_preset, test_preset);
-    }
-
-    #[test]
-    fn test_toggle_visibility() {
+    fn test_toggle_dropdown() {
         let mut component = PresetManagerComponent::new();
         assert!(!component.show_presets);
 
-        // Toggle visibility directly
-        component.show_presets = !component.show_presets;
+        component.toggle_dropdown();
         assert!(component.show_presets);
 
-        component.show_presets = !component.show_presets;
+        component.toggle_dropdown();
         assert!(!component.show_presets);
     }
 
     #[test]
-    fn test_apply_preset() {
+    fn test_apply_custom_preset_returns_false() {
         let mut component = PresetManagerComponent::new();
-        assert!(!component.applying_preset);
+        let mut state = InterfaceState::new("eth0");
 
-        // Set applying state directly
-        component.applying_preset = true;
-        assert!(component.applying_preset);
+        // Set some values first
+        state.features.loss.enable();
+        state.features.loss.config.percentage = 5.0;
+
+        // Apply Custom preset - should return false and not change settings
+        let changed = component.apply_preset(NetworkPreset::Custom, &mut state);
+
+        assert!(!changed);
+        assert!(state.features.loss.enabled);
+        assert_eq!(state.features.loss.config.percentage, 5.0);
     }
 
     #[test]
-    fn test_reset_manually() {
+    fn test_apply_satellite_preset() {
         let mut component = PresetManagerComponent::new();
+        let mut state = InterfaceState::new("eth0");
 
-        // Set some non-default state
+        let changed = component.apply_preset(NetworkPreset::SatelliteLink, &mut state);
+
+        assert!(changed);
+        assert!(state.applying);
+
+        // Satellite link: 1% loss, 500ms delay, 2 Mbps rate limit
+        assert!(state.features.loss.enabled);
+        assert_eq!(state.features.loss.config.percentage, 1.0);
+
+        assert!(state.features.delay.enabled);
+        assert_eq!(state.features.delay.config.base_ms, 500.0);
+
+        assert!(state.features.rate_limit.enabled);
+        assert_eq!(state.features.rate_limit.config.rate_kbps, 2000);
+
+        // Should not enable corrupt
+        assert!(!state.features.corrupt.enabled);
+    }
+
+    #[test]
+    fn test_apply_poor_wifi_preset() {
+        let mut component = PresetManagerComponent::new();
+        let mut state = InterfaceState::new("eth0");
+
+        let changed = component.apply_preset(NetworkPreset::PoorWiFi, &mut state);
+
+        assert!(changed);
+
+        // Poor WiFi: 8% loss, delay, duplicate, reorder, corrupt all enabled
+        assert!(state.features.loss.enabled);
+        assert_eq!(state.features.loss.config.percentage, 8.0);
+
+        assert!(state.features.delay.enabled);
+        assert!(state.features.duplicate.enabled);
+        assert!(state.features.reorder.enabled);
+        assert!(state.features.corrupt.enabled);
+
+        // Should not enable rate limit
+        assert!(!state.features.rate_limit.enabled);
+    }
+
+    #[test]
+    fn test_apply_preset_closes_dropdown() {
+        let mut component = PresetManagerComponent::new();
+        let mut state = InterfaceState::new("eth0");
+
         component.show_presets = true;
-        component.applying_preset = true;
-        assert!(component.show_presets);
-        assert!(component.applying_preset);
+        component.apply_preset(NetworkPreset::WanLink, &mut state);
 
-        // Reset manually
-        component.current_preset = NetworkPreset::Custom;
-        component.show_presets = false;
-        component.applying_preset = false;
-        assert_eq!(component.current_preset, NetworkPreset::Custom);
         assert!(!component.show_presets);
-        assert!(!component.applying_preset);
     }
 
     #[test]
-    fn test_set_applying() {
+    fn test_mark_custom() {
         let mut component = PresetManagerComponent::new();
-        assert!(!component.applying_preset);
+        let mut state = InterfaceState::new("eth0");
 
-        component.set_applying(true);
-        assert!(component.applying_preset);
+        // Apply a preset first
+        component.apply_preset(NetworkPreset::SatelliteLink, &mut state);
+        assert_eq!(component.current_preset, NetworkPreset::SatelliteLink);
 
-        component.set_applying(false);
-        assert!(!component.applying_preset);
+        // Mark as custom
+        component.mark_custom(&mut state);
+        assert_eq!(component.current_preset, NetworkPreset::Custom);
+        assert_eq!(state.current_preset, NetworkPreset::Custom);
     }
 }
