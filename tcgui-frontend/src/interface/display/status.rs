@@ -7,6 +7,7 @@ use iced::widget::text;
 use iced::{Color, Element};
 
 use crate::messages::TcInterfaceMessage;
+use crate::theme::Theme;
 
 /// Status indicator types
 /// Note: Some variants currently unused but kept for future extensibility
@@ -83,19 +84,19 @@ impl StatusDisplayComponent {
     }
 
     /// Get the appropriate color for the current status
-    fn status_color(&self) -> Color {
+    fn status_color(&self, theme: &Theme) -> Color {
         match self.status {
-            StatusType::Ready => Color::from_rgb(0.5, 0.5, 0.5), // Gray
-            StatusType::Applying => Color::from_rgb(1.0, 0.6, 0.0), // Orange
-            StatusType::Success => Color::from_rgb(0.0, 0.8, 0.3), // Green
-            StatusType::Error => Color::from_rgb(0.9, 0.2, 0.2), // Red
-            StatusType::InterfaceChanging => Color::from_rgb(0.0, 0.6, 0.9), // Blue
+            StatusType::Ready => theme.colors.text_muted,
+            StatusType::Applying => theme.colors.warning,
+            StatusType::Success => theme.colors.success,
+            StatusType::Error => theme.colors.error,
+            StatusType::InterfaceChanging => theme.colors.info,
         }
     }
 
     /// Render the status display
-    pub fn view(&self) -> Element<'_, TcInterfaceMessage> {
-        let color = self.status_color();
+    pub fn view<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+        let color = self.status_color(theme);
         text(self.status_icon())
             .size(13)
             .style(move |_| text::Style { color: Some(color) })

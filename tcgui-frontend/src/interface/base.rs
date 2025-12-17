@@ -5,12 +5,13 @@
 //! the original monolithic interface.
 
 use iced::widget::{checkbox, column, row, slider, text};
-use iced::{Color, Element, Task};
+use iced::{Element, Task};
 use tcgui_shared::presets::PresetList;
 use tcgui_shared::NetworkBandwidthStats;
 
 use super::state::InterfaceState;
 use crate::messages::TcInterfaceMessage;
+use crate::theme::Theme;
 // Component message imports removed - using TcInterfaceMessage directly
 use super::display::{BandwidthDisplayComponent, StatusDisplayComponent};
 use super::preset::PresetManagerComponent;
@@ -294,9 +295,13 @@ impl TcInterface {
     }
 
     /// Render the complete interface view
-    pub fn view<'a>(&'a self, preset_list: &'a PresetList) -> Element<'a, TcInterfaceMessage> {
-        let main_row = self.render_main_row(preset_list);
-        let expandable_rows = self.render_expandable_features();
+    pub fn view<'a>(
+        &'a self,
+        preset_list: &'a PresetList,
+        theme: &'a Theme,
+    ) -> Element<'a, TcInterfaceMessage> {
+        let main_row = self.render_main_row(preset_list, theme);
+        let expandable_rows = self.render_expandable_features(theme);
 
         column![main_row, expandable_rows].spacing(4).into()
     }
@@ -305,12 +310,13 @@ impl TcInterface {
     fn render_main_row<'a>(
         &'a self,
         preset_list: &'a PresetList,
+        theme: &'a Theme,
     ) -> Element<'a, TcInterfaceMessage> {
         use iced::widget::container;
         use iced::Length;
 
-        // Colors
-        let text_primary = Color::from_rgb(0.1, 0.1, 0.1);
+        // Colors from theme
+        let text_primary = theme.colors.text_primary;
 
         // Interface name and icon
         let interface_icon = if self.state.is_up() {
@@ -344,10 +350,10 @@ impl TcInterface {
         let feature_toggles = self.render_feature_toggles();
 
         // Bandwidth display
-        let bandwidth_display = self.render_bandwidth_display();
+        let bandwidth_display = self.render_bandwidth_display(theme);
 
         // Status display
-        let status_display = self.render_status_display();
+        let status_display = self.render_status_display(theme);
 
         // Use fixed-width containers for table-like alignment
         // Preset selector expands when open to show all options
@@ -416,17 +422,20 @@ impl TcInterface {
     }
 
     /// Render bandwidth display
-    fn render_bandwidth_display(&self) -> Element<'_, TcInterfaceMessage> {
-        self.bandwidth_display.view()
+    fn render_bandwidth_display<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+        self.bandwidth_display.view(theme)
     }
 
     /// Render status indicator
-    fn render_status_display(&self) -> Element<'_, TcInterfaceMessage> {
-        self.status_display.view()
+    fn render_status_display<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
+        self.status_display.view(theme)
     }
 
     /// Render expandable feature rows with parameter sliders
-    fn render_expandable_features(&self) -> Element<'_, TcInterfaceMessage> {
+    fn render_expandable_features<'a>(
+        &'a self,
+        _theme: &'a Theme,
+    ) -> Element<'a, TcInterfaceMessage> {
         let mut feature_rows = Vec::new();
 
         // Loss feature controls

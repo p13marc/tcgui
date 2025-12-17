@@ -4,10 +4,11 @@
 //! automatic unit formatting and visual indicators.
 
 use iced::widget::{row, text};
-use iced::{Color, Element};
+use iced::Element;
 use tcgui_shared::NetworkBandwidthStats;
 
 use crate::messages::TcInterfaceMessage;
+use crate::theme::Theme;
 
 /// Component for bandwidth statistics display
 #[derive(Debug, Clone)]
@@ -53,25 +54,28 @@ impl BandwidthDisplayComponent {
     }
 
     /// Render the bandwidth display
-    pub fn view(&self) -> Element<'_, TcInterfaceMessage> {
+    pub fn view<'a>(&'a self, theme: &'a Theme) -> Element<'a, TcInterfaceMessage> {
         if let Some(stats) = &self.stats {
             let rx_rate = Self::format_rate(stats.rx_bytes_per_sec);
             let tx_rate = Self::format_rate(stats.tx_bytes_per_sec);
 
+            let rx_color = theme.colors.rx_color;
+            let tx_color = theme.colors.tx_color;
+
             row![
                 text("📈").size(11),
-                text(rx_rate).size(11).style(|_| text::Style {
-                    color: Some(Color::from_rgb(0.0, 0.6, 0.9))
+                text(rx_rate).size(11).style(move |_| text::Style {
+                    color: Some(rx_color)
                 }),
                 text("📤").size(11),
-                text(tx_rate).size(11).style(|_| text::Style {
-                    color: Some(Color::from_rgb(0.9, 0.5, 0.0))
+                text(tx_rate).size(11).style(move |_| text::Style {
+                    color: Some(tx_color)
                 })
             ]
             .spacing(2)
             .into()
         } else {
-            let text_secondary = Color::from_rgb(0.4, 0.4, 0.4);
+            let text_secondary = theme.colors.text_secondary;
             row![
                 text("📊").size(11),
                 text("--").size(11).style(move |_| text::Style {

@@ -92,7 +92,7 @@ pub fn render_main_view<'a>(
             if backend_manager.backends().is_empty() {
                 render_empty_state(any_backend_connected, colors.clone(), zoom)
             } else {
-                render_backend_content(backend_manager, ui_state, colors.clone(), zoom)
+                render_backend_content(backend_manager, ui_state, colors.clone(), zoom, theme)
             }
         }
         crate::ui_state::AppTab::Scenarios => {
@@ -568,9 +568,10 @@ fn render_backend_content<'a>(
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
     zoom: f32,
+    theme: &'a Theme,
 ) -> Element<'a, TcGuiMessage> {
     let namespace_sections =
-        render_namespace_sections(backend_manager, ui_state, colors.clone(), zoom);
+        render_namespace_sections(backend_manager, ui_state, colors.clone(), zoom, theme);
     let all_namespaces_column: Element<_> = column(namespace_sections)
         .spacing(scaled_spacing(8, zoom))
         .into();
@@ -595,6 +596,7 @@ fn render_namespace_sections<'a>(
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
     zoom: f32,
+    theme: &'a Theme,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     let mut namespace_sections: Vec<Element<TcGuiMessage>> = Vec::new();
 
@@ -624,6 +626,7 @@ fn render_namespace_sections<'a>(
             namespace_bandwidth_summaries.clone(),
             colors.clone(),
             zoom,
+            theme,
         );
         namespace_sections.extend(backend_namespace_sections);
     }
@@ -642,6 +645,7 @@ fn render_backend_namespaces<'a>(
     >,
     colors: ColorPalette,
     zoom: f32,
+    theme: &'a Theme,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     let mut sections = Vec::new();
 
@@ -671,6 +675,7 @@ fn render_backend_namespaces<'a>(
                 namespace_bandwidth_summaries.clone(),
                 colors.clone(),
                 zoom,
+                theme,
             );
             sections.push(section);
         }
@@ -694,6 +699,7 @@ fn render_namespace_section<'a>(
     >,
     colors: ColorPalette,
     zoom: f32,
+    theme: &'a Theme,
 ) -> Element<'a, TcGuiMessage> {
     let namespace_header = render_namespace_header(
         backend_name,
@@ -724,8 +730,13 @@ fn render_namespace_section<'a>(
             .into()
     } else {
         // Full namespace view with interface cards
-        let interfaces =
-            render_namespace_interfaces(backend_name, namespace_name, namespace_group, preset_list);
+        let interfaces = render_namespace_interfaces(
+            backend_name,
+            namespace_name,
+            namespace_group,
+            preset_list,
+            theme,
+        );
         let interfaces_column: Element<_> =
             column(interfaces).spacing(scaled_spacing(4, zoom)).into();
 
@@ -956,6 +967,7 @@ fn render_namespace_interfaces<'a>(
     namespace_name: &'a str,
     namespace_group: &'a NamespaceGroup,
     preset_list: &'a tcgui_shared::presets::PresetList,
+    theme: &'a Theme,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     // Sort interfaces alphabetically for consistent order
     let mut sorted_interfaces: Vec<_> = namespace_group.tc_interfaces.iter().collect();
@@ -967,7 +979,7 @@ fn render_namespace_interfaces<'a>(
             let name_clone = name.clone();
             let backend_clone = backend_name.to_string();
             let namespace_clone = namespace_name.to_string();
-            interface.view(preset_list).map(move |msg| {
+            interface.view(preset_list, theme).map(move |msg| {
                 TcGuiMessage::TcInterfaceMessage(
                     backend_clone.clone(),
                     namespace_clone.clone(),
