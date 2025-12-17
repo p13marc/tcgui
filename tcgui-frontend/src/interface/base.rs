@@ -335,11 +335,14 @@ impl TcInterface {
                 color: Some(text_primary),
             });
 
-        // Core checkboxes
-        let interface_checkbox = checkbox(self.state.interface_enabled)
-            .label("ON")
-            .on_toggle(TcInterfaceMessage::InterfaceToggled)
-            .text_size(12);
+        // Core checkboxes - use row with styled text for theme support
+        let interface_checkbox = row![
+            checkbox(self.state.interface_enabled).on_toggle(TcInterfaceMessage::InterfaceToggled),
+            text("ON").size(12).style(move |_| text::Style {
+                color: Some(text_primary)
+            })
+        ]
+        .spacing(2);
 
         // Preset selector
         let preset_selector = self
