@@ -66,9 +66,14 @@ impl InterfaceState {
 
     /// Add a status message (bounded history)
     pub fn add_status_message(&mut self, message: String, is_update: bool) {
-        if is_update && !self.status_messages.is_empty() {
-            // Replace the last message if it's an update
-            *self.status_messages.last_mut().unwrap() = message;
+        if is_update {
+            if let Some(last) = self.status_messages.last_mut() {
+                // Replace the last message if it's an update
+                *last = message;
+            } else {
+                // No messages yet, just push
+                self.status_messages.push(message);
+            }
         } else {
             self.status_messages.push(message);
         }

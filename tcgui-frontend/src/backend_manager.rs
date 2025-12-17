@@ -207,16 +207,14 @@ impl BackendManager {
             // Backend went offline - mark as disconnected and record timestamp
             if let Some(backend_group) = self.backends.get_mut(&backend_name) {
                 backend_group.is_connected = false;
-                backend_group.disconnected_at = Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                );
+                let disconnected_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                backend_group.disconnected_at = Some(disconnected_timestamp);
                 info!(
                     "Backend '{}' is now disconnected at timestamp {}",
-                    backend_name,
-                    backend_group.disconnected_at.unwrap()
+                    backend_name, disconnected_timestamp
                 );
             }
         }
