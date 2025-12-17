@@ -816,6 +816,58 @@ impl TcNetemConfig {
             },
         )
     }
+
+    /// Create from legacy parameter format for backward compatibility
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_legacy_params(
+        loss: f32,
+        correlation: Option<f32>,
+        delay_ms: Option<f32>,
+        delay_jitter_ms: Option<f32>,
+        delay_correlation: Option<f32>,
+        duplicate_percent: Option<f32>,
+        duplicate_correlation: Option<f32>,
+        reorder_percent: Option<f32>,
+        reorder_correlation: Option<f32>,
+        reorder_gap: Option<u32>,
+        corrupt_percent: Option<f32>,
+        corrupt_correlation: Option<f32>,
+        rate_limit_kbps: Option<u32>,
+    ) -> Self {
+        Self {
+            loss: TcLossConfig {
+                enabled: loss > 0.0,
+                percentage: loss,
+                correlation: correlation.unwrap_or(0.0),
+            },
+            delay: TcDelayConfig {
+                enabled: delay_ms.is_some_and(|d| d > 0.0),
+                base_ms: delay_ms.unwrap_or(0.0),
+                jitter_ms: delay_jitter_ms.unwrap_or(0.0),
+                correlation: delay_correlation.unwrap_or(0.0),
+            },
+            duplicate: TcDuplicateConfig {
+                enabled: duplicate_percent.is_some_and(|d| d > 0.0),
+                percentage: duplicate_percent.unwrap_or(0.0),
+                correlation: duplicate_correlation.unwrap_or(0.0),
+            },
+            reorder: TcReorderConfig {
+                enabled: reorder_percent.is_some_and(|r| r > 0.0),
+                percentage: reorder_percent.unwrap_or(0.0),
+                correlation: reorder_correlation.unwrap_or(0.0),
+                gap: reorder_gap.unwrap_or(5),
+            },
+            corrupt: TcCorruptConfig {
+                enabled: corrupt_percent.is_some_and(|c| c > 0.0),
+                percentage: corrupt_percent.unwrap_or(0.0),
+                correlation: corrupt_correlation.unwrap_or(0.0),
+            },
+            rate_limit: TcRateLimitConfig {
+                enabled: rate_limit_kbps.is_some_and(|r| r > 0),
+                rate_kbps: rate_limit_kbps.unwrap_or(1000),
+            },
+        }
+    }
 }
 
 /// Traffic control operations with structured configuration

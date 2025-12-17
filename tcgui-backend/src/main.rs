@@ -25,7 +25,7 @@ use tcgui_shared::{
     errors::{BackendError, TcguiError},
     topics, BackendHealthStatus, BackendMetadata, InterfaceControlOperation,
     InterfaceControlRequest, InterfaceControlResponse, NetworkInterface, TcConfigUpdate,
-    TcConfiguration, TcOperation, TcRequest, TcResponse, ZenohConfig,
+    TcConfiguration, TcNetemConfig, TcOperation, TcRequest, TcResponse, ZenohConfig,
 };
 
 use bandwidth::BandwidthMonitor;
@@ -602,36 +602,30 @@ impl TcBackend {
                 corrupt_correlation,
                 rate_limit_kbps,
             } => {
-                // Check if any meaningful TC parameters are present
-                let has_meaningful_params = *loss > 0.0
-                    || delay_ms.is_some_and(|d| d > 0.0)
-                    || duplicate_percent.is_some_and(|d| d > 0.0)
-                    || reorder_percent.is_some_and(|r| r > 0.0)
-                    || corrupt_percent.is_some_and(|c| c > 0.0)
-                    || rate_limit_kbps.is_some_and(|r| r > 0);
+                // Convert legacy parameters to structured config
+                let config = TcNetemConfig::from_legacy_params(
+                    *loss,
+                    *correlation,
+                    *delay_ms,
+                    *delay_jitter_ms,
+                    *delay_correlation,
+                    *duplicate_percent,
+                    *duplicate_correlation,
+                    *reorder_percent,
+                    *reorder_correlation,
+                    *reorder_gap,
+                    *corrupt_percent,
+                    *corrupt_correlation,
+                    *rate_limit_kbps,
+                );
 
-                #[allow(deprecated)]
-                // TcOperation::Apply uses legacy API for backward compatibility
+                // Check if any features are enabled
+                let has_meaningful_params = config.has_any_enabled();
+
                 let result = if has_meaningful_params {
-                    // Apply TC with the meaningful parameters
+                    // Apply TC using structured API
                     self.tc_manager
-                        .apply_tc_config_in_namespace(
-                            &request.namespace,
-                            &request.interface,
-                            *loss,
-                            *correlation,
-                            *delay_ms,
-                            *delay_jitter_ms,
-                            *delay_correlation,
-                            *duplicate_percent,
-                            *duplicate_correlation,
-                            *reorder_percent,
-                            *reorder_correlation,
-                            *reorder_gap,
-                            *corrupt_percent,
-                            *corrupt_correlation,
-                            *rate_limit_kbps,
-                        )
+                        .apply_tc_config_structured(&request.namespace, &request.interface, &config)
                         .await
                 } else {
                     // No meaningful parameters - remove TC qdisc entirely
@@ -647,15 +641,32 @@ impl TcBackend {
                 match result {
                     Ok(_) => {
                         if has_meaningful_params {
+                            // Convert back to legacy format for response/publishing
+                            let (
+                                loss,
+                                correlation,
+                                delay_ms,
+                                delay_jitter_ms,
+                                delay_correlation,
+                                duplicate_percent,
+                                duplicate_correlation,
+                                reorder_percent,
+                                reorder_correlation,
+                                reorder_gap,
+                                corrupt_percent,
+                                corrupt_correlation,
+                                rate_limit_kbps,
+                            ) = config.to_legacy_params();
+
                             // Build command string for display
                             let mut cmd_parts = vec![format!(
                                 "tc qdisc replace dev {} root netem",
                                 request.interface
                             )];
 
-                            if *loss > 0.0 {
+                            if loss > 0.0 {
                                 let loss_part = if let Some(corr) = correlation {
-                                    if *corr > 0.0 {
+                                    if corr > 0.0 {
                                         format!("loss {}% correlation {}%", loss, corr)
                                     } else {
                                         format!("loss {}%", loss)
@@ -667,13 +678,13 @@ impl TcBackend {
                             }
 
                             if let Some(delay) = delay_ms {
-                                if *delay > 0.0 {
+                                if delay > 0.0 {
                                     let mut delay_part = format!("delay {}ms", delay);
                                     if let Some(jitter) = delay_jitter_ms {
-                                        if *jitter > 0.0 {
+                                        if jitter > 0.0 {
                                             delay_part.push_str(&format!(" {}ms", jitter));
                                             if let Some(delay_corr) = delay_correlation {
-                                                if *delay_corr > 0.0 {
+                                                if delay_corr > 0.0 {
                                                     delay_part
                                                         .push_str(&format!(" {}%", delay_corr));
                                                 }
@@ -685,10 +696,10 @@ impl TcBackend {
                             }
 
                             if let Some(duplicate) = duplicate_percent {
-                                if *duplicate > 0.0 {
+                                if duplicate > 0.0 {
                                     let mut duplicate_part = format!("duplicate {}%", duplicate);
                                     if let Some(dup_corr) = duplicate_correlation {
-                                        if *dup_corr > 0.0 {
+                                        if dup_corr > 0.0 {
                                             duplicate_part.push_str(&format!(" {}%", dup_corr));
                                         }
                                     }
@@ -697,15 +708,15 @@ impl TcBackend {
                             }
 
                             if let Some(reorder) = reorder_percent {
-                                if *reorder > 0.0 {
+                                if reorder > 0.0 {
                                     let mut reorder_part = format!("reorder {}%", reorder);
                                     if let Some(reorder_corr) = reorder_correlation {
-                                        if *reorder_corr > 0.0 {
+                                        if reorder_corr > 0.0 {
                                             reorder_part.push_str(&format!(" {}%", reorder_corr));
                                         }
                                     }
                                     if let Some(gap) = reorder_gap {
-                                        if *gap > 0 {
+                                        if gap > 0 {
                                             reorder_part.push_str(&format!(" gap {}", gap));
                                         }
                                     }
@@ -714,10 +725,10 @@ impl TcBackend {
                             }
 
                             if let Some(corrupt) = corrupt_percent {
-                                if *corrupt > 0.0 {
+                                if corrupt > 0.0 {
                                     let mut corrupt_part = format!("corrupt {}%", corrupt);
                                     if let Some(corrupt_corr) = corrupt_correlation {
-                                        if *corrupt_corr > 0.0 {
+                                        if corrupt_corr > 0.0 {
                                             corrupt_part.push_str(&format!(" {}%", corrupt_corr));
                                         }
                                     }
@@ -726,8 +737,8 @@ impl TcBackend {
                             }
 
                             if let Some(rate) = rate_limit_kbps {
-                                if *rate > 0 {
-                                    let rate_part = if *rate >= 1000 {
+                                if rate > 0 {
+                                    let rate_part = if rate >= 1000 {
                                         format!("rate {}mbit", rate / 1000)
                                     } else {
                                         format!("rate {}kbit", rate)
@@ -737,19 +748,19 @@ impl TcBackend {
                             }
 
                             let applied_config = TcConfiguration {
-                                loss: *loss,
-                                correlation: *correlation,
-                                delay_ms: *delay_ms,
-                                delay_jitter_ms: *delay_jitter_ms,
-                                delay_correlation: *delay_correlation,
-                                duplicate_percent: *duplicate_percent,
-                                duplicate_correlation: *duplicate_correlation,
-                                reorder_percent: *reorder_percent,
-                                reorder_correlation: *reorder_correlation,
-                                reorder_gap: *reorder_gap,
-                                corrupt_percent: *corrupt_percent,
-                                corrupt_correlation: *corrupt_correlation,
-                                rate_limit_kbps: *rate_limit_kbps,
+                                loss,
+                                correlation,
+                                delay_ms,
+                                delay_jitter_ms,
+                                delay_correlation,
+                                duplicate_percent,
+                                duplicate_correlation,
+                                reorder_percent,
+                                reorder_correlation,
+                                reorder_gap,
+                                corrupt_percent,
+                                corrupt_correlation,
+                                rate_limit_kbps,
                                 command: cmd_parts.join(" "),
                             };
 
