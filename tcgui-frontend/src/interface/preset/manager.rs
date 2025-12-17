@@ -13,8 +13,6 @@ use crate::messages::TcInterfaceMessage;
 /// Component for preset management UI and logic
 #[derive(Debug, Clone)]
 pub struct PresetManagerComponent {
-    /// Currently selected preset
-    current_preset: NetworkPreset,
     /// Available presets
     available_presets: Vec<NetworkPreset>,
     /// Whether preset dropdown is visible
@@ -31,7 +29,6 @@ impl PresetManagerComponent {
     /// Create new preset manager component
     pub fn new() -> Self {
         Self {
-            current_preset: NetworkPreset::Custom,
             available_presets: NetworkPreset::all_presets(),
             show_presets: false,
         }
@@ -46,7 +43,6 @@ impl PresetManagerComponent {
     ///
     /// Returns true if settings were changed (i.e., not Custom preset)
     pub fn apply_preset(&mut self, preset: NetworkPreset, state: &mut InterfaceState) -> bool {
-        self.current_preset = preset.clone();
         state.current_preset = preset.clone();
         self.show_presets = false; // Close dropdown after selection
 
@@ -118,15 +114,11 @@ impl PresetManagerComponent {
         true
     }
 
-    /// Mark that the user manually changed settings (switches to Custom preset)
-    pub fn mark_custom(&mut self, state: &mut InterfaceState) {
-        self.current_preset = NetworkPreset::Custom;
-        state.current_preset = NetworkPreset::Custom;
-    }
-
     /// Render the preset selector UI
-    pub fn view(&self) -> Element<'_, TcInterfaceMessage> {
-        let current_label = self.current_preset.display_name();
+    ///
+    /// Takes a reference to the current preset from state to ensure display is in sync
+    pub fn view(&self, current_preset: &NetworkPreset) -> Element<'_, TcInterfaceMessage> {
+        let current_label = current_preset.display_name();
 
         let dropdown_button = button(row![
             text(current_label).size(11),
@@ -140,7 +132,7 @@ impl PresetManagerComponent {
                 .available_presets
                 .iter()
                 .map(|preset| {
-                    let is_selected = *preset == self.current_preset;
+                    let is_selected = preset == current_preset;
                     let label = preset.display_name();
 
                     button(text(label).size(11))
@@ -156,15 +148,31 @@ impl PresetManagerComponent {
                 })
                 .collect();
 
-            column![
-                dropdown_button,
-                container(column(preset_buttons).spacing(1))
-                    .padding(4)
-                    .width(Length::Fixed(180.0))
-            ]
+            // Use a container with absolute-like positioning via layering
+            // The dropdown appears below the button without affecting row layout
+            container(
+                column![
+                    dropdown_button,
+                    container(column(preset_buttons).spacing(1))
+                        .padding(4)
+                        .style(|_theme| container::Style {
+                            background: Some(iced::Background::Color(iced::Color::WHITE)),
+                            border: iced::Border {
+                                color: iced::Color::from_rgb(0.8, 0.8, 0.8),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            ..Default::default()
+                        })
+                ]
+                .spacing(2),
+            )
+            .width(Length::Fixed(150.0))
             .into()
         } else {
-            dropdown_button.into()
+            container(dropdown_button)
+                .width(Length::Fixed(150.0))
+                .into()
         }
     }
 }
@@ -176,7 +184,6 @@ mod tests {
     #[test]
     fn test_preset_manager_creation() {
         let component = PresetManagerComponent::new();
-        assert_eq!(component.current_preset, NetworkPreset::Custom);
         assert!(!component.show_presets);
         assert_eq!(component.available_presets.len(), 8);
     }
@@ -268,17 +275,16 @@ mod tests {
     }
 
     #[test]
-    fn test_mark_custom() {
+    fn test_apply_preset_updates_state_preset() {
         let mut component = PresetManagerComponent::new();
         let mut state = InterfaceState::new("eth0");
 
-        // Apply a preset first
+        // Apply a preset
         component.apply_preset(NetworkPreset::SatelliteLink, &mut state);
-        assert_eq!(component.current_preset, NetworkPreset::SatelliteLink);
+        assert_eq!(state.current_preset, NetworkPreset::SatelliteLink);
 
-        // Mark as custom
-        component.mark_custom(&mut state);
-        assert_eq!(component.current_preset, NetworkPreset::Custom);
-        assert_eq!(state.current_preset, NetworkPreset::Custom);
+        // Apply another preset
+        component.apply_preset(NetworkPreset::PoorWiFi, &mut state);
+        assert_eq!(state.current_preset, NetworkPreset::PoorWiFi);
     }
 }

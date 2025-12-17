@@ -267,7 +267,7 @@ impl TcInterface {
                         .add_status_message(format!("Updating rate limit: {} kbps", v), true);
                 }
                 // Mark as custom since user manually changed a setting
-                self.preset_manager.mark_custom(&mut self.state);
+                self.state.current_preset = tcgui_shared::presets::NetworkPreset::Custom;
                 Task::none()
             }
             // Preset messages
@@ -325,7 +325,7 @@ impl TcInterface {
             .text_size(12);
 
         // Preset selector
-        let preset_selector = self.preset_manager.view();
+        let preset_selector = self.preset_manager.view(&self.state.current_preset);
 
         // Feature toggles (compact checkboxes)
         let feature_toggles = self.render_feature_toggles();
