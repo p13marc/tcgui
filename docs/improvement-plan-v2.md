@@ -6,14 +6,18 @@ This document outlines the next phase of improvements for the TC GUI codebase, f
 
 | Phase | Task | Priority | Effort | Status |
 |-------|------|----------|--------|--------|
-| 1 | Remove dead_code annotations | High | 2-3 hours | Pending |
-| 1 | Replace unwrap() calls in zenoh_manager | High | 1-2 hours | Pending |
-| 1 | Create scenario-format.md documentation | Medium | 1 hour | Pending |
-| 2 | Add frontend unit tests | Medium | 1-2 days | Pending |
-| 2 | Complete preset system implementation | Medium | 4-6 hours | Pending |
-| 2 | Refactor service layer architecture | Medium | 1 day | Pending |
-| 3 | Optimize HashMap cloning in event loop | Low | 2-3 hours | Pending |
-| 4 | Expand qdisc support beyond netem | Low | 1-2 weeks | Pending |
+| 1 | Remove dead_code annotations | High | 2-3 hours | **Done** |
+| 1 | Replace unwrap() calls in zenoh_manager | High | 1-2 hours | **Done** |
+| 1 | Create scenario-format.md documentation | Medium | 1 hour | **Done** |
+| 2 | Add frontend unit tests | Medium | 1-2 days | **Done** |
+| 2 | Complete preset system implementation | Medium | 4-6 hours | Deferred* |
+| 2 | Refactor service layer architecture | Medium | 1 day | N/A** |
+| 3 | Optimize HashMap cloning in event loop | Low | 2-3 hours | N/A*** |
+| 4 | Expand qdisc support beyond netem | Low | 1-2 weeks | See qdisc-expansion-plan.md |
+
+*Preset system types exist; UI integration deferred to future work.
+**Service layer already well-structured with TcService, NetworkService, BandwidthService.
+***Pattern not found in current codebase; may have been refactored already.
 
 ---
 
