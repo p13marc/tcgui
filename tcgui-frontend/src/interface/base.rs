@@ -58,7 +58,7 @@ impl TcInterface {
         // while gradually migrating to the new modular approach
         match message {
             TcInterfaceMessage::LossChanged(v) => {
-                println!("DEBUG: LossChanged slider moved to: {}", v);
+                tracing::debug!("LossChanged slider moved to: {}", v);
                 self.state.features.loss.config.percentage = v;
                 // Auto-apply immediately
                 self.state.applying = true;
@@ -72,7 +72,7 @@ impl TcInterface {
                 Task::none()
             }
             TcInterfaceMessage::CorrelationChanged(v) => {
-                println!("DEBUG: CorrelationChanged slider moved to: {}", v);
+                tracing::debug!("CorrelationChanged slider moved to: {}", v);
                 self.state.features.loss.config.correlation = v;
                 // Auto-apply immediately
                 self.state.applying = true;
@@ -108,7 +108,7 @@ impl TcInterface {
             }
             // Delay-related messages
             TcInterfaceMessage::DelayChanged(v) => {
-                println!("DEBUG: DelayChanged slider moved to: {}", v);
+                tracing::debug!("DelayChanged slider moved to: {}", v);
                 self.state.features.delay.config.base_ms = v;
                 if self.state.features.delay.enabled {
                     self.state.applying = true;
@@ -178,7 +178,7 @@ impl TcInterface {
             }
             // Duplicate parameter messages
             TcInterfaceMessage::DuplicatePercentageChanged(v) => {
-                println!("DEBUG: DuplicatePercentageChanged slider moved to: {}", v);
+                tracing::debug!("DuplicatePercentageChanged slider moved to: {}", v);
                 self.state.features.duplicate.config.percentage = v;
                 // Auto-enable duplicate checkbox when meaningful value is set from backend
                 if v > 0.0 && !self.state.features.duplicate.enabled {
@@ -192,7 +192,7 @@ impl TcInterface {
                 Task::none()
             }
             TcInterfaceMessage::DuplicateCorrelationChanged(v) => {
-                println!("DEBUG: DuplicateCorrelationChanged slider moved to: {}", v);
+                tracing::debug!("DuplicateCorrelationChanged slider moved to: {}", v);
                 self.state.features.duplicate.config.correlation = v;
                 if self.state.features.duplicate.enabled {
                     self.state.applying = true;
@@ -201,7 +201,7 @@ impl TcInterface {
             }
             // Reorder parameter messages
             TcInterfaceMessage::ReorderPercentageChanged(v) => {
-                println!("DEBUG: ReorderPercentageChanged slider moved to: {}", v);
+                tracing::debug!("ReorderPercentageChanged slider moved to: {}", v);
                 self.state.features.reorder.config.percentage = v;
                 // Auto-enable reorder checkbox when meaningful value is set from backend
                 if v > 0.0 && !self.state.features.reorder.enabled {
@@ -215,7 +215,7 @@ impl TcInterface {
                 Task::none()
             }
             TcInterfaceMessage::ReorderCorrelationChanged(v) => {
-                println!("DEBUG: ReorderCorrelationChanged slider moved to: {}", v);
+                tracing::debug!("ReorderCorrelationChanged slider moved to: {}", v);
                 self.state.features.reorder.config.correlation = v;
                 if self.state.features.reorder.enabled {
                     self.state.applying = true;
@@ -223,7 +223,7 @@ impl TcInterface {
                 Task::none()
             }
             TcInterfaceMessage::ReorderGapChanged(v) => {
-                println!("DEBUG: ReorderGapChanged slider moved to: {}", v);
+                tracing::debug!("ReorderGapChanged slider moved to: {}", v);
                 self.state.features.reorder.config.gap = v;
                 if self.state.features.reorder.enabled {
                     self.state.applying = true;
@@ -232,7 +232,7 @@ impl TcInterface {
             }
             // Corrupt parameter messages
             TcInterfaceMessage::CorruptPercentageChanged(v) => {
-                println!("DEBUG: CorruptPercentageChanged slider moved to: {}", v);
+                tracing::debug!("CorruptPercentageChanged slider moved to: {}", v);
                 self.state.features.corrupt.config.percentage = v;
                 // Auto-enable corrupt checkbox when meaningful value is set from backend
                 if v > 0.0 && !self.state.features.corrupt.enabled {
@@ -246,7 +246,7 @@ impl TcInterface {
                 Task::none()
             }
             TcInterfaceMessage::CorruptCorrelationChanged(v) => {
-                println!("DEBUG: CorruptCorrelationChanged slider moved to: {}", v);
+                tracing::debug!("CorruptCorrelationChanged slider moved to: {}", v);
                 self.state.features.corrupt.config.correlation = v;
                 if self.state.features.corrupt.enabled {
                     self.state.applying = true;
@@ -255,7 +255,7 @@ impl TcInterface {
             }
             // Rate limit parameter messages
             TcInterfaceMessage::RateLimitChanged(v) => {
-                println!("DEBUG: RateLimitChanged slider moved to: {}", v);
+                tracing::debug!("RateLimitChanged slider moved to: {}", v);
                 self.state.features.rate_limit.config.rate_kbps = v;
                 // Auto-enable rate limit checkbox when meaningful value is set from backend
                 if v > 0 && !self.state.features.rate_limit.enabled {
