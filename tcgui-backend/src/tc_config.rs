@@ -164,7 +164,6 @@ pub fn parse_tc_parameters(qdisc_info: &str) -> TcConfiguration {
 ///
 /// This generates a human-readable command string showing what TC configuration
 /// would be applied (useful for logging and UI display).
-#[allow(dead_code)] // Will be used when handlers are refactored
 #[allow(clippy::too_many_arguments)]
 pub fn build_tc_command_string(
     interface: &str,
@@ -273,7 +272,6 @@ pub fn build_tc_command_string(
 ///
 /// This is a convenience function that combines parameter values with a
 /// generated command string.
-#[allow(dead_code)] // Will be used when handlers are refactored
 #[allow(clippy::too_many_arguments)]
 pub fn build_tc_configuration(
     interface: &str,

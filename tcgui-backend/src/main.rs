@@ -452,95 +452,9 @@ impl TcBackend {
                             rate_limit_kbps,
                         ) = config.to_legacy_params();
 
-                        // Build command string for display
-                        let mut cmd_parts = vec![format!(
-                            "tc qdisc replace dev {} root netem",
-                            request.interface
-                        )];
-
-                        if loss > 0.0 {
-                            let loss_part = if let Some(corr) = correlation {
-                                if corr > 0.0 {
-                                    format!("loss {}% correlation {}%", loss, corr)
-                                } else {
-                                    format!("loss {}%", loss)
-                                }
-                            } else {
-                                format!("loss {}%", loss)
-                            };
-                            cmd_parts.push(loss_part);
-                        }
-
-                        if let Some(delay) = delay_ms {
-                            if delay > 0.0 {
-                                let mut delay_part = format!("delay {}ms", delay);
-                                if let Some(jitter) = delay_jitter_ms {
-                                    if jitter > 0.0 {
-                                        delay_part.push_str(&format!(" {}ms", jitter));
-                                        if let Some(delay_corr) = delay_correlation {
-                                            if delay_corr > 0.0 {
-                                                delay_part.push_str(&format!(" {}%", delay_corr));
-                                            }
-                                        }
-                                    }
-                                }
-                                cmd_parts.push(delay_part);
-                            }
-                        }
-
-                        if let Some(duplicate) = duplicate_percent {
-                            if duplicate > 0.0 {
-                                let mut duplicate_part = format!("duplicate {}%", duplicate);
-                                if let Some(dup_corr) = duplicate_correlation {
-                                    if dup_corr > 0.0 {
-                                        duplicate_part.push_str(&format!(" {}%", dup_corr));
-                                    }
-                                }
-                                cmd_parts.push(duplicate_part);
-                            }
-                        }
-
-                        if let Some(reorder) = reorder_percent {
-                            if reorder > 0.0 {
-                                let mut reorder_part = format!("reorder {}%", reorder);
-                                if let Some(reorder_corr) = reorder_correlation {
-                                    if reorder_corr > 0.0 {
-                                        reorder_part.push_str(&format!(" {}%", reorder_corr));
-                                    }
-                                }
-                                if let Some(gap) = reorder_gap {
-                                    if gap > 0 {
-                                        reorder_part.push_str(&format!(" gap {}", gap));
-                                    }
-                                }
-                                cmd_parts.push(reorder_part);
-                            }
-                        }
-
-                        if let Some(corrupt) = corrupt_percent {
-                            if corrupt > 0.0 {
-                                let mut corrupt_part = format!("corrupt {}%", corrupt);
-                                if let Some(corrupt_corr) = corrupt_correlation {
-                                    if corrupt_corr > 0.0 {
-                                        corrupt_part.push_str(&format!(" {}%", corrupt_corr));
-                                    }
-                                }
-                                cmd_parts.push(corrupt_part);
-                            }
-                        }
-
-                        if let Some(rate) = rate_limit_kbps {
-                            if rate > 0 {
-                                let rate_part = if rate >= 1000 {
-                                    format!("rate {}mbit", rate / 1000)
-                                } else {
-                                    format!("rate {}kbit", rate)
-                                };
-                                cmd_parts.push(rate_part);
-                            }
-                        }
-
-                        let applied_config = TcConfiguration {
+                        // Use helper function to build configuration
+                        let applied_config = tc_config::build_tc_configuration(
+                            &request.interface,
                             loss,
                             correlation,
                             delay_ms,
@@ -554,8 +468,7 @@ impl TcBackend {
                             corrupt_percent,
                             corrupt_correlation,
                             rate_limit_kbps,
-                            command: cmd_parts.join(" "),
-                        };
+                        );
 
                         // Publish TC configuration update with actual config
                         if let Err(e) = self
@@ -658,96 +571,9 @@ impl TcBackend {
                                 rate_limit_kbps,
                             ) = config.to_legacy_params();
 
-                            // Build command string for display
-                            let mut cmd_parts = vec![format!(
-                                "tc qdisc replace dev {} root netem",
-                                request.interface
-                            )];
-
-                            if loss > 0.0 {
-                                let loss_part = if let Some(corr) = correlation {
-                                    if corr > 0.0 {
-                                        format!("loss {}% correlation {}%", loss, corr)
-                                    } else {
-                                        format!("loss {}%", loss)
-                                    }
-                                } else {
-                                    format!("loss {}%", loss)
-                                };
-                                cmd_parts.push(loss_part);
-                            }
-
-                            if let Some(delay) = delay_ms {
-                                if delay > 0.0 {
-                                    let mut delay_part = format!("delay {}ms", delay);
-                                    if let Some(jitter) = delay_jitter_ms {
-                                        if jitter > 0.0 {
-                                            delay_part.push_str(&format!(" {}ms", jitter));
-                                            if let Some(delay_corr) = delay_correlation {
-                                                if delay_corr > 0.0 {
-                                                    delay_part
-                                                        .push_str(&format!(" {}%", delay_corr));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    cmd_parts.push(delay_part);
-                                }
-                            }
-
-                            if let Some(duplicate) = duplicate_percent {
-                                if duplicate > 0.0 {
-                                    let mut duplicate_part = format!("duplicate {}%", duplicate);
-                                    if let Some(dup_corr) = duplicate_correlation {
-                                        if dup_corr > 0.0 {
-                                            duplicate_part.push_str(&format!(" {}%", dup_corr));
-                                        }
-                                    }
-                                    cmd_parts.push(duplicate_part);
-                                }
-                            }
-
-                            if let Some(reorder) = reorder_percent {
-                                if reorder > 0.0 {
-                                    let mut reorder_part = format!("reorder {}%", reorder);
-                                    if let Some(reorder_corr) = reorder_correlation {
-                                        if reorder_corr > 0.0 {
-                                            reorder_part.push_str(&format!(" {}%", reorder_corr));
-                                        }
-                                    }
-                                    if let Some(gap) = reorder_gap {
-                                        if gap > 0 {
-                                            reorder_part.push_str(&format!(" gap {}", gap));
-                                        }
-                                    }
-                                    cmd_parts.push(reorder_part);
-                                }
-                            }
-
-                            if let Some(corrupt) = corrupt_percent {
-                                if corrupt > 0.0 {
-                                    let mut corrupt_part = format!("corrupt {}%", corrupt);
-                                    if let Some(corrupt_corr) = corrupt_correlation {
-                                        if corrupt_corr > 0.0 {
-                                            corrupt_part.push_str(&format!(" {}%", corrupt_corr));
-                                        }
-                                    }
-                                    cmd_parts.push(corrupt_part);
-                                }
-                            }
-
-                            if let Some(rate) = rate_limit_kbps {
-                                if rate > 0 {
-                                    let rate_part = if rate >= 1000 {
-                                        format!("rate {}mbit", rate / 1000)
-                                    } else {
-                                        format!("rate {}kbit", rate)
-                                    };
-                                    cmd_parts.push(rate_part);
-                                }
-                            }
-
-                            let applied_config = TcConfiguration {
+                            // Use helper function to build configuration
+                            let applied_config = tc_config::build_tc_configuration(
+                                &request.interface,
                                 loss,
                                 correlation,
                                 delay_ms,
@@ -761,8 +587,7 @@ impl TcBackend {
                                 corrupt_percent,
                                 corrupt_correlation,
                                 rate_limit_kbps,
-                                command: cmd_parts.join(" "),
-                            };
+                            );
 
                             // Publish TC configuration update so frontend knows the current state
                             if let Err(e) = self
