@@ -534,7 +534,6 @@ impl TcGui {
         render_main_view(
             &self.backend_manager,
             &self.ui_state,
-            &self.query_manager,
             &self.scenario_manager,
         )
     }

@@ -5,7 +5,6 @@
 
 use crate::backend_manager::{BackendGroup, BackendManager, NamespaceGroup};
 use crate::messages::TcGuiMessage;
-use crate::query_manager::QueryManager;
 use crate::scenario_manager::ScenarioManager;
 use crate::scenario_view;
 use crate::ui_state::UiStateManager;
@@ -64,7 +63,6 @@ impl Default for ColorPalette {
 pub fn render_main_view<'a>(
     backend_manager: &'a BackendManager,
     ui_state: &'a UiStateManager,
-    query_manager: &'a QueryManager,
     _scenario_manager: &'a ScenarioManager,
 ) -> Element<'a, TcGuiMessage> {
     let colors = ColorPalette::default();
@@ -77,13 +75,7 @@ pub fn render_main_view<'a>(
         .values()
         .any(|bg| bg.is_connected);
 
-    let header = render_header(
-        backend_manager,
-        query_manager,
-        ui_state,
-        colors.clone(),
-        zoom,
-    );
+    let header = render_header(backend_manager, ui_state, colors.clone(), zoom);
     let tabs = render_tabs(ui_state, colors.clone(), zoom);
 
     let content = match ui_state.current_tab() {
@@ -201,7 +193,6 @@ fn render_tabs<'a>(
 /// Renders the application header with status and active interfaces
 fn render_header<'a>(
     backend_manager: &'a BackendManager,
-    query_manager: &'a QueryManager,
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
     zoom: f32,
@@ -209,7 +200,7 @@ fn render_header<'a>(
     let namespace_summaries = get_namespace_bandwidth_summaries(backend_manager);
     let overall_summary = get_bandwidth_summary(backend_manager);
 
-    let status_line = render_status_line(backend_manager, query_manager, colors.clone(), zoom);
+    let status_line = render_status_line(backend_manager, colors.clone(), zoom);
     let active_interfaces_display =
         render_active_interfaces(namespace_summaries, overall_summary, colors.clone(), zoom);
 
@@ -259,7 +250,6 @@ fn render_header<'a>(
 /// Renders the backend connection status line
 fn render_status_line<'a>(
     backend_manager: &'a BackendManager,
-    query_manager: &'a QueryManager,
     colors: ColorPalette,
     zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
@@ -312,37 +302,24 @@ fn render_status_line<'a>(
     let connected_backends = backend_manager.connected_backend_names();
     let total_interfaces = backend_manager.total_interface_count();
 
-    // Add query channel status info
-    let query_status = if query_manager.has_both_channels() {
-        " • 📞 Channels: Ready"
-    } else if query_manager.has_tc_query_channel() {
-        " • ⚠️ Channels: TC Only"
-    } else if query_manager.has_interface_query_channel() {
-        " • ⚠️ Channels: Interface Only"
-    } else {
-        " • ❌ Channels: None"
-    };
-
     let stats_text =
         if let Some((namespace, interface, _total_rate, rate_display)) = overall_summary {
             format!(
-                " • Top: {}/{} ({}) • {} connected • {} interfaces{}",
+                " • Top: {}/{} ({}) • {} connected • {} interfaces",
                 namespace,
                 interface,
                 rate_display,
                 connected_backends.len(),
                 total_interfaces,
-                query_status
             )
         } else if backend_manager.backend_count() > 0 {
             format!(
-                " • No traffic • {} connected • {} interfaces{}",
+                " • No traffic • {} connected • {} interfaces",
                 connected_backends.len(),
                 total_interfaces,
-                query_status
             )
         } else {
-            format!(" • No interfaces{}", query_status)
+            " • No interfaces".to_string()
         };
 
     backend_statuses.push(

@@ -187,21 +187,6 @@ impl QueryManager {
             Err(error_msg)
         }
     }
-
-    /// Checks if TC query channel is available.
-    pub fn has_tc_query_channel(&self) -> bool {
-        self.tc_query_sender.is_some()
-    }
-
-    /// Checks if interface query channel is available.
-    pub fn has_interface_query_channel(&self) -> bool {
-        self.interface_query_sender.is_some()
-    }
-
-    /// Checks if both channels are available.
-    pub fn has_both_channels(&self) -> bool {
-        self.has_tc_query_channel() && self.has_interface_query_channel()
-    }
 }
 
 impl Default for QueryManager {
