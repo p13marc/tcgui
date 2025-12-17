@@ -344,6 +344,13 @@ impl TcInterface {
         let status_display = self.render_status_display();
 
         // Use fixed-width containers for table-like alignment
+        // Preset selector expands when open to show all options
+        let preset_width = if self.preset_manager.is_expanded() {
+            Length::Shrink // Let it expand to fit all buttons
+        } else {
+            Length::Fixed(130.0)
+        };
+
         row![
             container(interface_name)
                 .width(Length::Fixed(120.0))
@@ -352,7 +359,7 @@ impl TcInterface {
                 .width(Length::Fixed(50.0))
                 .align_y(iced::alignment::Vertical::Center),
             container(preset_selector)
-                .width(Length::Fixed(130.0))
+                .width(preset_width)
                 .align_y(iced::alignment::Vertical::Center),
             container(feature_toggles)
                 .width(Length::Fixed(280.0))

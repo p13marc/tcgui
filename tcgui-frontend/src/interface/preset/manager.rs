@@ -19,6 +19,13 @@ pub struct PresetManagerComponent {
     pub show_presets: bool,
 }
 
+impl PresetManagerComponent {
+    /// Check if the preset selector is expanded
+    pub fn is_expanded(&self) -> bool {
+        self.show_presets
+    }
+}
+
 impl Default for PresetManagerComponent {
     fn default() -> Self {
         Self::new()
