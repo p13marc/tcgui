@@ -568,3 +568,385 @@ impl std::fmt::Display for ScenarioManagerStats {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tcgui_shared::scenario::{ExecutionState, ExecutionStats, ScenarioMetadata, ScenarioStep};
+    use tcgui_shared::TcNetemConfig;
+
+    fn create_test_scenario(id: &str, name: &str, steps: usize) -> NetworkScenario {
+        NetworkScenario {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: format!("Test scenario {}", id),
+            metadata: ScenarioMetadata::default(),
+            steps: (0..steps)
+                .map(|i| ScenarioStep {
+                    duration_ms: 1000,
+                    tc_config: TcNetemConfig::default(),
+                    description: format!("Step {}", i),
+                })
+                .collect(),
+            loop_scenario: false,
+            created_at: 0,
+            modified_at: 0,
+            cleanup_on_failure: true,
+        }
+    }
+
+    fn create_test_execution(
+        scenario_id: &str,
+        step: usize,
+        state: ExecutionState,
+    ) -> ScenarioExecution {
+        ScenarioExecution {
+            scenario: create_test_scenario(scenario_id, scenario_id, 3),
+            start_time: 0,
+            current_step: step,
+            state,
+            target_namespace: "ns1".to_string(),
+            target_interface: "eth0".to_string(),
+            stats: ExecutionStats::default(),
+            loop_execution: false,
+            loop_iteration: 0,
+        }
+    }
+
+    #[test]
+    fn test_scenario_manager_default() {
+        let manager = ScenarioManager::new();
+        assert!(!manager.is_showing_details());
+        assert!(manager.get_selected_scenario().is_none());
+        assert!(manager.get_search_filter().is_empty());
+        assert_eq!(manager.get_sort_option(), ScenarioSortOption::Name);
+        // Default is descending (bool default is false)
+        assert!(!manager.is_sort_ascending());
+    }
+
+    #[test]
+    fn test_scenario_sort_options() {
+        assert_eq!(ScenarioSortOption::Name.label(), "Name");
+        assert_eq!(ScenarioSortOption::Duration.label(), "Duration");
+        assert_eq!(ScenarioSortOption::StepCount.label(), "Steps");
+        assert_eq!(ScenarioSortOption::all().len(), 3);
+    }
+
+    #[test]
+    fn test_search_filter() {
+        let mut manager = ScenarioManager::new();
+
+        manager.set_search_filter("test".to_string());
+        assert_eq!(manager.get_search_filter(), "test");
+
+        manager.set_search_filter(String::new());
+        assert!(manager.get_search_filter().is_empty());
+    }
+
+    #[test]
+    fn test_sort_option_toggle() {
+        let mut manager = ScenarioManager::new();
+
+        // Initially Name descending (bool default is false)
+        assert_eq!(manager.get_sort_option(), ScenarioSortOption::Name);
+        assert!(!manager.is_sort_ascending());
+
+        // Same option toggles direction
+        manager.set_sort_option(ScenarioSortOption::Name);
+        assert_eq!(manager.get_sort_option(), ScenarioSortOption::Name);
+        assert!(manager.is_sort_ascending());
+
+        // Different option resets to ascending
+        manager.set_sort_option(ScenarioSortOption::Duration);
+        assert_eq!(manager.get_sort_option(), ScenarioSortOption::Duration);
+        assert!(manager.is_sort_ascending());
+    }
+
+    #[test]
+    fn test_loading_state() {
+        let mut manager = ScenarioManager::new();
+
+        assert!(!manager.is_loading("backend1"));
+
+        manager.set_loading("backend1", true);
+        assert!(manager.is_loading("backend1"));
+        assert!(!manager.is_loading("backend2"));
+
+        manager.set_loading("backend1", false);
+        assert!(!manager.is_loading("backend1"));
+    }
+
+    #[test]
+    fn test_scenario_list_handling() {
+        let mut manager = ScenarioManager::new();
+
+        let scenarios = vec![
+            create_test_scenario("scenario1", "Alpha", 2),
+            create_test_scenario("scenario2", "Beta", 3),
+            create_test_scenario("scenario3", "Gamma", 1),
+        ];
+
+        manager.handle_scenario_list_response("backend1".to_string(), scenarios, vec![]);
+
+        assert_eq!(manager.get_raw_scenario_count("backend1"), 3);
+        assert_eq!(manager.get_raw_scenario_count("backend2"), 0);
+
+        let available = manager.get_available_scenarios("backend1");
+        assert_eq!(available.len(), 3);
+        // Default sort by name descending (bool default is false)
+        assert_eq!(available[0].name, "Gamma");
+        assert_eq!(available[1].name, "Beta");
+        assert_eq!(available[2].name, "Alpha");
+    }
+
+    #[test]
+    fn test_scenario_sorting() {
+        let mut manager = ScenarioManager::new();
+
+        let scenarios = vec![
+            create_test_scenario("scenario1", "Beta", 2),
+            create_test_scenario("scenario2", "Alpha", 5),
+            create_test_scenario("scenario3", "Gamma", 1),
+        ];
+
+        manager.handle_scenario_list_response("backend1".to_string(), scenarios, vec![]);
+
+        // Sort by name descending (default)
+        let available = manager.get_available_scenarios("backend1");
+        assert_eq!(available[0].name, "Gamma");
+
+        // Toggle to ascending by clicking same option
+        manager.set_sort_option(ScenarioSortOption::Name);
+        let available = manager.get_available_scenarios("backend1");
+        assert_eq!(available[0].name, "Alpha");
+
+        // Sort by step count (resets to ascending)
+        manager.set_sort_option(ScenarioSortOption::StepCount);
+        let available = manager.get_available_scenarios("backend1");
+        assert_eq!(available[0].steps.len(), 1); // Gamma
+        assert_eq!(available[2].steps.len(), 5); // Alpha
+
+        // Toggle to descending
+        manager.set_sort_option(ScenarioSortOption::StepCount);
+        let available = manager.get_available_scenarios("backend1");
+        assert_eq!(available[0].steps.len(), 5); // Alpha now first
+    }
+
+    #[test]
+    fn test_scenario_filtering() {
+        let mut manager = ScenarioManager::new();
+
+        let mut scenario_with_tag = create_test_scenario("scenario1", "Network Test", 2);
+        scenario_with_tag.metadata.tags = vec!["production".to_string()];
+
+        let scenarios = vec![
+            scenario_with_tag,
+            create_test_scenario("scenario2", "Other Scenario", 3),
+        ];
+
+        manager.handle_scenario_list_response("backend1".to_string(), scenarios, vec![]);
+
+        // No filter - all scenarios
+        assert_eq!(manager.get_available_scenarios("backend1").len(), 2);
+
+        // Filter by name
+        manager.set_search_filter("Network".to_string());
+        assert_eq!(manager.get_available_scenarios("backend1").len(), 1);
+
+        // Filter by tag
+        manager.set_search_filter("production".to_string());
+        assert_eq!(manager.get_available_scenarios("backend1").len(), 1);
+
+        // Filter with no matches
+        manager.set_search_filter("nonexistent".to_string());
+        assert_eq!(manager.get_available_scenarios("backend1").len(), 0);
+    }
+
+    #[test]
+    fn test_scenario_details() {
+        let mut manager = ScenarioManager::new();
+
+        let scenario = create_test_scenario("scenario1", "Test", 2);
+
+        assert!(!manager.is_showing_details());
+        assert!(manager.get_selected_scenario().is_none());
+
+        manager.show_scenario_details(scenario.clone());
+        assert!(manager.is_showing_details());
+        assert_eq!(manager.get_selected_scenario().unwrap().id, "scenario1");
+
+        manager.hide_scenario_details();
+        assert!(!manager.is_showing_details());
+        assert!(manager.get_selected_scenario().is_none());
+    }
+
+    #[test]
+    fn test_execution_tracking() {
+        let mut manager = ScenarioManager::new();
+
+        assert!(!manager.is_execution_active("backend1", "ns1", "eth0"));
+
+        // Add execution via update
+        let update = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 0, ExecutionState::Running),
+            timestamp: 1000,
+        };
+
+        manager.handle_execution_update(update);
+        assert!(manager.is_execution_active("backend1", "ns1", "eth0"));
+        assert!(!manager.is_execution_active("backend1", "ns1", "eth1"));
+
+        let executions = manager.get_active_executions("backend1");
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].scenario.id, "scenario1");
+    }
+
+    #[test]
+    fn test_execution_update_deduplication() {
+        let mut manager = ScenarioManager::new();
+
+        // First update
+        let update1 = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 0, ExecutionState::Running),
+            timestamp: 1000,
+        };
+        manager.handle_execution_update(update1);
+
+        // Newer update should be applied
+        let update2 = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 1, ExecutionState::Running),
+            timestamp: 2000,
+        };
+        manager.handle_execution_update(update2);
+
+        let executions = manager.get_active_executions("backend1");
+        assert_eq!(executions[0].current_step, 1);
+
+        // Older update should be ignored
+        let update3 = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 0, ExecutionState::Running),
+            timestamp: 500,
+        };
+        manager.handle_execution_update(update3);
+
+        let executions = manager.get_active_executions("backend1");
+        assert_eq!(executions[0].current_step, 1); // Still at step 1
+    }
+
+    #[test]
+    fn test_execution_removal() {
+        let mut manager = ScenarioManager::new();
+
+        let update = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 0, ExecutionState::Running),
+            timestamp: 1000,
+        };
+        manager.handle_execution_update(update);
+
+        assert!(manager.is_execution_active("backend1", "ns1", "eth0"));
+
+        manager.remove_execution("backend1", "ns1", "eth0");
+        assert!(!manager.is_execution_active("backend1", "ns1", "eth0"));
+    }
+
+    #[test]
+    fn test_timeline_collapse() {
+        let mut manager = ScenarioManager::new();
+
+        assert!(!manager.is_timeline_collapsed("backend1", "ns1", "eth0"));
+
+        manager.toggle_execution_timeline("backend1", "ns1", "eth0");
+        assert!(manager.is_timeline_collapsed("backend1", "ns1", "eth0"));
+
+        manager.toggle_execution_timeline("backend1", "ns1", "eth0");
+        assert!(!manager.is_timeline_collapsed("backend1", "ns1", "eth0"));
+    }
+
+    #[test]
+    fn test_cleanup_backend_state() {
+        let mut manager = ScenarioManager::new();
+
+        // Add scenarios and executions
+        let scenarios = vec![create_test_scenario("scenario1", "Test", 2)];
+        manager.handle_scenario_list_response("backend1".to_string(), scenarios, vec![]);
+
+        let update = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 0, ExecutionState::Running),
+            timestamp: 1000,
+        };
+        manager.handle_execution_update(update);
+
+        assert_eq!(manager.get_raw_scenario_count("backend1"), 1);
+        assert!(manager.is_execution_active("backend1", "ns1", "eth0"));
+
+        // Cleanup
+        manager.cleanup_backend_state("backend1");
+
+        assert_eq!(manager.get_raw_scenario_count("backend1"), 0);
+        assert!(!manager.is_execution_active("backend1", "ns1", "eth0"));
+    }
+
+    #[test]
+    fn test_stats() {
+        let mut manager = ScenarioManager::new();
+
+        let scenarios = vec![
+            create_test_scenario("scenario1", "Test1", 2),
+            create_test_scenario("scenario2", "Test2", 3),
+        ];
+        manager.handle_scenario_list_response("backend1".to_string(), scenarios, vec![]);
+
+        let update = ScenarioExecutionUpdate {
+            backend_name: "backend1".to_string(),
+            namespace: "ns1".to_string(),
+            interface: "eth0".to_string(),
+            execution: create_test_execution("scenario1", 0, ExecutionState::Running),
+            timestamp: 1000,
+        };
+        manager.handle_execution_update(update);
+
+        let stats = manager.get_stats();
+        assert_eq!(stats.backend_count, 1);
+        assert_eq!(stats.total_scenarios, 2);
+        assert_eq!(stats.total_executions, 1);
+        assert!(!stats.details_visible);
+
+        // Test display
+        let display = format!("{}", stats);
+        assert!(display.contains("1 backends"));
+        assert!(display.contains("2 scenarios"));
+        assert!(display.contains("1 active executions"));
+    }
+
+    #[test]
+    fn test_request_without_channel() {
+        let manager = ScenarioManager::new();
+
+        // Without channels set up, requests should fail gracefully
+        assert!(manager.request_scenarios("backend1").is_err());
+        assert!(manager
+            .start_execution("backend1", "scenario1", "ns1", "eth0", false)
+            .is_err());
+        assert!(manager.stop_execution("backend1", "ns1", "eth0").is_err());
+        assert!(manager.pause_execution("backend1", "ns1", "eth0").is_err());
+        assert!(manager.resume_execution("backend1", "ns1", "eth0").is_err());
+    }
+}

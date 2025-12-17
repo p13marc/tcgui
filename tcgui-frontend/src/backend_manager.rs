@@ -351,3 +351,375 @@ impl Default for BackendManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tcgui_shared::{BackendMetadata, InterfaceType, NetworkInterface};
+
+    fn create_test_interface(name: &str, namespace: &str) -> NetworkInterface {
+        NetworkInterface {
+            name: name.to_string(),
+            index: 1,
+            namespace: namespace.to_string(),
+            is_up: true,
+            has_tc_qdisc: false,
+            interface_type: InterfaceType::Virtual,
+        }
+    }
+
+    fn create_test_namespace(name: &str, interfaces: Vec<&str>) -> NetworkNamespace {
+        NetworkNamespace {
+            name: name.to_string(),
+            id: Some(1),
+            is_active: true,
+            interfaces: interfaces
+                .into_iter()
+                .map(|iface| create_test_interface(iface, name))
+                .collect(),
+        }
+    }
+
+    fn create_test_interface_list(
+        backend_name: &str,
+        namespaces: Vec<NetworkNamespace>,
+    ) -> InterfaceListUpdate {
+        InterfaceListUpdate {
+            backend_name: backend_name.to_string(),
+            namespaces,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn test_backend_manager_default() {
+        let manager = BackendManager::new();
+        assert_eq!(manager.backend_count(), 0);
+        assert_eq!(manager.total_interface_count(), 0);
+        assert!(manager.connected_backend_names().is_empty());
+    }
+
+    #[test]
+    fn test_handle_interface_list_update() {
+        let mut manager = BackendManager::new();
+
+        let update = create_test_interface_list(
+            "backend1",
+            vec![
+                create_test_namespace("default", vec!["eth0", "eth1"]),
+                create_test_namespace("ns1", vec!["veth0"]),
+            ],
+        );
+
+        manager.handle_interface_list_update(update);
+
+        assert_eq!(manager.backend_count(), 1);
+        assert_eq!(manager.total_interface_count(), 3);
+
+        let backends = manager.backends();
+        assert!(backends.contains_key("backend1"));
+        assert!(backends["backend1"].is_connected);
+        assert_eq!(backends["backend1"].namespaces.len(), 2);
+    }
+
+    #[test]
+    fn test_multiple_backends() {
+        let mut manager = BackendManager::new();
+
+        let update1 = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        let update2 = create_test_interface_list(
+            "backend2",
+            vec![create_test_namespace("default", vec!["eth1", "eth2"])],
+        );
+
+        manager.handle_interface_list_update(update1);
+        manager.handle_interface_list_update(update2);
+
+        assert_eq!(manager.backend_count(), 2);
+        assert_eq!(manager.total_interface_count(), 3);
+        assert_eq!(manager.connected_backend_names().len(), 2);
+    }
+
+    #[test]
+    fn test_namespace_removal() {
+        let mut manager = BackendManager::new();
+
+        // Initial state with two namespaces
+        let update1 = create_test_interface_list(
+            "backend1",
+            vec![
+                create_test_namespace("ns1", vec!["eth0"]),
+                create_test_namespace("ns2", vec!["eth1"]),
+            ],
+        );
+        manager.handle_interface_list_update(update1);
+        assert_eq!(manager.backends()["backend1"].namespaces.len(), 2);
+
+        // Update with only one namespace - ns2 should be removed
+        let update2 = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("ns1", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update2);
+
+        let backends = manager.backends();
+        assert_eq!(backends["backend1"].namespaces.len(), 1);
+        assert!(backends["backend1"].namespaces.contains_key("ns1"));
+        assert!(!backends["backend1"].namespaces.contains_key("ns2"));
+    }
+
+    #[test]
+    fn test_interface_removal() {
+        let mut manager = BackendManager::new();
+
+        // Initial state with two interfaces
+        let update1 = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0", "eth1"])],
+        );
+        manager.handle_interface_list_update(update1);
+        assert_eq!(manager.total_interface_count(), 2);
+
+        // Update with only one interface - eth1 should be removed
+        let update2 = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update2);
+
+        assert_eq!(manager.total_interface_count(), 1);
+        let ns = &manager.backends()["backend1"].namespaces["default"];
+        assert!(ns.tc_interfaces.contains_key("eth0"));
+        assert!(!ns.tc_interfaces.contains_key("eth1"));
+    }
+
+    #[test]
+    fn test_backend_liveliness() {
+        let mut manager = BackendManager::new();
+
+        // Backend comes alive
+        manager.handle_backend_liveliness("backend1".to_string(), true);
+        assert!(manager.backends().contains_key("backend1"));
+        assert!(manager.backends()["backend1"].disconnected_at.is_none());
+
+        // Add some data
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update);
+        assert!(manager.backends()["backend1"].is_connected);
+
+        // Backend goes offline
+        manager.handle_backend_liveliness("backend1".to_string(), false);
+        assert!(!manager.backends()["backend1"].is_connected);
+        assert!(manager.backends()["backend1"].disconnected_at.is_some());
+    }
+
+    #[test]
+    fn test_interface_state_event_added() {
+        let mut manager = BackendManager::new();
+
+        // First add a backend with a namespace
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update);
+
+        // Add a new interface via event
+        let event = InterfaceStateEvent {
+            backend_name: "backend1".to_string(),
+            namespace: "default".to_string(),
+            interface: create_test_interface("eth1", "default"),
+            event_type: InterfaceEventType::Added,
+            timestamp: 0,
+        };
+        manager.handle_interface_state_event(event);
+
+        assert_eq!(manager.total_interface_count(), 2);
+        let ns = &manager.backends()["backend1"].namespaces["default"];
+        assert!(ns.tc_interfaces.contains_key("eth1"));
+    }
+
+    #[test]
+    fn test_interface_state_event_removed() {
+        let mut manager = BackendManager::new();
+
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0", "eth1"])],
+        );
+        manager.handle_interface_list_update(update);
+        assert_eq!(manager.total_interface_count(), 2);
+
+        // Remove an interface via event
+        let event = InterfaceStateEvent {
+            backend_name: "backend1".to_string(),
+            namespace: "default".to_string(),
+            interface: create_test_interface("eth1", "default"),
+            event_type: InterfaceEventType::Removed,
+            timestamp: 0,
+        };
+        manager.handle_interface_state_event(event);
+
+        assert_eq!(manager.total_interface_count(), 1);
+        let ns = &manager.backends()["backend1"].namespaces["default"];
+        assert!(!ns.tc_interfaces.contains_key("eth1"));
+    }
+
+    #[test]
+    fn test_cleanup_stale_backends() {
+        let mut manager = BackendManager::new();
+
+        // Add a backend
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update);
+
+        // Mark as disconnected with old timestamp (simulate disconnection >10 seconds ago)
+        if let Some(backend) = manager.backends_mut().get_mut("backend1") {
+            backend.is_connected = false;
+            // Set disconnected_at to 20 seconds ago
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            backend.disconnected_at = Some(current_time.saturating_sub(20));
+        }
+
+        // Cleanup should remove stale backend
+        let all_disconnected = manager.cleanup_stale_backends();
+        assert!(all_disconnected);
+        assert_eq!(manager.backend_count(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_keeps_recent_disconnections() {
+        let mut manager = BackendManager::new();
+
+        // Add a backend
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update);
+
+        // Mark as disconnected with recent timestamp (just now)
+        if let Some(backend) = manager.backends_mut().get_mut("backend1") {
+            backend.is_connected = false;
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            backend.disconnected_at = Some(current_time);
+        }
+
+        // Cleanup should NOT remove recently disconnected backend
+        manager.cleanup_stale_backends();
+        assert_eq!(manager.backend_count(), 1);
+    }
+
+    #[test]
+    fn test_backend_health_update() {
+        let mut manager = BackendManager::new();
+
+        // Add a backend first
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update);
+
+        let initial_last_seen = manager.backends()["backend1"].last_seen;
+
+        // Small delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Health update should update last_seen
+        let health = BackendHealthStatus {
+            backend_name: "backend1".to_string(),
+            status: "healthy".to_string(),
+            timestamp: 0,
+            metadata: BackendMetadata::default(),
+            namespace_count: 1,
+            interface_count: 1,
+        };
+        manager.handle_backend_health_update(health);
+
+        // last_seen should be updated (or at least not earlier)
+        assert!(manager.backends()["backend1"].last_seen >= initial_last_seen);
+    }
+
+    #[test]
+    fn test_connected_backend_names() {
+        let mut manager = BackendManager::new();
+
+        let update1 = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        let update2 = create_test_interface_list(
+            "backend2",
+            vec![create_test_namespace("default", vec!["eth1"])],
+        );
+
+        manager.handle_interface_list_update(update1);
+        manager.handle_interface_list_update(update2);
+
+        // Both connected
+        let connected = manager.connected_backend_names();
+        assert_eq!(connected.len(), 2);
+
+        // Disconnect one
+        manager.handle_backend_liveliness("backend1".to_string(), false);
+
+        let connected = manager.connected_backend_names();
+        assert_eq!(connected.len(), 1);
+        assert!(connected.contains(&"backend2".to_string()));
+    }
+
+    #[test]
+    fn test_interface_update_preserves_tc_interface() {
+        let mut manager = BackendManager::new();
+
+        // Add initial interface
+        let update = create_test_interface_list(
+            "backend1",
+            vec![create_test_namespace("default", vec!["eth0"])],
+        );
+        manager.handle_interface_list_update(update);
+
+        // Verify interface exists
+        assert!(manager.backends()["backend1"].namespaces["default"]
+            .tc_interfaces
+            .contains_key("eth0"));
+
+        // Send another update (same interface, different backend state)
+        let mut new_iface = create_test_interface("eth0", "default");
+        new_iface.has_tc_qdisc = true; // Now has TC configured
+
+        let update2 = InterfaceListUpdate {
+            backend_name: "backend1".to_string(),
+            namespaces: vec![NetworkNamespace {
+                name: "default".to_string(),
+                id: Some(1),
+                is_active: true,
+                interfaces: vec![new_iface],
+            }],
+            timestamp: 1,
+        };
+        manager.handle_interface_list_update(update2);
+
+        // TC interface should still exist after update
+        let backends = manager.backends();
+        assert!(backends["backend1"].namespaces["default"]
+            .tc_interfaces
+            .contains_key("eth0"));
+    }
+}

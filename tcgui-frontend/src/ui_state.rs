@@ -277,3 +277,284 @@ impl std::fmt::Display for UiVisibilityStats {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ui_state_manager_default() {
+        let manager = UiStateManager::new();
+        assert_eq!(manager.current_tab(), AppTab::Interfaces);
+        assert_eq!(manager.hidden_backend_count(), 0);
+        assert_eq!(manager.hidden_namespace_count(), 0);
+        assert!(!manager.interface_selection_dialog().visible);
+    }
+
+    #[test]
+    fn test_zoom_controls() {
+        let mut manager = UiStateManager::new();
+
+        // Default zoom
+        assert_eq!(manager.zoom_level(), ZOOM_DEFAULT);
+        assert_eq!(manager.zoom_percentage(), "100%");
+
+        // Zoom in
+        manager.zoom_in();
+        assert!((manager.zoom_level() - 1.1).abs() < 0.001);
+        assert_eq!(manager.zoom_percentage(), "110%");
+
+        // Zoom out
+        manager.zoom_out();
+        assert!((manager.zoom_level() - ZOOM_DEFAULT).abs() < 0.001);
+
+        // Zoom reset
+        manager.zoom_in();
+        manager.zoom_in();
+        manager.zoom_reset();
+        assert_eq!(manager.zoom_level(), ZOOM_DEFAULT);
+    }
+
+    #[test]
+    fn test_zoom_bounds() {
+        let mut manager = UiStateManager::new();
+
+        // Zoom in to max
+        for _ in 0..20 {
+            manager.zoom_in();
+        }
+        assert!((manager.zoom_level() - ZOOM_MAX).abs() < 0.001);
+
+        // Zoom out to min
+        for _ in 0..30 {
+            manager.zoom_out();
+        }
+        assert!((manager.zoom_level() - ZOOM_MIN).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_backend_visibility_toggle() {
+        let mut manager = UiStateManager::new();
+
+        // Initially not hidden
+        assert!(!manager.is_backend_hidden("backend1"));
+
+        // Toggle to hidden
+        manager.toggle_backend_visibility("backend1");
+        assert!(manager.is_backend_hidden("backend1"));
+        assert_eq!(manager.hidden_backend_count(), 1);
+
+        // Toggle back to visible
+        manager.toggle_backend_visibility("backend1");
+        assert!(!manager.is_backend_hidden("backend1"));
+        assert_eq!(manager.hidden_backend_count(), 0);
+    }
+
+    #[test]
+    fn test_namespace_visibility_toggle() {
+        let mut manager = UiStateManager::new();
+
+        // Initially not hidden
+        assert!(!manager.is_namespace_hidden("backend1", "ns1"));
+
+        // Toggle to hidden
+        manager.toggle_namespace_visibility("backend1", "ns1");
+        assert!(manager.is_namespace_hidden("backend1", "ns1"));
+        assert_eq!(manager.hidden_namespace_count(), 1);
+
+        // Different namespace should not be affected
+        assert!(!manager.is_namespace_hidden("backend1", "ns2"));
+
+        // Toggle back
+        manager.toggle_namespace_visibility("backend1", "ns1");
+        assert!(!manager.is_namespace_hidden("backend1", "ns1"));
+    }
+
+    #[test]
+    fn test_cleanup_backend_state() {
+        let mut manager = UiStateManager::new();
+
+        // Setup: hide a backend and some of its namespaces
+        manager.toggle_backend_visibility("backend1");
+        manager.toggle_namespace_visibility("backend1", "ns1");
+        manager.toggle_namespace_visibility("backend1", "ns2");
+        manager.toggle_namespace_visibility("backend2", "ns1");
+
+        assert!(manager.is_backend_hidden("backend1"));
+        assert!(manager.is_namespace_hidden("backend1", "ns1"));
+        assert!(manager.is_namespace_hidden("backend1", "ns2"));
+        assert!(manager.is_namespace_hidden("backend2", "ns1"));
+
+        // Cleanup backend1
+        manager.cleanup_backend_state("backend1");
+
+        // backend1 and its namespaces should be cleaned up
+        assert!(!manager.is_backend_hidden("backend1"));
+        assert!(!manager.is_namespace_hidden("backend1", "ns1"));
+        assert!(!manager.is_namespace_hidden("backend1", "ns2"));
+
+        // backend2's namespace should remain
+        assert!(manager.is_namespace_hidden("backend2", "ns1"));
+    }
+
+    #[test]
+    fn test_show_all() {
+        let mut manager = UiStateManager::new();
+
+        // Hide multiple items
+        manager.toggle_backend_visibility("backend1");
+        manager.toggle_backend_visibility("backend2");
+        manager.toggle_namespace_visibility("backend1", "ns1");
+
+        assert_eq!(manager.hidden_backend_count(), 2);
+        assert_eq!(manager.hidden_namespace_count(), 1);
+
+        // Show all backends
+        manager.show_all_backends();
+        assert_eq!(manager.hidden_backend_count(), 0);
+        assert_eq!(manager.hidden_namespace_count(), 1);
+
+        // Show all namespaces
+        manager.show_all_namespaces();
+        assert_eq!(manager.hidden_namespace_count(), 0);
+    }
+
+    #[test]
+    fn test_reset_all() {
+        let mut manager = UiStateManager::new();
+
+        // Hide items and change tab
+        manager.toggle_backend_visibility("backend1");
+        manager.toggle_namespace_visibility("backend1", "ns1");
+        manager.set_current_tab(AppTab::Scenarios);
+
+        // Reset
+        manager.reset_all();
+        assert_eq!(manager.hidden_backend_count(), 0);
+        assert_eq!(manager.hidden_namespace_count(), 0);
+        // Note: reset_all doesn't reset the tab
+        assert_eq!(manager.current_tab(), AppTab::Scenarios);
+    }
+
+    #[test]
+    fn test_tab_switching() {
+        let mut manager = UiStateManager::new();
+
+        assert_eq!(manager.current_tab(), AppTab::Interfaces);
+
+        manager.set_current_tab(AppTab::Scenarios);
+        assert_eq!(manager.current_tab(), AppTab::Scenarios);
+
+        manager.set_current_tab(AppTab::Interfaces);
+        assert_eq!(manager.current_tab(), AppTab::Interfaces);
+    }
+
+    #[test]
+    fn test_interface_selection_dialog() {
+        let mut manager = UiStateManager::new();
+
+        // Initially hidden
+        assert!(!manager.interface_selection_dialog().visible);
+        assert!(!manager.can_confirm_execution());
+
+        // Show dialog
+        manager.show_interface_selection_dialog("backend1".to_string(), "scenario1".to_string());
+        assert!(manager.interface_selection_dialog().visible);
+        assert_eq!(
+            manager.interface_selection_dialog().backend_name,
+            "backend1"
+        );
+        assert_eq!(
+            manager.interface_selection_dialog().scenario_id,
+            "scenario1"
+        );
+        assert!(!manager.can_confirm_execution());
+
+        // Select namespace
+        manager.select_execution_namespace("ns1".to_string());
+        assert_eq!(
+            manager.interface_selection_dialog().selected_namespace,
+            Some("ns1".to_string())
+        );
+        assert!(!manager.can_confirm_execution()); // Still need interface
+
+        // Select interface
+        manager.toggle_execution_interface("eth0".to_string());
+        assert!(manager.can_confirm_execution());
+        assert!(manager
+            .interface_selection_dialog()
+            .selected_interfaces
+            .contains("eth0"));
+
+        // Toggle loop execution
+        assert!(!manager.interface_selection_dialog().loop_execution);
+        manager.toggle_loop_execution();
+        assert!(manager.interface_selection_dialog().loop_execution);
+
+        // Hide dialog
+        manager.hide_interface_selection_dialog();
+        assert!(!manager.interface_selection_dialog().visible);
+    }
+
+    #[test]
+    fn test_interface_selection_clears_on_namespace_change() {
+        let mut manager = UiStateManager::new();
+
+        manager.show_interface_selection_dialog("backend1".to_string(), "scenario1".to_string());
+        manager.select_execution_namespace("ns1".to_string());
+        manager.toggle_execution_interface("eth0".to_string());
+        manager.toggle_execution_interface("eth1".to_string());
+
+        assert_eq!(
+            manager
+                .interface_selection_dialog()
+                .selected_interfaces
+                .len(),
+            2
+        );
+
+        // Change namespace - interfaces should be cleared
+        manager.select_execution_namespace("ns2".to_string());
+        assert!(manager
+            .interface_selection_dialog()
+            .selected_interfaces
+            .is_empty());
+    }
+
+    #[test]
+    fn test_visibility_stats() {
+        let mut manager = UiStateManager::new();
+
+        manager.toggle_backend_visibility("backend1");
+        manager.toggle_namespace_visibility("backend1", "ns1");
+        manager.toggle_namespace_visibility("backend2", "ns2");
+
+        let stats = manager.get_visibility_stats();
+        assert_eq!(stats.hidden_backend_count, 1);
+        assert_eq!(stats.hidden_namespace_count, 2);
+        assert_eq!(stats.total_hidden_items, 3);
+
+        // Test display
+        let display = format!("{}", stats);
+        assert!(display.contains("1 hidden backends"));
+        assert!(display.contains("2 hidden namespaces"));
+    }
+
+    #[test]
+    fn test_hidden_items_lists() {
+        let mut manager = UiStateManager::new();
+
+        manager.toggle_backend_visibility("backend1");
+        manager.toggle_backend_visibility("backend2");
+        manager.toggle_namespace_visibility("backend1", "ns1");
+
+        let backends = manager.hidden_backends();
+        assert_eq!(backends.len(), 2);
+        assert!(backends.contains(&"backend1".to_string()));
+        assert!(backends.contains(&"backend2".to_string()));
+
+        let namespaces = manager.hidden_namespaces();
+        assert_eq!(namespaces.len(), 1);
+        assert!(namespaces.contains(&"backend1/ns1".to_string()));
+    }
+}
