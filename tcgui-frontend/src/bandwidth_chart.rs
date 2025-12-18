@@ -233,12 +233,14 @@ impl StatelessBandwidthChart<'_> {
             return;
         }
 
-        // Calculate max value for Y-axis scaling
-        let max_value = samples
+        // Calculate max value for Y-axis scaling with some headroom
+        let raw_max = samples
             .iter()
             .map(|s| s.rx_bytes_per_sec.max(s.tx_bytes_per_sec))
-            .fold(0.0_f64, |a, b| a.max(b))
-            .max(1024.0); // Minimum 1 KB/s scale
+            .fold(0.0_f64, |a, b| a.max(b));
+
+        // Add 10% headroom and ensure minimum scale of 1 KB/s
+        let max_value = (raw_max * 1.1).max(1024.0);
 
         let now = Instant::now();
         let window_duration = self.time_window.duration();
@@ -519,12 +521,14 @@ impl BandwidthChartProgram<'_> {
             return;
         }
 
-        // Calculate max value for Y-axis scaling
-        let max_value = samples
+        // Calculate max value for Y-axis scaling with some headroom
+        let raw_max = samples
             .iter()
             .map(|s| s.rx_bytes_per_sec.max(s.tx_bytes_per_sec))
-            .fold(0.0_f64, |a, b| a.max(b))
-            .max(1024.0); // Minimum 1 KB/s scale
+            .fold(0.0_f64, |a, b| a.max(b));
+
+        // Add 10% headroom and ensure minimum scale of 1 KB/s
+        let max_value = (raw_max * 1.1).max(1024.0);
 
         let now = Instant::now();
         let window_duration = self.time_window.duration();
