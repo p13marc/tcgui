@@ -7,6 +7,7 @@ mod messages;
 mod query_manager;
 mod scenario_manager;
 mod scenario_view;
+mod settings;
 pub mod theme;
 mod ui_state;
 mod view;

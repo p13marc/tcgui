@@ -4931,7 +4931,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ctrlc",
+ "dirs 6.0.0",
  "iced",
+ "json5",
+ "serde",
  "serde_json",
  "tcgui-shared",
  "tokio",

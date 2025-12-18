@@ -5,7 +5,8 @@
 
 use std::collections::HashSet;
 
-use crate::theme::Theme;
+use crate::settings::FrontendSettings;
+use crate::theme::{Theme, ThemeMode};
 
 /// Available application tabs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -117,9 +118,35 @@ impl Default for UiStateManager {
 }
 
 impl UiStateManager {
-    /// Creates a new UI state manager.
-    pub fn new() -> Self {
-        Self::default()
+    /// Creates a new UI state manager with settings loaded from disk.
+    pub fn from_settings(settings: &FrontendSettings) -> Self {
+        let theme_mode: ThemeMode = settings.theme_mode.into();
+        let theme = match theme_mode {
+            ThemeMode::Light => Theme::light(),
+            ThemeMode::Dark => Theme::dark(),
+        };
+
+        Self {
+            hidden_backends: HashSet::new(),
+            hidden_namespaces: HashSet::new(),
+            current_tab: settings.current_tab.into(),
+            interface_selection_dialog: InterfaceSelectionDialog::default(),
+            zoom_level: settings.zoom_level,
+            theme,
+            namespace_filter: settings.namespace_filter.clone().into(),
+        }
+    }
+
+    /// Extracts current settings for persistence.
+    pub fn to_settings(&self) -> FrontendSettings {
+        use crate::settings::{AppTabJson, NamespaceFilterJson, ThemeModeJson};
+
+        FrontendSettings {
+            theme_mode: ThemeModeJson::from(self.theme.mode),
+            zoom_level: self.zoom_level,
+            namespace_filter: NamespaceFilterJson::from(&self.namespace_filter),
+            current_tab: AppTabJson::from(self.current_tab),
+        }
     }
 
     /// Gets the current zoom level.

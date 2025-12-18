@@ -35,6 +35,11 @@ tracing-subscriber = { workspace = true }
 # CLI
 clap = { workspace = true }
 
+# Settings persistence
+dirs = "6.0"
+json5 = "0.4"
+serde = { workspace = true }
+
 # Process management
 ctrlc = "3.4"
 

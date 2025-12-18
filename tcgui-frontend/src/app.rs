@@ -16,6 +16,7 @@ use crate::message_handlers::*;
 use crate::messages::{TcGuiMessage, ZenohEvent};
 use crate::query_manager::QueryManager;
 use crate::scenario_manager::ScenarioManager;
+use crate::settings::FrontendSettings;
 use crate::ui_state::UiStateManager;
 use crate::view::render_main_view;
 use crate::zenoh_manager::ZenohManager;
@@ -57,11 +58,17 @@ pub struct TcGui {
 impl TcGui {
     /// Creates a new TcGui application instance with modular architecture.
     pub fn new() -> (Self, Task<TcGuiMessage>) {
+        let settings = FrontendSettings::load();
+        info!(
+            "Loaded settings: theme={:?}, zoom={}",
+            settings.theme_mode, settings.zoom_level
+        );
+
         let app = Self {
             backend_manager: BackendManager::new(),
             query_manager: QueryManager::new(),
             scenario_manager: ScenarioManager::new(),
-            ui_state: UiStateManager::new(),
+            ui_state: UiStateManager::from_settings(&settings),
             zenoh_manager: ZenohManager::new(ZenohConfig::default()),
         };
 
@@ -70,15 +77,29 @@ impl TcGui {
 
     /// Creates a new TcGui application instance with custom Zenoh configuration.
     pub fn new_with_config(zenoh_config: ZenohConfig) -> (Self, Task<TcGuiMessage>) {
+        let settings = FrontendSettings::load();
+        info!(
+            "Loaded settings: theme={:?}, zoom={}",
+            settings.theme_mode, settings.zoom_level
+        );
+
         let app = Self {
             backend_manager: BackendManager::new(),
             query_manager: QueryManager::new(),
             scenario_manager: ScenarioManager::new(),
-            ui_state: UiStateManager::new(),
+            ui_state: UiStateManager::from_settings(&settings),
             zenoh_manager: ZenohManager::new(zenoh_config),
         };
 
         (app, Task::none())
+    }
+
+    /// Saves current UI settings to disk.
+    fn save_settings(&self) {
+        let settings = self.ui_state.to_settings();
+        if let Err(e) = settings.save() {
+            tracing::warn!("Failed to save settings: {}", e);
+        }
     }
 
     /// Updates application state in response to messages (Elm architecture update function).
@@ -443,6 +464,7 @@ impl TcGui {
             TcGuiMessage::ShowAllBackends => handle_show_all_backends(&mut self.ui_state),
             TcGuiMessage::SwitchTab(tab) => {
                 self.ui_state.set_current_tab(tab);
+                self.save_settings();
 
                 // Auto-refresh scenarios and templates when switching to Scenarios tab
                 if matches!(tab, crate::ui_state::AppTab::Scenarios) {
@@ -471,33 +493,41 @@ impl TcGui {
                 Task::none()
             }
 
-            // Zoom controls
+            // Zoom controls (persistent)
             TcGuiMessage::ZoomIn => {
                 self.ui_state.zoom_in();
+                self.save_settings();
                 Task::none()
             }
             TcGuiMessage::ZoomOut => {
                 self.ui_state.zoom_out();
+                self.save_settings();
                 Task::none()
             }
             TcGuiMessage::ZoomReset => {
                 self.ui_state.zoom_reset();
+                self.save_settings();
                 Task::none()
             }
             TcGuiMessage::ToggleTheme => {
                 self.ui_state.toggle_theme();
+                self.save_settings();
                 Task::none()
             }
+            // Namespace filters (persistent)
             TcGuiMessage::ToggleHostFilter => {
                 self.ui_state.toggle_host_filter();
+                self.save_settings();
                 Task::none()
             }
             TcGuiMessage::ToggleNamespaceTypeFilter => {
                 self.ui_state.toggle_namespace_filter();
+                self.save_settings();
                 Task::none()
             }
             TcGuiMessage::ToggleContainerFilter => {
                 self.ui_state.toggle_container_filter();
+                self.save_settings();
                 Task::none()
             }
 
