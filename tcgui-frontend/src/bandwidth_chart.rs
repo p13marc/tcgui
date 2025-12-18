@@ -181,21 +181,20 @@ struct StatelessBandwidthChart<'a> {
 }
 
 impl<Message> canvas::Program<Message, Theme, Renderer> for StatelessBandwidthChart<'_> {
-    type State = canvas::Cache;
+    type State = ();
 
     fn draw(
         &self,
-        state: &Self::State,
+        _state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let geometry = state.draw(renderer, bounds.size(), |frame| {
-            self.draw_chart(frame, bounds.size());
-        });
-
-        vec![geometry]
+        // Draw fresh each frame for real-time updates (no caching)
+        let mut frame = Frame::new(renderer, bounds.size());
+        self.draw_chart(&mut frame, bounds.size());
+        vec![frame.into_geometry()]
     }
 }
 
