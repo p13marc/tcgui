@@ -621,35 +621,40 @@ fn render_empty_state(
         .into()
     } else {
         container(
-            column![
-                text("🔄").size(scaled(48, zoom)),
-                text("Connecting to Backend")
-                    .size(scaled(20, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_primary)
-                    }),
-                text("Waiting for backend connection to discover interfaces...")
-                    .size(scaled(14, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_secondary)
-                    }),
-            ]
-            .spacing(scaled_spacing(12, zoom))
-            .align_x(iced::Alignment::Center),
+            container(
+                column![
+                    text("🔄").size(scaled(48, zoom)),
+                    text("Connecting to Backend")
+                        .size(scaled(20, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(colors.text_primary)
+                        }),
+                    text("Waiting for backend connection to discover interfaces...")
+                        .size(scaled(14, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(colors.text_secondary)
+                        }),
+                ]
+                .spacing(scaled_spacing(12, zoom))
+                .align_x(iced::Alignment::Center),
+            )
+            .padding(scaled_padding(40, zoom))
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    1.0, 0.6, 0.0, 0.05,
+                ))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb(0.95, 0.85, 0.7),
+                },
+                ..container::Style::default()
+            }),
         )
-        .padding(scaled_padding(40, zoom))
         .width(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(
-                1.0, 0.6, 0.0, 0.05,
-            ))),
-            border: iced::Border {
-                radius: 12.0.into(),
-                width: 1.0,
-                color: Color::from_rgb(0.95, 0.85, 0.7),
-            },
-            ..container::Style::default()
-        })
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
         .into()
     }
 }
