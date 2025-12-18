@@ -10,6 +10,8 @@ use tcgui_shared::presets::PresetList;
 use tcgui_shared::NetworkBandwidthStats;
 
 use super::state::InterfaceState;
+use crate::bandwidth_chart::bandwidth_chart_view;
+use crate::bandwidth_history::BandwidthHistory;
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
 use crate::view::{scaled, scaled_spacing};
@@ -305,13 +307,27 @@ impl TcInterface {
         preset_list: &'a PresetList,
         theme: &'a Theme,
         zoom: f32,
+        bandwidth_history: Option<&'a BandwidthHistory>,
     ) -> Element<'a, TcInterfaceMessage> {
         let main_row = self.render_main_row(preset_list, theme, zoom);
         let expandable_rows = self.render_expandable_features(theme, zoom);
 
-        column![main_row, expandable_rows]
-            .spacing(scaled_spacing(4, zoom))
-            .into()
+        // Build chart section if expanded
+        let content = if self.state.chart_expanded {
+            let chart_height = scaled(80, zoom);
+            let dark_mode = theme.is_dark();
+            let chart_element = bandwidth_chart_view(bandwidth_history, chart_height, dark_mode);
+
+            column![main_row, expandable_rows, chart_element]
+                .spacing(scaled_spacing(4, zoom))
+                .into()
+        } else {
+            column![main_row, expandable_rows]
+                .spacing(scaled_spacing(4, zoom))
+                .into()
+        };
+
+        content
     }
 
     /// Render the main interface row with core controls

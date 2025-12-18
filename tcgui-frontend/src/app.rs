@@ -575,6 +575,7 @@ impl TcGui {
     pub fn view(&self) -> Element<'_, TcGuiMessage> {
         render_main_view(
             &self.backend_manager,
+            &self.bandwidth_history,
             &self.ui_state,
             &self.scenario_manager,
         )

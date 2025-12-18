@@ -145,6 +145,291 @@ where
     iced::widget::Canvas::new(program)
 }
 
+/// Create a bandwidth chart element without needing persistent state.
+///
+/// This is a convenience function for rendering a chart inline without
+/// storing a BandwidthChart instance.
+pub fn bandwidth_chart_view<'a, Message: 'a>(
+    history: Option<&'a BandwidthHistory>,
+    height: f32,
+    dark_mode: bool,
+) -> Element<'a, Message, Theme, Renderer> {
+    let colors = if dark_mode {
+        ChartColors::dark()
+    } else {
+        ChartColors::default()
+    };
+
+    canvas(StatelessBandwidthChart {
+        history,
+        time_window: ChartTimeWindow::default(),
+        colors,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(height))
+    .into()
+}
+
+/// A stateless bandwidth chart program that doesn't require a cache reference.
+///
+/// This version recreates geometry each frame but is simpler to use
+/// in contexts where lifetime management is complex.
+struct StatelessBandwidthChart<'a> {
+    history: Option<&'a BandwidthHistory>,
+    time_window: ChartTimeWindow,
+    colors: ChartColors,
+}
+
+impl<Message> canvas::Program<Message, Theme, Renderer> for StatelessBandwidthChart<'_> {
+    type State = canvas::Cache;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let geometry = state.draw(renderer, bounds.size(), |frame| {
+            self.draw_chart(frame, bounds.size());
+        });
+
+        vec![geometry]
+    }
+}
+
+impl StatelessBandwidthChart<'_> {
+    /// Draw the complete chart.
+    fn draw_chart(&self, frame: &mut Frame, size: Size) {
+        let padding = ChartPadding {
+            left: 45.0,
+            right: 10.0,
+            top: 10.0,
+            bottom: 20.0,
+        };
+
+        let chart_width = size.width - padding.left - padding.right;
+        let chart_height = size.height - padding.top - padding.bottom;
+
+        if chart_width <= 0.0 || chart_height <= 0.0 {
+            return;
+        }
+
+        // Draw background
+        frame.fill_rectangle(
+            Point::new(padding.left, padding.top),
+            Size::new(chart_width, chart_height),
+            self.colors.background,
+        );
+
+        // Get samples and calculate scale
+        let samples: Vec<_> = self
+            .history
+            .map(|h| h.samples_in_window(self.time_window.duration()).collect())
+            .unwrap_or_default();
+
+        if samples.len() < 2 {
+            self.draw_no_data(frame, size);
+            return;
+        }
+
+        // Calculate max value for Y-axis scaling
+        let max_value = samples
+            .iter()
+            .map(|s| s.rx_bytes_per_sec.max(s.tx_bytes_per_sec))
+            .fold(0.0_f64, |a, b| a.max(b))
+            .max(1024.0); // Minimum 1 KB/s scale
+
+        let now = Instant::now();
+        let window_duration = self.time_window.duration();
+
+        // Draw grid lines
+        self.draw_grid(frame, &padding, chart_width, chart_height, max_value);
+
+        // Draw RX line (download - blue)
+        self.draw_data_line(
+            frame,
+            &samples,
+            now,
+            window_duration,
+            &padding,
+            chart_width,
+            chart_height,
+            max_value,
+            |s| s.rx_bytes_per_sec,
+            self.colors.rx,
+        );
+
+        // Draw TX line (upload - orange)
+        self.draw_data_line(
+            frame,
+            &samples,
+            now,
+            window_duration,
+            &padding,
+            chart_width,
+            chart_height,
+            max_value,
+            |s| s.tx_bytes_per_sec,
+            self.colors.tx,
+        );
+
+        // Draw axes
+        self.draw_axes(frame, &padding, chart_width, chart_height);
+
+        // Draw legend
+        self.draw_legend(frame, size);
+    }
+
+    /// Draw a data line on the chart.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_data_line<F>(
+        &self,
+        frame: &mut Frame,
+        samples: &[&crate::bandwidth_history::BandwidthSample],
+        now: Instant,
+        window_duration: Duration,
+        padding: &ChartPadding,
+        chart_width: f32,
+        chart_height: f32,
+        max_value: f64,
+        value_fn: F,
+        color: Color,
+    ) where
+        F: Fn(&crate::bandwidth_history::BandwidthSample) -> f64,
+    {
+        let path = Path::new(|builder| {
+            let mut first = true;
+            for sample in samples {
+                let age = now.duration_since(sample.timestamp);
+                let x = padding.left
+                    + chart_width * (1.0 - age.as_secs_f32() / window_duration.as_secs_f32());
+                let y = padding.top
+                    + chart_height * (1.0 - value_fn(sample) as f32 / max_value as f32);
+
+                // Clamp to chart bounds
+                let x = x.clamp(padding.left, padding.left + chart_width);
+                let y = y.clamp(padding.top, padding.top + chart_height);
+
+                if first {
+                    builder.move_to(Point::new(x, y));
+                    first = false;
+                } else {
+                    builder.line_to(Point::new(x, y));
+                }
+            }
+        });
+
+        frame.stroke(&path, Stroke::default().with_width(2.0).with_color(color));
+    }
+
+    /// Draw grid lines and Y-axis labels.
+    fn draw_grid(
+        &self,
+        frame: &mut Frame,
+        padding: &ChartPadding,
+        width: f32,
+        height: f32,
+        max_value: f64,
+    ) {
+        // Horizontal grid lines (4 divisions)
+        for i in 0..=4 {
+            let y = padding.top + height * (i as f32 / 4.0);
+            let path = Path::line(
+                Point::new(padding.left, y),
+                Point::new(padding.left + width, y),
+            );
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_width(1.0)
+                    .with_color(self.colors.grid),
+            );
+
+            // Y-axis value label
+            let value = max_value * ((4 - i) as f64 / 4.0);
+            frame.fill_text(Text {
+                content: format_rate(value),
+                position: Point::new(padding.left - 5.0, y),
+                color: self.colors.text,
+                size: 10.0.into(),
+                align_x: iced::alignment::Horizontal::Right.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Draw X and Y axes.
+    fn draw_axes(&self, frame: &mut Frame, padding: &ChartPadding, width: f32, height: f32) {
+        // Y-axis
+        let y_axis = Path::line(
+            Point::new(padding.left, padding.top),
+            Point::new(padding.left, padding.top + height),
+        );
+        frame.stroke(
+            &y_axis,
+            Stroke::default()
+                .with_width(1.0)
+                .with_color(self.colors.axis),
+        );
+
+        // X-axis
+        let x_axis = Path::line(
+            Point::new(padding.left, padding.top + height),
+            Point::new(padding.left + width, padding.top + height),
+        );
+        frame.stroke(
+            &x_axis,
+            Stroke::default()
+                .with_width(1.0)
+                .with_color(self.colors.axis),
+        );
+    }
+
+    /// Draw the legend.
+    fn draw_legend(&self, frame: &mut Frame, size: Size) {
+        let y = size.height - 8.0;
+        let box_size = Size::new(10.0, 6.0);
+
+        // RX legend
+        frame.fill_rectangle(Point::new(50.0, y - 3.0), box_size, self.colors.rx);
+        frame.fill_text(Text {
+            content: "RX".to_string(),
+            position: Point::new(63.0, y),
+            color: self.colors.text,
+            size: 9.0.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..Default::default()
+        });
+
+        // TX legend
+        frame.fill_rectangle(Point::new(85.0, y - 3.0), box_size, self.colors.tx);
+        frame.fill_text(Text {
+            content: "TX".to_string(),
+            position: Point::new(98.0, y),
+            color: self.colors.text,
+            size: 9.0.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..Default::default()
+        });
+    }
+
+    /// Draw "No data" message when there's insufficient data.
+    fn draw_no_data(&self, frame: &mut Frame, size: Size) {
+        frame.fill_text(Text {
+            content: "Collecting data...".to_string(),
+            position: Point::new(size.width / 2.0, size.height / 2.0),
+            color: self.colors.text,
+            size: 12.0.into(),
+            align_x: iced::alignment::Horizontal::Center.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..Default::default()
+        });
+    }
+}
+
 /// Canvas program for rendering the bandwidth chart.
 struct BandwidthChartProgram<'a> {
     history: Option<&'a BandwidthHistory>,
@@ -256,6 +541,7 @@ impl BandwidthChartProgram<'_> {
     }
 
     /// Draw a data line on the chart.
+    #[allow(clippy::too_many_arguments)]
     fn draw_data_line<F>(
         &self,
         frame: &mut Frame,
