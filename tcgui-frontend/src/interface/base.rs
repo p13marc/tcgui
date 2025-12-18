@@ -292,6 +292,10 @@ impl TcInterface {
                     .add_status_message("Clearing all TC features".to_string(), false);
                 Task::none()
             }
+            TcInterfaceMessage::ToggleChart => {
+                self.state.chart_expanded = !self.state.chart_expanded;
+                Task::none()
+            }
         }
     }
 
@@ -473,13 +477,26 @@ impl TcInterface {
         .into()
     }
 
-    /// Render bandwidth display
+    /// Render bandwidth display with chart toggle
     fn render_bandwidth_display<'a>(
         &'a self,
         theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
-        self.bandwidth_display.view(theme, zoom)
+        use iced::widget::button;
+
+        let bandwidth = self.bandwidth_display.view(theme, zoom);
+
+        // Chart toggle button
+        let chart_icon = if self.state.chart_expanded { "▼" } else { "📊" };
+        let chart_button = button(text(chart_icon).size(scaled(11, zoom)))
+            .on_press(TcInterfaceMessage::ToggleChart)
+            .padding(scaled_spacing(2, zoom));
+
+        row![bandwidth, chart_button]
+            .spacing(scaled_spacing(4, zoom))
+            .align_y(iced::Alignment::Center)
+            .into()
     }
 
     /// Render status indicator
@@ -884,6 +901,16 @@ impl TcInterface {
     /// Get rate limit value in kbps (compatibility method)
     pub fn rate_limit_kbps(&self) -> u32 {
         self.state.features.rate_limit.config.rate_kbps
+    }
+
+    /// Check if bandwidth chart is expanded (compatibility method)
+    pub fn chart_expanded(&self) -> bool {
+        self.state.chart_expanded
+    }
+
+    /// Get interface name
+    pub fn name(&self) -> &str {
+        &self.state.name
     }
 }
 

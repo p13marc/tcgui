@@ -1191,6 +1191,8 @@ pub fn handle_tc_interface_message(
                         namespace: namespace.clone(),
                         interface: interface_name.clone(),
                     }),
+                    // Toggle chart visibility is UI-only, no backend action needed
+                    TcInterfaceMessage::ToggleChart => Task::none(),
                 };
 
                 let backend_copy = backend_name.clone();

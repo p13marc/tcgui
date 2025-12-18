@@ -38,6 +38,9 @@ pub struct InterfaceState {
 
     /// Whether an interface state change is in progress
     pub applying_interface_state: bool,
+
+    /// Whether the bandwidth chart is expanded/visible
+    pub chart_expanded: bool,
 }
 
 impl InterfaceState {
@@ -52,9 +55,9 @@ impl InterfaceState {
             bandwidth_stats: None,
             status_messages: vec!["Ready.".to_string()],
             current_preset_id: None, // None means custom/manual settings
-            // show_presets field removed
             applying: false,
             applying_interface_state: false,
+            chart_expanded: false,
         }
     }
 
