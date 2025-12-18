@@ -50,6 +50,7 @@ struct TcBackend {
     execution_handlers: Option<ScenarioExecutionHandlers>,
     _preset_loader: PresetLoader,
     preset_list: PresetList,
+    preset_list_publisher: AdvancedPublisher<'static>,
     exclude_loopback: bool,
     backend_name: String,
     tc_config_publishers: HashMap<String, AdvancedPublisher<'static>>, // namespace/interface -> publisher
@@ -163,6 +164,24 @@ impl TcBackend {
             );
         }
 
+        // Create preset list publisher with history cache for late-joining frontends
+        let preset_list_topic = topics::preset_list(&backend_name);
+        let preset_list_publisher = session
+            .declare_publisher(preset_list_topic.clone())
+            .cache(CacheConfig::default().max_samples(1))
+            .sample_miss_detection(
+                MissDetectionConfig::default().heartbeat(Duration::from_millis(2000)),
+            )
+            .publisher_detection()
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to create preset list publisher: {}", e),
+            })?;
+        info!(
+            "[BACKEND] Created preset list publisher on topic: {}",
+            preset_list_topic.as_str()
+        );
+
         Ok(Self {
             session,
             interfaces: HashMap::new(),
@@ -175,6 +194,7 @@ impl TcBackend {
             execution_handlers: Some(execution_handlers),
             _preset_loader: preset_loader,
             preset_list,
+            preset_list_publisher,
             exclude_loopback,
             backend_name,
             tc_config_publishers: HashMap::new(),
@@ -841,9 +861,8 @@ impl TcBackend {
     #[instrument(skip(self), fields(backend_name = %self.backend_name))]
     async fn publish_preset_list(&self) -> Result<()> {
         let payload = serde_json::to_string(&self.preset_list)?;
-        let preset_list_topic = topics::preset_list(&self.backend_name);
-        self.session
-            .put(&preset_list_topic, payload)
+        self.preset_list_publisher
+            .put(payload)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to publish preset list: {}", e),
