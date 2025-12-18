@@ -1375,6 +1375,7 @@ pub fn handle_disable_interface(
 /// Handles backend cleanup operations.
 pub fn handle_cleanup_stale_backends(
     backend_manager: &mut BackendManager,
+    bandwidth_history: &mut crate::bandwidth_history::BandwidthHistoryManager,
     _query_manager: &mut QueryManager,
     ui_state: &mut UiStateManager,
     scenario_manager: &mut ScenarioManager,
@@ -1419,6 +1420,8 @@ pub fn handle_cleanup_stale_backends(
             ui_state.cleanup_backend_state(backend_name);
             // Clean up scenario state for this backend
             scenario_manager.cleanup_backend_state(backend_name);
+            // Clean up bandwidth history for this backend
+            bandwidth_history.remove_backend(backend_name);
         }
     }
 
