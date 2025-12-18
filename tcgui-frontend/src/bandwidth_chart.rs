@@ -324,7 +324,7 @@ impl StatelessBandwidthChart<'_> {
         frame.stroke(&path, Stroke::default().with_width(2.0).with_color(color));
     }
 
-    /// Draw grid lines and Y-axis labels.
+    /// Draw grid lines and axis labels.
     fn draw_grid(
         &self,
         frame: &mut Frame,
@@ -356,6 +356,34 @@ impl StatelessBandwidthChart<'_> {
                 size: 10.0.into(),
                 align_x: iced::alignment::Horizontal::Right.into(),
                 align_y: iced::alignment::Vertical::Center,
+                ..Default::default()
+            });
+        }
+
+        // Time axis labels
+        let time_labels: Vec<(f32, String)> = match self.time_window {
+            ChartTimeWindow::OneMinute => vec![
+                (1.0, "now".to_string()),
+                (0.5, "30s".to_string()),
+                (0.0, "1m".to_string()),
+            ],
+            ChartTimeWindow::FiveMinutes => vec![
+                (1.0, "now".to_string()),
+                (0.6, "2m".to_string()),
+                (0.2, "4m".to_string()),
+                (0.0, "5m".to_string()),
+            ],
+        };
+
+        for (pos, label) in time_labels {
+            let x = padding.left + width * pos;
+            frame.fill_text(Text {
+                content: label,
+                position: Point::new(x, padding.top + height + 12.0),
+                color: self.colors.text,
+                size: 9.0.into(),
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Top,
                 ..Default::default()
             });
         }
@@ -582,7 +610,7 @@ impl BandwidthChartProgram<'_> {
         frame.stroke(&path, Stroke::default().with_width(2.0).with_color(color));
     }
 
-    /// Draw grid lines and Y-axis labels.
+    /// Draw grid lines and axis labels.
     fn draw_grid(
         &self,
         frame: &mut Frame,
@@ -614,6 +642,34 @@ impl BandwidthChartProgram<'_> {
                 size: 10.0.into(),
                 align_x: iced::alignment::Horizontal::Right.into(),
                 align_y: iced::alignment::Vertical::Center,
+                ..Default::default()
+            });
+        }
+
+        // Time axis labels
+        let time_labels: Vec<(f32, String)> = match self.time_window {
+            ChartTimeWindow::OneMinute => vec![
+                (1.0, "now".to_string()),
+                (0.5, "30s".to_string()),
+                (0.0, "1m".to_string()),
+            ],
+            ChartTimeWindow::FiveMinutes => vec![
+                (1.0, "now".to_string()),
+                (0.6, "2m".to_string()),
+                (0.2, "4m".to_string()),
+                (0.0, "5m".to_string()),
+            ],
+        };
+
+        for (pos, label) in time_labels {
+            let x = padding.left + width * pos;
+            frame.fill_text(Text {
+                content: label,
+                position: Point::new(x, padding.top + height + 12.0),
+                color: self.colors.text,
+                size: 9.0.into(),
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Top,
                 ..Default::default()
             });
         }
