@@ -118,6 +118,11 @@ impl Default for UiStateManager {
 }
 
 impl UiStateManager {
+    /// Creates a new UI state manager with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Creates a new UI state manager with settings loaded from disk.
     pub fn from_settings(settings: &FrontendSettings) -> Self {
         let theme_mode: ThemeMode = settings.theme_mode.into();

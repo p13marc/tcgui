@@ -10,6 +10,10 @@ homepage = "https://github.com/p13marc/tcgui"
 keywords = ["gui", "traffic-control", "networking", "iced", "linux"]
 categories = ["gui", "network-programming"]
 
+[lib]
+name = "tcgui_frontend"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tcgui-frontend"
 path = "src/main.rs"
