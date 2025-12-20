@@ -504,7 +504,11 @@ impl TcInterface {
         let bandwidth = self.bandwidth_display.view(theme, zoom);
 
         // Chart toggle button placed before bandwidth to avoid shifting
-        let chart_icon = if self.state.chart_expanded { "▼" } else { "▶" };
+        let chart_icon = if self.state.chart_expanded {
+            "▼"
+        } else {
+            "▶"
+        };
         let chart_button = button(text(chart_icon).size(scaled(10, zoom)))
             .on_press(TcInterfaceMessage::ToggleChart)
             .padding(scaled_spacing(2, zoom));

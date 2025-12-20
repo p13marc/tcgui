@@ -50,8 +50,8 @@ pub struct ChartColors {
 impl Default for ChartColors {
     fn default() -> Self {
         Self {
-            rx: Color::from_rgb(0.0, 0.6, 0.9),      // Blue for RX (download)
-            tx: Color::from_rgb(0.9, 0.5, 0.0),      // Orange for TX (upload)
+            rx: Color::from_rgb(0.0, 0.6, 0.9), // Blue for RX (download)
+            tx: Color::from_rgb(0.9, 0.5, 0.0), // Orange for TX (upload)
             grid: Color::from_rgba(0.5, 0.5, 0.5, 0.3),
             axis: Color::from_rgb(0.4, 0.4, 0.4),
             text: Color::from_rgb(0.5, 0.5, 0.5),
@@ -64,8 +64,8 @@ impl ChartColors {
     /// Create colors for dark theme.
     pub fn dark() -> Self {
         Self {
-            rx: Color::from_rgb(0.3, 0.7, 1.0),      // Lighter blue for dark mode
-            tx: Color::from_rgb(1.0, 0.6, 0.2),      // Lighter orange for dark mode
+            rx: Color::from_rgb(0.3, 0.7, 1.0), // Lighter blue for dark mode
+            tx: Color::from_rgb(1.0, 0.6, 0.2), // Lighter orange for dark mode
             grid: Color::from_rgba(0.6, 0.6, 0.6, 0.2),
             axis: Color::from_rgb(0.7, 0.7, 0.7),
             text: Color::from_rgb(0.7, 0.7, 0.7),
@@ -136,9 +136,7 @@ impl BandwidthChart {
 }
 
 /// Helper function to create a canvas widget.
-fn canvas<P, Message>(
-    program: P,
-) -> iced::widget::Canvas<P, Message, Theme, Renderer>
+fn canvas<P, Message>(program: P) -> iced::widget::Canvas<P, Message, Theme, Renderer>
 where
     P: canvas::Program<Message, Theme, Renderer>,
 {
@@ -306,8 +304,8 @@ impl StatelessBandwidthChart<'_> {
                 let age = now.duration_since(sample.timestamp);
                 let x = padding.left
                     + chart_width * (1.0 - age.as_secs_f32() / window_duration.as_secs_f32());
-                let y = padding.top
-                    + chart_height * (1.0 - value_fn(sample) as f32 / max_value as f32);
+                let y =
+                    padding.top + chart_height * (1.0 - value_fn(sample) as f32 / max_value as f32);
 
                 // Clamp to chart bounds
                 let x = x.clamp(padding.left, padding.left + chart_width);
@@ -594,8 +592,8 @@ impl BandwidthChartProgram<'_> {
                 let age = now.duration_since(sample.timestamp);
                 let x = padding.left
                     + chart_width * (1.0 - age.as_secs_f32() / window_duration.as_secs_f32());
-                let y = padding.top
-                    + chart_height * (1.0 - value_fn(sample) as f32 / max_value as f32);
+                let y =
+                    padding.top + chart_height * (1.0 - value_fn(sample) as f32 / max_value as f32);
 
                 // Clamp to chart bounds
                 let x = x.clamp(padding.left, padding.left + chart_width);

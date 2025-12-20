@@ -95,7 +95,14 @@ pub fn render_main_view<'a>(
             if backend_manager.backends().is_empty() {
                 render_empty_state(any_backend_connected, colors.clone(), zoom)
             } else {
-                render_backend_content(backend_manager, bandwidth_history, ui_state, colors.clone(), zoom, theme)
+                render_backend_content(
+                    backend_manager,
+                    bandwidth_history,
+                    ui_state,
+                    colors.clone(),
+                    zoom,
+                    theme,
+                )
             }
         }
         crate::ui_state::AppTab::Scenarios => {
@@ -670,8 +677,14 @@ fn render_backend_content<'a>(
     zoom: f32,
     theme: &'a Theme,
 ) -> Element<'a, TcGuiMessage> {
-    let namespace_sections =
-        render_namespace_sections(backend_manager, bandwidth_history, ui_state, colors.clone(), zoom, theme);
+    let namespace_sections = render_namespace_sections(
+        backend_manager,
+        bandwidth_history,
+        ui_state,
+        colors.clone(),
+        zoom,
+        theme,
+    );
     let all_namespaces_column: Element<_> = column(namespace_sections)
         .spacing(scaled_spacing(8, zoom))
         .into();

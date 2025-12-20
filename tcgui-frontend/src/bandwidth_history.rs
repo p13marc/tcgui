@@ -131,7 +131,11 @@ pub struct InterfaceKey {
 }
 
 impl InterfaceKey {
-    pub fn new(backend: impl Into<String>, namespace: impl Into<String>, interface: impl Into<String>) -> Self {
+    pub fn new(
+        backend: impl Into<String>,
+        namespace: impl Into<String>,
+        interface: impl Into<String>,
+    ) -> Self {
         Self {
             backend: backend.into(),
             namespace: namespace.into(),
@@ -182,7 +186,12 @@ impl BandwidthHistoryManager {
     }
 
     /// Get the bandwidth history for an interface.
-    pub fn get(&self, backend: &str, namespace: &str, interface: &str) -> Option<&BandwidthHistory> {
+    pub fn get(
+        &self,
+        backend: &str,
+        namespace: &str,
+        interface: &str,
+    ) -> Option<&BandwidthHistory> {
         let key = InterfaceKey::new(backend, namespace, interface);
         self.histories.get(&key)
     }
