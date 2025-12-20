@@ -1,22 +1,7 @@
-mod app;
-mod backend_manager;
-mod interface; // Now modular!
-mod interface_selector;
-mod message_handlers;
-mod messages;
-mod query_manager;
-mod scenario_manager;
-mod scenario_view;
-mod settings;
-pub mod theme;
-mod ui_state;
-mod view;
-mod zenoh_manager;
-
 use clap::{Arg, Command};
 use tracing::info;
 
-use app::TcGui;
+use tcgui_frontend::app::TcGui;
 use tcgui_shared::{errors::ZenohConfigError, ZenohConfig, ZenohMode};
 
 pub fn main() -> iced::Result {

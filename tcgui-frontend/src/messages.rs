@@ -257,4 +257,7 @@ pub enum TcInterfaceMessage {
     PresetSelected(CustomPreset),
     TogglePresetDropdown,
     ClearAllFeatures,
+
+    // Chart control
+    ToggleChart,
 }

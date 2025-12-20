@@ -4,6 +4,7 @@
 //! with modern styling, bandwidth summaries, and full traffic control features.
 
 use crate::backend_manager::{BackendGroup, BackendManager, NamespaceGroup};
+use crate::bandwidth_history::BandwidthHistoryManager;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::ScenarioManager;
 use crate::scenario_view;
@@ -71,6 +72,7 @@ impl Default for ColorPalette {
 /// Renders the main application view
 pub fn render_main_view<'a>(
     backend_manager: &'a BackendManager,
+    bandwidth_history: &'a BandwidthHistoryManager,
     ui_state: &'a UiStateManager,
     _scenario_manager: &'a ScenarioManager,
 ) -> Element<'a, TcGuiMessage> {
@@ -93,7 +95,14 @@ pub fn render_main_view<'a>(
             if backend_manager.backends().is_empty() {
                 render_empty_state(any_backend_connected, colors.clone(), zoom)
             } else {
-                render_backend_content(backend_manager, ui_state, colors.clone(), zoom, theme)
+                render_backend_content(
+                    backend_manager,
+                    bandwidth_history,
+                    ui_state,
+                    colors.clone(),
+                    zoom,
+                    theme,
+                )
             }
         }
         crate::ui_state::AppTab::Scenarios => {
@@ -662,13 +671,20 @@ fn render_empty_state(
 /// Renders the main backend content with namespaces and interfaces
 fn render_backend_content<'a>(
     backend_manager: &'a BackendManager,
+    bandwidth_history: &'a BandwidthHistoryManager,
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
     zoom: f32,
     theme: &'a Theme,
 ) -> Element<'a, TcGuiMessage> {
-    let namespace_sections =
-        render_namespace_sections(backend_manager, ui_state, colors.clone(), zoom, theme);
+    let namespace_sections = render_namespace_sections(
+        backend_manager,
+        bandwidth_history,
+        ui_state,
+        colors.clone(),
+        zoom,
+        theme,
+    );
     let all_namespaces_column: Element<_> = column(namespace_sections)
         .spacing(scaled_spacing(8, zoom))
         .into();
@@ -690,6 +706,7 @@ fn render_backend_content<'a>(
 /// Renders all namespace sections
 fn render_namespace_sections<'a>(
     backend_manager: &'a BackendManager,
+    bandwidth_history: &'a BandwidthHistoryManager,
     ui_state: &'a UiStateManager,
     colors: ColorPalette,
     zoom: f32,
@@ -719,6 +736,7 @@ fn render_namespace_sections<'a>(
         let backend_namespace_sections = render_backend_namespaces(
             backend_name,
             backend_group,
+            bandwidth_history,
             ui_state,
             namespace_bandwidth_summaries.clone(),
             colors.clone(),
@@ -732,9 +750,11 @@ fn render_namespace_sections<'a>(
 }
 
 /// Renders namespaces for a specific backend
+#[allow(clippy::too_many_arguments)]
 fn render_backend_namespaces<'a>(
     backend_name: &'a str,
     backend_group: &'a BackendGroup,
+    bandwidth_history: &'a BandwidthHistoryManager,
     ui_state: &'a UiStateManager,
     namespace_bandwidth_summaries: HashMap<
         String,
@@ -780,6 +800,7 @@ fn render_backend_namespaces<'a>(
                 namespace_name,
                 namespace_group,
                 &backend_group.preset_list,
+                bandwidth_history,
                 namespace_key,
                 is_hidden,
                 ns_type,
@@ -802,6 +823,7 @@ fn render_namespace_section<'a>(
     namespace_name: &'a str,
     namespace_group: &'a NamespaceGroup,
     preset_list: &'a tcgui_shared::presets::PresetList,
+    bandwidth_history: &'a BandwidthHistoryManager,
     namespace_key: String,
     is_hidden: bool,
     namespace_type: &'a NamespaceType,
@@ -850,6 +872,7 @@ fn render_namespace_section<'a>(
             preset_list,
             theme,
             zoom,
+            bandwidth_history,
         );
         let interfaces_column: Element<_> =
             column(interfaces).spacing(scaled_spacing(4, zoom)).into();
@@ -1123,6 +1146,7 @@ fn render_namespace_interfaces<'a>(
     preset_list: &'a tcgui_shared::presets::PresetList,
     theme: &'a Theme,
     zoom: f32,
+    bandwidth_history: &'a BandwidthHistoryManager,
 ) -> Vec<Element<'a, TcGuiMessage>> {
     // Sort interfaces alphabetically for consistent order
     let mut sorted_interfaces: Vec<_> = namespace_group.tc_interfaces.iter().collect();
@@ -1134,14 +1158,18 @@ fn render_namespace_interfaces<'a>(
             let name_clone = name.clone();
             let backend_clone = backend_name.to_string();
             let namespace_clone = namespace_name.to_string();
-            interface.view(preset_list, theme, zoom).map(move |msg| {
-                TcGuiMessage::TcInterfaceMessage(
-                    backend_clone.clone(),
-                    namespace_clone.clone(),
-                    name_clone.clone(),
-                    msg,
-                )
-            })
+            // Get bandwidth history for this interface
+            let history = bandwidth_history.get(backend_name, namespace_name, name);
+            interface
+                .view(preset_list, theme, zoom, history)
+                .map(move |msg| {
+                    TcGuiMessage::TcInterfaceMessage(
+                        backend_clone.clone(),
+                        namespace_clone.clone(),
+                        name_clone.clone(),
+                        msg,
+                    )
+                })
         })
         .collect()
 }

@@ -12,6 +12,7 @@ use tcgui_shared::ZenohConfig;
 use tracing::info;
 
 use crate::backend_manager::BackendManager;
+use crate::bandwidth_history::BandwidthHistoryManager;
 use crate::message_handlers::*;
 use crate::messages::{TcGuiMessage, ZenohEvent};
 use crate::query_manager::QueryManager;
@@ -45,6 +46,8 @@ use crate::zenoh_manager::ZenohManager;
 pub struct TcGui {
     /// Backend management and state
     backend_manager: BackendManager,
+    /// Bandwidth history for time-series charts
+    bandwidth_history: BandwidthHistoryManager,
     /// Query channel management for TC and interface operations
     query_manager: QueryManager,
     /// Scenario management and operations
@@ -66,6 +69,7 @@ impl TcGui {
 
         let app = Self {
             backend_manager: BackendManager::new(),
+            bandwidth_history: BandwidthHistoryManager::default(),
             query_manager: QueryManager::new(),
             scenario_manager: ScenarioManager::new(),
             ui_state: UiStateManager::from_settings(&settings),
@@ -85,6 +89,7 @@ impl TcGui {
 
         let app = Self {
             backend_manager: BackendManager::new(),
+            bandwidth_history: BandwidthHistoryManager::default(),
             query_manager: QueryManager::new(),
             scenario_manager: ScenarioManager::new(),
             ui_state: UiStateManager::from_settings(&settings),
@@ -155,6 +160,14 @@ impl TcGui {
 
             // Bandwidth updates
             TcGuiMessage::BandwidthUpdate(bandwidth_update) => {
+                // Record in history for charts
+                self.bandwidth_history.record(
+                    &bandwidth_update.backend_name,
+                    &bandwidth_update.namespace,
+                    &bandwidth_update.interface,
+                    bandwidth_update.stats.rx_bytes_per_sec,
+                    bandwidth_update.stats.tx_bytes_per_sec,
+                );
                 handle_bandwidth_update(&mut self.backend_manager, bandwidth_update)
             }
 
@@ -534,6 +547,7 @@ impl TcGui {
             // Maintenance operations
             TcGuiMessage::CleanupStaleBackends => handle_cleanup_stale_backends(
                 &mut self.backend_manager,
+                &mut self.bandwidth_history,
                 &mut self.query_manager,
                 &mut self.ui_state,
                 &mut self.scenario_manager,
@@ -561,6 +575,7 @@ impl TcGui {
     pub fn view(&self) -> Element<'_, TcGuiMessage> {
         render_main_view(
             &self.backend_manager,
+            &self.bandwidth_history,
             &self.ui_state,
             &self.scenario_manager,
         )

@@ -10,6 +10,8 @@ use tcgui_shared::presets::PresetList;
 use tcgui_shared::NetworkBandwidthStats;
 
 use super::state::InterfaceState;
+use crate::bandwidth_chart::bandwidth_chart_view;
+use crate::bandwidth_history::BandwidthHistory;
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
 use crate::view::{scaled, scaled_spacing};
@@ -292,6 +294,10 @@ impl TcInterface {
                     .add_status_message("Clearing all TC features".to_string(), false);
                 Task::none()
             }
+            TcInterfaceMessage::ToggleChart => {
+                self.state.chart_expanded = !self.state.chart_expanded;
+                Task::none()
+            }
         }
     }
 
@@ -301,13 +307,27 @@ impl TcInterface {
         preset_list: &'a PresetList,
         theme: &'a Theme,
         zoom: f32,
+        bandwidth_history: Option<&'a BandwidthHistory>,
     ) -> Element<'a, TcInterfaceMessage> {
         let main_row = self.render_main_row(preset_list, theme, zoom);
         let expandable_rows = self.render_expandable_features(theme, zoom);
 
-        column![main_row, expandable_rows]
-            .spacing(scaled_spacing(4, zoom))
-            .into()
+        // Build chart section if expanded
+        let content = if self.state.chart_expanded {
+            let chart_height = scaled(80, zoom);
+            let dark_mode = theme.is_dark();
+            let chart_element = bandwidth_chart_view(bandwidth_history, chart_height, dark_mode);
+
+            column![main_row, expandable_rows, chart_element]
+                .spacing(scaled_spacing(4, zoom))
+                .into()
+        } else {
+            column![main_row, expandable_rows]
+                .spacing(scaled_spacing(4, zoom))
+                .into()
+        };
+
+        content
     }
 
     /// Render the main interface row with core controls
@@ -473,13 +493,30 @@ impl TcInterface {
         .into()
     }
 
-    /// Render bandwidth display
+    /// Render bandwidth display with chart toggle
     fn render_bandwidth_display<'a>(
         &'a self,
         theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
-        self.bandwidth_display.view(theme, zoom)
+        use iced::widget::button;
+
+        let bandwidth = self.bandwidth_display.view(theme, zoom);
+
+        // Chart toggle button placed before bandwidth to avoid shifting
+        let chart_icon = if self.state.chart_expanded {
+            "▼"
+        } else {
+            "▶"
+        };
+        let chart_button = button(text(chart_icon).size(scaled(10, zoom)))
+            .on_press(TcInterfaceMessage::ToggleChart)
+            .padding(scaled_spacing(2, zoom));
+
+        row![chart_button, bandwidth]
+            .spacing(scaled_spacing(4, zoom))
+            .align_y(iced::Alignment::Center)
+            .into()
     }
 
     /// Render status indicator
@@ -884,6 +921,16 @@ impl TcInterface {
     /// Get rate limit value in kbps (compatibility method)
     pub fn rate_limit_kbps(&self) -> u32 {
         self.state.features.rate_limit.config.rate_kbps
+    }
+
+    /// Check if bandwidth chart is expanded (compatibility method)
+    pub fn chart_expanded(&self) -> bool {
+        self.state.chart_expanded
+    }
+
+    /// Get interface name
+    pub fn name(&self) -> &str {
+        &self.state.name
     }
 }
 
