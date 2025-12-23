@@ -8,6 +8,8 @@ use iced::widget::{button, row, text};
 use iced::Element;
 use tcgui_shared::presets::{CustomPreset, PresetList};
 
+use crate::theme::Theme;
+
 use crate::icons::Icon;
 use crate::interface::state::InterfaceState;
 use crate::messages::TcInterfaceMessage;
@@ -152,6 +154,7 @@ impl PresetManagerComponent {
         &self,
         preset_list: &'a PresetList,
         current_preset_id: &Option<String>,
+        theme: &Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         let current_label = current_preset_id
@@ -196,10 +199,11 @@ impl PresetManagerComponent {
             row(buttons).spacing(scaled_spacing(2, zoom)).into()
         } else {
             // When collapsed, show a button with current preset name
+            let icon_color = theme.colors.text_primary;
             button(
                 row![
                     text(current_label).size(scaled(11, zoom)),
-                    Icon::ChevronDown.svg_sized(scaled(9, zoom)),
+                    Icon::ChevronDown.svg_sized_colored(scaled(9, zoom), icon_color),
                 ]
                 .align_y(iced::Alignment::Center),
             )

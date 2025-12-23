@@ -1510,10 +1510,20 @@ fn render_interface_selection_dialog<'a>(
                 for (interface_name, _) in sorted_interfaces {
                     let is_selected_interface = dialog.selected_interfaces.contains(interface_name);
 
+                    let checkbox_icon = if is_selected_interface {
+                        Icon::SquareCheck
+                    } else {
+                        Icon::Square
+                    };
+                    let checkbox_color = if is_selected_interface {
+                        Color::WHITE
+                    } else {
+                        colors.text_primary
+                    };
+
                     let interface_button = button(
                         row![
-                            text(if is_selected_interface { "☑" } else { "☐" })
-                                .size(scaled(14, zoom)),
+                            checkbox_icon.svg_sized_colored(scaled(14, zoom), checkbox_color),
                             text(interface_name).size(scaled(12, zoom))
                         ]
                         .spacing(scaled_spacing(6, zoom)),

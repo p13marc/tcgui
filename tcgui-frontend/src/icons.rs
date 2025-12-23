@@ -101,6 +101,8 @@ pub enum Icon {
     Wrench,
     /// Circle with dot - interface active
     CircleDot,
+    /// Square with checkmark - checked checkbox
+    SquareCheck,
 }
 
 impl Icon {
@@ -158,6 +160,7 @@ impl Icon {
             Icon::ChevronRight => include_bytes!("../icons/chevron-right.svg"),
             Icon::Wrench => include_bytes!("../icons/wrench.svg"),
             Icon::CircleDot => include_bytes!("../icons/circle-dot.svg"),
+            Icon::SquareCheck => include_bytes!("../icons/square-check.svg"),
         }
     }
 
