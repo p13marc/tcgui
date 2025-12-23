@@ -347,15 +347,18 @@ fn render_backend_scenarios<'a>(
                         .spacing(scaled_spacing(2, zoom)),
                     )
                     .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
-                    .style(move |_| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba(
-                            0.9, 0.2, 0.2, 0.05,
-                        ))),
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..iced::Border::default()
-                        },
-                        ..container::Style::default()
+                    .style(move |_| {
+                        let err = colors.error_red;
+                        container::Style {
+                            background: Some(iced::Background::Color(Color::from_rgba(
+                                err.r, err.g, err.b, 0.05,
+                            ))),
+                            border: iced::Border {
+                                radius: 4.0.into(),
+                                ..iced::Border::default()
+                            },
+                            ..container::Style::default()
+                        }
                     }),
                 );
             }
@@ -427,7 +430,7 @@ fn render_backend_scenarios<'a>(
                 border: iced::Border {
                     radius: 4.0.into(),
                     width: 1.0,
-                    color: Color::from_rgb(0.9, 0.93, 0.98),
+                    color: colors.border_color,
                 },
                 ..container::Style::default()
             }),
@@ -571,7 +574,7 @@ fn render_scenario_card<'a>(
         border: iced::Border {
             radius: 6.0.into(),
             width: 1.0,
-            color: Color::from_rgb(0.9, 0.93, 0.98),
+            color: colors.border_color,
         },
         ..container::Style::default()
     })
@@ -664,7 +667,7 @@ fn render_execution_card<'a>(
         ExecutionState::Completed => colors.primary_blue,
         ExecutionState::Stopped | ExecutionState::Failed { .. } => colors.error_red,
     };
-    let bar_bg_color = Color::from_rgb(0.85, 0.88, 0.92);
+    let bar_bg_color = colors.border_color;
     let progress_width = (execution.stats.progress_percent / 100.0).clamp(0.0, 1.0);
 
     // Build step timeline
@@ -685,8 +688,9 @@ fn render_execution_card<'a>(
         };
 
         let is_current = i == execution.current_step;
+        let primary = colors.primary_blue;
         let step_bg = if is_current {
-            Color::from_rgba(0.2, 0.6, 1.0, 0.1)
+            Color::from_rgba(primary.r, primary.g, primary.b, 0.1)
         } else {
             Color::TRANSPARENT
         };
@@ -865,13 +869,14 @@ fn render_execution_card<'a>(
             );
         }
 
+        let err = colors.error_red;
         card_content = card_content.push(
             container(error_content)
                 .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
                 .width(Length::Fill)
                 .style(move |_| container::Style {
                     background: Some(iced::Background::Color(Color::from_rgba(
-                        0.9, 0.2, 0.2, 0.1,
+                        err.r, err.g, err.b, 0.1,
                     ))),
                     border: iced::Border {
                         radius: 4.0.into(),
@@ -883,13 +888,12 @@ fn render_execution_card<'a>(
     }
 
     // Divider
-    card_content =
-        card_content.push(container(space().width(Length::Fill).height(1)).style(|_| {
-            container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb(0.88, 0.90, 0.94))),
-                ..container::Style::default()
-            }
-        }));
+    card_content = card_content.push(container(space().width(Length::Fill).height(1)).style(
+        move |_| container::Style {
+            background: Some(iced::Background::Color(colors.border_color)),
+            ..container::Style::default()
+        },
+    ));
 
     // Collapsible step timeline header
     let toggle_icon = if is_timeline_collapsed {
@@ -945,7 +949,7 @@ fn render_execution_card<'a>(
             border: iced::Border {
                 radius: 6.0.into(),
                 width: 1.0,
-                color: Color::from_rgb(0.9, 0.93, 0.98),
+                color: colors.border_color,
             },
             ..container::Style::default()
         })
@@ -1124,7 +1128,7 @@ fn render_scenario_details<'a>(
                     border: iced::Border {
                         radius: 4.0.into(),
                         width: 1.0,
-                        color: Color::from_rgb(0.9, 0.93, 0.98),
+                        color: colors.border_color,
                     },
                     ..container::Style::default()
                 }),
