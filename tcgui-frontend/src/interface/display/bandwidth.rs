@@ -7,6 +7,7 @@ use iced::widget::{row, text};
 use iced::Element;
 use tcgui_shared::NetworkBandwidthStats;
 
+use crate::icons::Icon;
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
 use crate::view::{scaled, scaled_spacing};
@@ -64,13 +65,13 @@ impl BandwidthDisplayComponent {
             let tx_color = theme.colors.tx_color;
 
             row![
-                text("📈").size(scaled(11, zoom)),
+                Icon::TrendingUp.svg_sized_colored(scaled(11, zoom), rx_color),
                 text(rx_rate)
                     .size(scaled(11, zoom))
                     .style(move |_| text::Style {
                         color: Some(rx_color)
                     }),
-                text("📤").size(scaled(11, zoom)),
+                Icon::ArrowUp.svg_sized_colored(scaled(11, zoom), tx_color),
                 text(tx_rate)
                     .size(scaled(11, zoom))
                     .style(move |_| text::Style {
@@ -82,8 +83,8 @@ impl BandwidthDisplayComponent {
         } else {
             let text_secondary = theme.colors.text_secondary;
             row![
-                text("📊").size(scaled(11, zoom)),
-                text("--")
+                Icon::BarChart3.svg_sized_colored(scaled(11, zoom), text_secondary),
+                text(" --")
                     .size(scaled(11, zoom))
                     .style(move |_| text::Style {
                         color: Some(text_secondary)
