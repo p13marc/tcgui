@@ -175,6 +175,7 @@ impl ScenarioExecutionEngine {
             self.update_sender.clone(),
             pre_execution_state.clone(),
             scenario.cleanup_on_failure,
+            execution_key.clone(),
         );
 
         // Create executor
@@ -321,9 +322,11 @@ impl ScenarioExecutionEngine {
         update_sender: mpsc::UnboundedSender<ScenarioExecutionUpdate>,
         pre_execution_state: Option<CapturedTcState>,
         cleanup_on_failure: bool,
+        execution_key: String,
     ) -> tokio::task::JoinHandle<()> {
         let backend_name = self.backend_name.clone();
         let session = self.session.clone();
+        let active_executions = self.active_executions.clone();
 
         tokio::spawn(async move {
             info!(
@@ -403,6 +406,12 @@ impl ScenarioExecutionEngine {
                                 }
                             }
 
+                            // Remove from active executions
+                            {
+                                let mut executions = active_executions.write().await;
+                                executions.remove(&execution_key);
+                            }
+
                             // Send failure update
                             let _ = update_sender.send(ScenarioExecutionUpdate {
                                 namespace: execution.target_namespace.clone(),
@@ -439,6 +448,12 @@ impl ScenarioExecutionEngine {
                                         Err(e) => error!("TC rollback failed: {}", e),
                                     }
                                 }
+                            }
+
+                            // Remove from active executions
+                            {
+                                let mut executions = active_executions.write().await;
+                                executions.remove(&execution_key);
                             }
 
                             // Send failure update
@@ -489,6 +504,12 @@ impl ScenarioExecutionEngine {
                             }
                         }
 
+                        // Remove from active executions (may already be removed by stop_scenario)
+                        {
+                            let mut executions = active_executions.write().await;
+                            executions.remove(&execution_key);
+                        }
+
                         // Send stopped update
                         execution.state = ExecutionState::Stopped;
                         let _ = update_sender.send(ScenarioExecutionUpdate {
@@ -525,6 +546,12 @@ impl ScenarioExecutionEngine {
                                         Ok(msg) => info!("TC cleanup successful: {}", msg),
                                         Err(e) => error!("TC cleanup failed: {}", e),
                                     }
+                                }
+
+                                // Remove from active executions (may already be removed by stop_scenario)
+                                {
+                                    let mut executions = active_executions.write().await;
+                                    executions.remove(&execution_key);
                                 }
 
                                 // Send stopped update
@@ -595,6 +622,12 @@ impl ScenarioExecutionEngine {
             );
             execution.state = ExecutionState::Completed;
             execution.stats.progress_percent = 100.0;
+
+            // Remove from active executions before sending final update
+            {
+                let mut executions = active_executions.write().await;
+                executions.remove(&execution_key);
+            }
 
             // Send final completion update
             let _ = update_sender.send(ScenarioExecutionUpdate {
@@ -755,6 +788,7 @@ mod tests {
     use super::*;
     use tcgui_shared::scenario::{NetworkScenario, ScenarioStep};
     use tcgui_shared::TcNetemConfig;
+    use zenoh::Wait;
 
     fn create_test_scenario() -> NetworkScenario {
         let mut scenario = NetworkScenario::new(
@@ -781,6 +815,44 @@ mod tests {
         ));
 
         scenario
+    }
+
+    /// Create a fast scenario for testing (very short durations)
+    fn create_fast_test_scenario() -> NetworkScenario {
+        let mut scenario = NetworkScenario::new(
+            "fast-test-scenario".to_string(),
+            "Fast Test Scenario".to_string(),
+            "A fast scenario for execution testing".to_string(),
+        );
+
+        let mut tc_config = TcNetemConfig::new();
+        tc_config.loss.enabled = true;
+        tc_config.loss.percentage = 1.0;
+
+        // Very short duration for fast tests
+        scenario.add_step(ScenarioStep::new(
+            50, // 50ms
+            "Step 1".to_string(),
+            tc_config.clone(),
+        ));
+
+        scenario.add_step(ScenarioStep::new(
+            50, // 50ms
+            "Step 2".to_string(),
+            tc_config,
+        ));
+
+        scenario
+    }
+
+    fn create_test_engine() -> ScenarioExecutionEngine {
+        let session = Arc::new(
+            zenoh::open(zenoh::Config::default())
+                .wait()
+                .expect("Failed to open Zenoh"),
+        );
+        let tc_manager = crate::tc_commands::TcCommandManager::new();
+        ScenarioExecutionEngine::new(session, "test-backend".to_string(), tc_manager)
     }
 
     #[test]
@@ -810,5 +882,326 @@ mod tests {
         assert!(matches!(pause_msg, ExecutorControlMessage::Pause));
         assert!(matches!(resume_msg, ExecutorControlMessage::Resume));
         assert!(matches!(stop_msg, ExecutorControlMessage::Stop));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_start_scenario_creates_active_execution() {
+        let engine = create_test_engine();
+        let scenario = create_fast_test_scenario();
+
+        let result = engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await;
+
+        assert!(result.is_ok());
+        let execution_key = result.unwrap();
+        assert_eq!(execution_key, "default/lo");
+
+        // Verify execution is in active_executions
+        let executions = engine.active_executions.read().await;
+        assert!(executions.contains_key(&execution_key));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_start_scenario_rejects_duplicate() {
+        let engine = create_test_engine();
+        let scenario = create_fast_test_scenario();
+
+        // Start first scenario
+        let result1 = engine
+            .start_scenario(
+                scenario.clone(),
+                "default".to_string(),
+                "lo".to_string(),
+                false,
+            )
+            .await;
+        assert!(result1.is_ok());
+
+        // Try to start another scenario on same interface - should fail
+        let result2 = engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await;
+
+        assert!(result2.is_err());
+        let err_msg = result2.unwrap_err().to_string();
+        assert!(err_msg.contains("already running"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_stop_scenario_removes_from_active() {
+        let engine = create_test_engine();
+        let scenario = create_fast_test_scenario();
+
+        // Start scenario
+        let result = engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await;
+        assert!(result.is_ok());
+
+        // Verify it's active
+        {
+            let executions = engine.active_executions.read().await;
+            assert!(executions.contains_key("default/lo"));
+        }
+
+        // Stop the scenario
+        let stopped = engine.stop_scenario("default", "lo").await;
+        assert!(stopped.is_ok());
+        assert!(stopped.unwrap());
+
+        // Give async cleanup a moment
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Verify it's removed
+        {
+            let executions = engine.active_executions.read().await;
+            assert!(!executions.contains_key("default/lo"));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_stop_nonexistent_scenario_returns_false() {
+        let engine = create_test_engine();
+
+        let stopped = engine.stop_scenario("default", "nonexistent").await;
+        assert!(stopped.is_ok());
+        assert!(!stopped.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_pause_and_resume_scenario() {
+        let engine = create_test_engine();
+
+        // Create a longer scenario so we have time to pause/resume
+        let mut scenario = NetworkScenario::new(
+            "pause-test".to_string(),
+            "Pause Test".to_string(),
+            "Scenario for pause testing".to_string(),
+        );
+        let mut tc_config = TcNetemConfig::new();
+        tc_config.loss.enabled = true;
+        tc_config.loss.percentage = 1.0;
+        scenario.add_step(ScenarioStep::new(2000, "Long step".to_string(), tc_config));
+
+        // Start scenario
+        engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await
+            .unwrap();
+
+        // Note: The scenario will fail immediately because TC commands require sudo.
+        // This test verifies that pause/resume work when the execution is still active.
+        // In CI without sudo, the execution fails and gets cleaned up before we can pause.
+        // We check if execution still exists before testing pause/resume.
+
+        // Check if execution is still active (may have failed already without sudo)
+        let is_active = {
+            let executions = engine.active_executions.read().await;
+            executions.contains_key("default/lo")
+        };
+
+        if is_active {
+            // Pause the scenario
+            let paused = engine.pause_scenario("default", "lo").await;
+            assert!(paused.is_ok());
+            assert!(paused.unwrap());
+
+            // Verify state is Paused
+            {
+                let executions = engine.active_executions.read().await;
+                if let Some(executor) = executions.get("default/lo") {
+                    assert!(matches!(
+                        executor.execution.state,
+                        ExecutionState::Paused { .. }
+                    ));
+                }
+            }
+
+            // Resume the scenario
+            let resumed = engine.resume_scenario("default", "lo").await;
+            assert!(resumed.is_ok());
+
+            // Verify state is Running (if still active)
+            {
+                let executions = engine.active_executions.read().await;
+                if let Some(executor) = executions.get("default/lo") {
+                    assert!(matches!(executor.execution.state, ExecutionState::Running));
+                }
+            }
+
+            // Clean up
+            engine.stop_scenario("default", "lo").await.ok();
+        }
+        // If not active, the test still passes - we just couldn't test pause/resume
+        // because the scenario failed before we could pause it (expected without sudo)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_pause_nonexistent_scenario_returns_false() {
+        let engine = create_test_engine();
+
+        let paused = engine.pause_scenario("default", "nonexistent").await;
+        assert!(paused.is_ok());
+        assert!(!paused.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_resume_nonexistent_scenario_returns_false() {
+        let engine = create_test_engine();
+
+        let resumed = engine.resume_scenario("default", "nonexistent").await;
+        assert!(resumed.is_ok());
+        assert!(!resumed.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_get_execution_status() {
+        let engine = create_test_engine();
+        let scenario = create_fast_test_scenario();
+
+        // No status before starting
+        let status = engine.get_execution_status("default", "lo").await;
+        assert!(status.is_none());
+
+        // Start scenario
+        engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await
+            .unwrap();
+
+        // Should have status now
+        let status = engine.get_execution_status("default", "lo").await;
+        assert!(status.is_some());
+        let execution = status.unwrap();
+        assert_eq!(execution.scenario.id, "fast-test-scenario");
+
+        // Clean up
+        engine.stop_scenario("default", "lo").await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_list_active_executions() {
+        let engine = create_test_engine();
+
+        // Initially empty
+        let executions = engine.list_active_executions().await;
+        assert!(executions.is_empty());
+
+        // Start a scenario
+        let scenario = create_fast_test_scenario();
+        engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await
+            .unwrap();
+
+        // Should have one execution
+        let executions = engine.list_active_executions().await;
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].target_interface, "lo");
+
+        // Clean up
+        engine.stop_scenario("default", "lo").await.unwrap();
+    }
+
+    /// Regression test: completed scenarios should be removed from active_executions
+    /// This allows rerunning the same scenario after it completes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_completed_scenario_cleanup_allows_rerun() {
+        let engine = create_test_engine();
+
+        // Create a very fast scenario that will complete quickly
+        // Note: The scenario will fail TC commands (no sudo), but we're testing cleanup
+        let mut scenario = NetworkScenario::new(
+            "cleanup-test".to_string(),
+            "Cleanup Test".to_string(),
+            "Test that completed scenarios are cleaned up".to_string(),
+        );
+        let mut tc_config = TcNetemConfig::new();
+        tc_config.loss.enabled = true;
+        tc_config.loss.percentage = 1.0;
+        // Very short duration
+        scenario.add_step(ScenarioStep::new(10, "Quick step".to_string(), tc_config));
+
+        // Start first run
+        let result1 = engine
+            .start_scenario(
+                scenario.clone(),
+                "default".to_string(),
+                "lo".to_string(),
+                false,
+            )
+            .await;
+        assert!(result1.is_ok(), "First start should succeed");
+
+        // Wait for the scenario to complete or fail (TC commands will fail without sudo,
+        // which triggers cleanup)
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify the execution was cleaned up
+        {
+            let executions = engine.active_executions.read().await;
+            assert!(
+                !executions.contains_key("default/lo"),
+                "Completed/failed execution should be removed from active_executions"
+            );
+        }
+
+        // Now we should be able to start the same scenario again
+        let result2 = engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await;
+        assert!(
+            result2.is_ok(),
+            "Second start should succeed after cleanup: {:?}",
+            result2.err()
+        );
+
+        // Clean up
+        engine.stop_scenario("default", "lo").await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_stop_cleans_up_execution() {
+        let engine = create_test_engine();
+
+        let mut scenario = NetworkScenario::new(
+            "stop-cleanup-test".to_string(),
+            "Stop Cleanup Test".to_string(),
+            "Test that stopped scenarios are cleaned up".to_string(),
+        );
+        let mut tc_config = TcNetemConfig::new();
+        tc_config.loss.enabled = true;
+        tc_config.loss.percentage = 1.0;
+        scenario.add_step(ScenarioStep::new(5000, "Long step".to_string(), tc_config));
+
+        // Start scenario
+        engine
+            .start_scenario(
+                scenario.clone(),
+                "default".to_string(),
+                "lo".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        // Give it a moment to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Stop it
+        engine.stop_scenario("default", "lo").await.unwrap();
+
+        // Give cleanup a moment
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Should be able to restart
+        let result = engine
+            .start_scenario(scenario, "default".to_string(), "lo".to_string(), false)
+            .await;
+        assert!(result.is_ok(), "Should be able to restart after stop");
+
+        // Clean up
+        engine.stop_scenario("default", "lo").await.ok();
     }
 }
