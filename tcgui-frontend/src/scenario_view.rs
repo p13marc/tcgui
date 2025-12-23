@@ -965,7 +965,7 @@ fn render_execution_controls<'a>(
 ) -> Element<'a, TcGuiMessage> {
     match &execution.state {
         ExecutionState::Running => row![
-            button(Icon::Pause.svg_sized_colored(scaled(14, zoom), colors.text_primary))
+            button(Icon::Pause.svg_sized_colored(scaled(14, zoom), Color::WHITE))
                 .on_press(TcGuiMessage::PauseScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -976,7 +976,7 @@ fn render_execution_controls<'a>(
                     text_color: Color::WHITE,
                     ..button::Style::default()
                 }),
-            button(Icon::Square.svg_sized_colored(scaled(14, zoom), colors.error_red))
+            button(Icon::Square.svg_sized_colored(scaled(14, zoom), Color::WHITE))
                 .on_press(TcGuiMessage::StopScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -991,7 +991,7 @@ fn render_execution_controls<'a>(
         .spacing(scaled_spacing(4, zoom))
         .into(),
         ExecutionState::Paused { .. } => row![
-            button(Icon::Play.svg_sized_colored(scaled(14, zoom), colors.success_green))
+            button(Icon::Play.svg_sized_colored(scaled(14, zoom), Color::WHITE))
                 .on_press(TcGuiMessage::ResumeScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -1002,7 +1002,7 @@ fn render_execution_controls<'a>(
                     text_color: Color::WHITE,
                     ..button::Style::default()
                 }),
-            button(Icon::Square.svg_sized_colored(scaled(14, zoom), colors.error_red))
+            button(Icon::Square.svg_sized_colored(scaled(14, zoom), Color::WHITE))
                 .on_press(TcGuiMessage::StopScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
