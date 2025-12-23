@@ -1491,7 +1491,7 @@ fn render_interface_selection_dialog<'a>(
                     color: if is_selected_namespace {
                         colors.primary_blue
                     } else {
-                        Color::from_rgb(0.88, 0.92, 0.98)
+                        colors.text_secondary
                     },
                 },
                 ..button::Style::default()
@@ -1536,7 +1536,7 @@ fn render_interface_selection_dialog<'a>(
                         background: Some(iced::Background::Color(if is_selected_interface {
                             colors.success_green
                         } else {
-                            Color::from_rgb(0.95, 0.97, 1.0)
+                            colors.background_card
                         })),
                         text_color: if is_selected_interface {
                             Color::WHITE
@@ -1549,7 +1549,7 @@ fn render_interface_selection_dialog<'a>(
                             color: if is_selected_interface {
                                 colors.success_green
                             } else {
-                                Color::from_rgb(0.9, 0.93, 0.98)
+                                colors.text_secondary
                             },
                         },
                         ..button::Style::default()
@@ -1609,7 +1609,7 @@ fn render_interface_selection_dialog<'a>(
                     background: Some(iced::Background::Color(if loop_enabled {
                         colors.primary_blue
                     } else {
-                        Color::from_rgb(0.95, 0.97, 1.0)
+                        colors.background_card
                     })),
                     text_color: if loop_enabled {
                         Color::WHITE
@@ -1622,7 +1622,7 @@ fn render_interface_selection_dialog<'a>(
                         color: if loop_enabled {
                             colors.primary_blue
                         } else {
-                            Color::from_rgb(0.9, 0.93, 0.98)
+                            colors.text_secondary
                         },
                     },
                     ..button::Style::default()
@@ -1653,12 +1653,12 @@ fn render_interface_selection_dialog<'a>(
                 .padding([scaled_padding(8, zoom), scaled_padding(16, zoom)])
                 .on_press(TcGuiMessage::HideInterfaceSelectionDialog)
                 .style(move |_, _| button::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    background: Some(iced::Background::Color(colors.background_card)),
                     text_color: colors.text_primary,
                     border: iced::Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: Color::from_rgb(0.8, 0.8, 0.8),
+                        color: colors.text_secondary,
                     },
                     ..button::Style::default()
                 }),
@@ -1670,7 +1670,7 @@ fn render_interface_selection_dialog<'a>(
                         background: Some(iced::Background::Color(if can_confirm {
                             colors.success_green
                         } else {
-                            Color::from_rgb(0.8, 0.8, 0.8)
+                            colors.text_secondary
                         })),
                         text_color: Color::WHITE,
                         border: iced::Border {
@@ -1696,11 +1696,11 @@ fn render_interface_selection_dialog<'a>(
                 .padding(scaled_padding(24, zoom))
                 .max_width(600)
                 .style(move |_| container::Style {
-                    background: Some(iced::Background::Color(Color::WHITE)),
+                    background: Some(iced::Background::Color(colors.background_card)),
                     border: iced::Border {
                         radius: 12.0.into(),
                         width: 1.0,
-                        color: Color::from_rgb(0.8, 0.85, 0.95),
+                        color: colors.text_secondary,
                     },
                     shadow: iced::Shadow {
                         color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
@@ -1751,7 +1751,7 @@ fn render_interface_selection_dialog<'a>(
             )
             .padding(scaled_padding(24, zoom))
             .style(move |_| container::Style {
-                background: Some(iced::Background::Color(Color::WHITE)),
+                background: Some(iced::Background::Color(colors.background_card)),
                 border: iced::Border {
                     radius: 12.0.into(),
                     width: 1.0,
