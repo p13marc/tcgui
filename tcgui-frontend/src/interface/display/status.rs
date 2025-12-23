@@ -3,9 +3,9 @@
 //! This component shows the current status of interface operations with
 //! visual indicators for success, pending operations, and errors.
 
-use iced::widget::text;
 use iced::{Color, Element};
 
+use crate::icons::Icon;
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
 use crate::view::scaled;
@@ -74,13 +74,13 @@ impl StatusDisplayComponent {
     }
 
     /// Get the appropriate icon for the current status
-    fn status_icon(&self) -> &'static str {
+    fn status_icon(&self) -> Icon {
         match self.status {
-            StatusType::Ready => "🟢",
-            StatusType::Applying => "⚡",
-            StatusType::Success => "✅",
-            StatusType::Error => "❌",
-            StatusType::InterfaceChanging => "🔄",
+            StatusType::Ready => Icon::CircleCheck,
+            StatusType::Applying => Icon::Zap,
+            StatusType::Success => Icon::CheckCircle,
+            StatusType::Error => Icon::XCircle,
+            StatusType::InterfaceChanging => Icon::RefreshCw,
         }
     }
 
@@ -96,11 +96,10 @@ impl StatusDisplayComponent {
     }
 
     /// Render the status display
-    pub fn view<'a>(&'a self, theme: &'a Theme, zoom: f32) -> Element<'a, TcInterfaceMessage> {
+    pub fn view(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let color = self.status_color(theme);
-        text(self.status_icon())
-            .size(scaled(13, zoom))
-            .style(move |_| text::Style { color: Some(color) })
+        self.status_icon()
+            .svg_sized_colored(scaled(13, zoom), color)
             .into()
     }
 
@@ -113,6 +112,7 @@ impl StatusDisplayComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::icons::Icon;
 
     #[test]
     fn test_status_display_creation() {
@@ -142,18 +142,18 @@ mod tests {
     fn test_status_icons() {
         let mut component = StatusDisplayComponent::new();
 
-        assert_eq!(component.status_icon(), "🟢"); // Ready
+        assert_eq!(component.status_icon(), Icon::CircleCheck); // Ready
 
         component.status = StatusType::Applying;
-        assert_eq!(component.status_icon(), "⚡"); // Applying
+        assert_eq!(component.status_icon(), Icon::Zap); // Applying
 
         component.status = StatusType::Success;
-        assert_eq!(component.status_icon(), "✅"); // Success
+        assert_eq!(component.status_icon(), Icon::CheckCircle); // Success
 
         component.status = StatusType::Error;
-        assert_eq!(component.status_icon(), "❌"); // Error
+        assert_eq!(component.status_icon(), Icon::XCircle); // Error
 
         component.status = StatusType::InterfaceChanging;
-        assert_eq!(component.status_icon(), "🔄"); // Interface changing
+        assert_eq!(component.status_icon(), Icon::RefreshCw); // Interface changing
     }
 }
