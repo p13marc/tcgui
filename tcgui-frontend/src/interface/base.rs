@@ -12,6 +12,7 @@ use tcgui_shared::NetworkBandwidthStats;
 use super::state::InterfaceState;
 use crate::bandwidth_chart::bandwidth_chart_view;
 use crate::bandwidth_history::BandwidthHistory;
+use crate::icons::Icon;
 use crate::messages::TcInterfaceMessage;
 use crate::theme::Theme;
 use crate::view::{scaled, scaled_spacing};
@@ -346,19 +347,23 @@ impl TcInterface {
         // Interface name and icon
         let interface_icon = if self.state.is_up() {
             if self.state.has_tc_qdisc() {
-                "🔧"
+                Icon::Wrench
             } else {
-                "📡"
+                Icon::Radio
             }
         } else {
-            "⚫"
+            Icon::Circle
         };
 
-        let interface_name = text(format!("{} {}", interface_icon, self.state.name))
-            .size(scaled(14, zoom))
-            .style(move |_| text::Style {
-                color: Some(text_primary),
-            });
+        let interface_name = row![
+            interface_icon.svg_sized_colored(scaled(14, zoom), text_primary),
+            text(format!(" {}", self.state.name))
+                .size(scaled(14, zoom))
+                .style(move |_| text::Style {
+                    color: Some(text_primary),
+                })
+        ]
+        .align_y(iced::Alignment::Center);
 
         // Core checkboxes - use row with styled text for theme support
         let interface_checkbox = row![
@@ -505,11 +510,11 @@ impl TcInterface {
 
         // Chart toggle button placed before bandwidth to avoid shifting
         let chart_icon = if self.state.chart_expanded {
-            "▼"
+            Icon::ChevronDown
         } else {
-            "▶"
+            Icon::ChevronRight
         };
-        let chart_button = button(text(chart_icon).size(scaled(10, zoom)))
+        let chart_button = button(chart_icon.svg_sized(scaled(10, zoom)))
             .on_press(TcInterfaceMessage::ToggleChart)
             .padding(scaled_spacing(2, zoom));
 

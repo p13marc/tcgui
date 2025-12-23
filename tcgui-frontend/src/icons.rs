@@ -93,6 +93,14 @@ pub enum Icon {
     Tag,
     /// Arrow right - sequential flow
     ArrowRight,
+    /// Chevron down - dropdown indicator
+    ChevronDown,
+    /// Chevron right - collapsed indicator
+    ChevronRight,
+    /// Wrench - interface with TC qdisc
+    Wrench,
+    /// Circle with dot - interface active
+    CircleDot,
 }
 
 impl Icon {
@@ -146,6 +154,10 @@ impl Icon {
             Icon::Link => include_bytes!("../icons/link.svg"),
             Icon::Tag => include_bytes!("../icons/tag.svg"),
             Icon::ArrowRight => include_bytes!("../icons/arrow-right.svg"),
+            Icon::ChevronDown => include_bytes!("../icons/chevron-down.svg"),
+            Icon::ChevronRight => include_bytes!("../icons/chevron-right.svg"),
+            Icon::Wrench => include_bytes!("../icons/wrench.svg"),
+            Icon::CircleDot => include_bytes!("../icons/circle-dot.svg"),
         }
     }
 
