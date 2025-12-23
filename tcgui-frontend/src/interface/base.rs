@@ -379,7 +379,7 @@ impl TcInterface {
         // Preset selector
         let preset_selector =
             self.preset_manager
-                .view(preset_list, &self.state.current_preset_id, zoom);
+                .view(preset_list, &self.state.current_preset_id, theme, zoom);
 
         // Feature toggles (compact checkboxes)
         let feature_toggles = self.render_feature_toggles(theme, zoom);
@@ -514,7 +514,8 @@ impl TcInterface {
         } else {
             Icon::ChevronRight
         };
-        let chart_button = button(chart_icon.svg_sized(scaled(10, zoom)))
+        let icon_color = theme.colors.text_primary;
+        let chart_button = button(chart_icon.svg_sized_colored(scaled(10, zoom), icon_color))
             .on_press(TcInterfaceMessage::ToggleChart)
             .padding(scaled_spacing(2, zoom));
 
