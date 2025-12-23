@@ -537,44 +537,44 @@ impl TcInterface {
     /// Render expandable feature rows with parameter sliders
     fn render_expandable_features<'a>(
         &'a self,
-        _theme: &'a Theme,
+        theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         let mut feature_rows = Vec::new();
 
         // Loss feature controls
         if self.state.features.loss.enabled {
-            let loss_controls = self.render_loss_controls(zoom);
+            let loss_controls = self.render_loss_controls(theme, zoom);
             feature_rows.push(loss_controls);
         }
 
         // Delay feature controls
         if self.state.features.delay.enabled {
-            let delay_controls = self.render_delay_controls(zoom);
+            let delay_controls = self.render_delay_controls(theme, zoom);
             feature_rows.push(delay_controls);
         }
 
         // Duplicate feature controls
         if self.state.features.duplicate.enabled {
-            let duplicate_controls = self.render_duplicate_controls(zoom);
+            let duplicate_controls = self.render_duplicate_controls(theme, zoom);
             feature_rows.push(duplicate_controls);
         }
 
         // Reorder feature controls
         if self.state.features.reorder.enabled {
-            let reorder_controls = self.render_reorder_controls(zoom);
+            let reorder_controls = self.render_reorder_controls(theme, zoom);
             feature_rows.push(reorder_controls);
         }
 
         // Corrupt feature controls
         if self.state.features.corrupt.enabled {
-            let corrupt_controls = self.render_corrupt_controls(zoom);
+            let corrupt_controls = self.render_corrupt_controls(theme, zoom);
             feature_rows.push(corrupt_controls);
         }
 
         // Rate limit feature controls
         if self.state.features.rate_limit.enabled {
-            let rate_limit_controls = self.render_rate_limit_controls(zoom);
+            let rate_limit_controls = self.render_rate_limit_controls(theme, zoom);
             feature_rows.push(rate_limit_controls);
         }
 
@@ -585,11 +585,17 @@ impl TcInterface {
     }
 
     /// Render loss feature controls with sliders
-    fn render_loss_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    fn render_loss_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let loss_config = &self.state.features.loss.config;
+        let text_color = theme.colors.text_primary;
 
         row![
-            text("Loss:").size(scaled(12, zoom)).width(50.0 * zoom),
+            text("Loss:")
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 loss_config.percentage,
@@ -599,8 +605,16 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", loss_config.percentage))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
-            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Corr:")
+                .size(scaled(12, zoom))
+                .width(40.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 loss_config.correlation,
@@ -610,7 +624,10 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", loss_config.correlation))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -618,11 +635,21 @@ impl TcInterface {
     }
 
     /// Render duplicate feature controls with sliders
-    fn render_duplicate_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    fn render_duplicate_controls(
+        &self,
+        theme: &Theme,
+        zoom: f32,
+    ) -> Element<'_, TcInterfaceMessage> {
         let duplicate_config = &self.state.features.duplicate.config;
+        let text_color = theme.colors.text_primary;
 
         row![
-            text("Duplicate:").size(scaled(12, zoom)).width(80.0 * zoom),
+            text("Duplicate:")
+                .size(scaled(12, zoom))
+                .width(80.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 duplicate_config.percentage,
@@ -632,8 +659,16 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", duplicate_config.percentage))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
-            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Corr:")
+                .size(scaled(12, zoom))
+                .width(40.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 duplicate_config.correlation,
@@ -643,7 +678,10 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", duplicate_config.correlation))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -651,11 +689,17 @@ impl TcInterface {
     }
 
     /// Render reorder feature controls with sliders
-    fn render_reorder_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    fn render_reorder_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let reorder_config = &self.state.features.reorder.config;
+        let text_color = theme.colors.text_primary;
 
         row![
-            text("Reorder:").size(scaled(12, zoom)).width(60.0 * zoom),
+            text("Reorder:")
+                .size(scaled(12, zoom))
+                .width(60.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 reorder_config.percentage,
@@ -665,8 +709,16 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", reorder_config.percentage))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
-            text("Gap:").size(scaled(12, zoom)).width(35.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Gap:")
+                .size(scaled(12, zoom))
+                .width(35.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(1.0..=10.0, reorder_config.gap as f32, |v| {
                 TcInterfaceMessage::ReorderGapChanged(v as u32)
             })
@@ -674,8 +726,16 @@ impl TcInterface {
             .step(1.0),
             text(format!("{}", reorder_config.gap))
                 .size(scaled(12, zoom))
-                .width(35.0 * zoom),
-            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
+                .width(35.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Corr:")
+                .size(scaled(12, zoom))
+                .width(40.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 reorder_config.correlation,
@@ -685,7 +745,10 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", reorder_config.correlation))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -693,11 +756,17 @@ impl TcInterface {
     }
 
     /// Render corrupt feature controls with sliders
-    fn render_corrupt_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    fn render_corrupt_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let corrupt_config = &self.state.features.corrupt.config;
+        let text_color = theme.colors.text_primary;
 
         row![
-            text("Corrupt:").size(scaled(12, zoom)).width(70.0 * zoom),
+            text("Corrupt:")
+                .size(scaled(12, zoom))
+                .width(70.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 corrupt_config.percentage,
@@ -707,8 +776,16 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", corrupt_config.percentage))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
-            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Corr:")
+                .size(scaled(12, zoom))
+                .width(40.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 corrupt_config.correlation,
@@ -718,7 +795,10 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", corrupt_config.correlation))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -726,13 +806,21 @@ impl TcInterface {
     }
 
     /// Render rate limit feature controls with sliders
-    fn render_rate_limit_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    fn render_rate_limit_controls(
+        &self,
+        theme: &Theme,
+        zoom: f32,
+    ) -> Element<'_, TcInterfaceMessage> {
         let rate_config = &self.state.features.rate_limit.config;
+        let text_color = theme.colors.text_primary;
 
         row![
             text("Rate Limit:")
                 .size(scaled(12, zoom))
-                .width(80.0 * zoom),
+                .width(80.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(1.0..=1000000.0, rate_config.rate_kbps as f32, |v| {
                 TcInterfaceMessage::RateLimitChanged(v as u32)
             })
@@ -740,7 +828,10 @@ impl TcInterface {
             .step(1.0),
             text(format!("{} kbps", rate_config.rate_kbps))
                 .size(scaled(12, zoom))
-                .width(80.0 * zoom),
+                .width(80.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -748,11 +839,17 @@ impl TcInterface {
     }
 
     /// Render delay feature controls with sliders
-    fn render_delay_controls(&self, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    fn render_delay_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let delay_config = &self.state.features.delay.config;
+        let text_color = theme.colors.text_primary;
 
         row![
-            text("Delay:").size(scaled(12, zoom)).width(50.0 * zoom),
+            text("Delay:")
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=5000.0,
                 delay_config.base_ms,
@@ -762,8 +859,16 @@ impl TcInterface {
             .step(1.0),
             text(format!("{:.0}ms", delay_config.base_ms))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
-            text("Jitter:").size(scaled(12, zoom)).width(50.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Jitter:")
+                .size(scaled(12, zoom))
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=1000.0,
                 delay_config.jitter_ms,
@@ -773,8 +878,16 @@ impl TcInterface {
             .step(1.0),
             text(format!("{:.0}ms", delay_config.jitter_ms))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
-            text("Corr:").size(scaled(12, zoom)).width(40.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
+            text("Corr:")
+                .size(scaled(12, zoom))
+                .width(40.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
             slider(
                 0.0..=100.0,
                 delay_config.correlation,
@@ -784,7 +897,10 @@ impl TcInterface {
             .step(0.1),
             text(format!("{:.1}%", delay_config.correlation))
                 .size(scaled(12, zoom))
-                .width(50.0 * zoom),
+                .width(50.0 * zoom)
+                .style(move |_| text::Style {
+                    color: Some(text_color)
+                }),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
