@@ -9,6 +9,7 @@ use iced::{Color, Element, Length};
 use tcgui_shared::scenario::{ExecutionState, NetworkScenario, ScenarioExecution};
 
 use crate::backend_manager::BackendManager;
+use crate::icons::Icon;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::{ScenarioManager, ScenarioSortOption};
 use crate::theme::Theme;
@@ -106,11 +107,15 @@ pub fn render_scenario_view<'a>(
     content = content.push(
         container(
             column![
-                text("📊 Network Scenarios")
-                    .size(scaled(24, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_primary)
-                    }),
+                row![
+                    Icon::BarChart3.svg_sized_colored(scaled(24, zoom), colors.text_primary),
+                    text(" Network Scenarios")
+                        .size(scaled(24, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(colors.text_primary)
+                        })
+                ]
+                .align_y(iced::Alignment::Center),
                 text("Manage and execute network condition scenarios")
                     .size(scaled(14, zoom))
                     .style(move |_| text::Style {
@@ -158,11 +163,15 @@ pub fn render_scenario_view<'a>(
 fn render_no_backends<'a>(colors: ScenarioColorPalette, zoom: f32) -> Element<'a, TcGuiMessage> {
     container(
         column![
-            text("⚠️ No Backends Connected")
-                .size(scaled(20, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.warning_orange)
-                }),
+            row![
+                Icon::AlertTriangle.svg_sized_colored(scaled(20, zoom), colors.warning_orange),
+                text(" No Backends Connected")
+                    .size(scaled(20, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.warning_orange)
+                    })
+            ]
+            .align_y(iced::Alignment::Center),
             text("Connect to a backend to manage scenarios")
                 .size(scaled(14, zoom))
                 .style(move |_| text::Style {
@@ -200,18 +209,32 @@ fn render_backend_scenarios<'a>(
 
     // Backend header with refresh button
     let refresh_button = if is_loading {
-        button(text("⏳ Loading...").size(scaled(12, zoom))).style(button::secondary)
+        button(
+            row![
+                Icon::Loader.svg_sized_colored(scaled(12, zoom), colors.text_secondary),
+                text(" Loading...").size(scaled(12, zoom))
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .style(button::secondary)
     } else {
-        button(text("🔄 Refresh").size(scaled(12, zoom)))
-            .on_press(TcGuiMessage::ListScenarios {
-                backend_name: backend_name.to_string(),
-            })
-            .style(button::secondary)
+        button(
+            row![
+                Icon::RefreshCw.svg_sized_colored(scaled(12, zoom), colors.text_primary),
+                text(" Refresh").size(scaled(12, zoom))
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(TcGuiMessage::ListScenarios {
+            backend_name: backend_name.to_string(),
+        })
+        .style(button::secondary)
     };
 
     backend_content = backend_content.push(
         row![
-            text(format!("🖥️ Backend: {}", backend_name))
+            Icon::Monitor.svg_sized_colored(scaled(18, zoom), colors.text_primary),
+            text(format!(" Backend: {}", backend_name))
                 .size(scaled(18, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary)
@@ -280,12 +303,12 @@ fn render_backend_scenarios<'a>(
         // Show count info if filtering
         let header_text = if !scenario_manager.get_search_filter().is_empty() {
             format!(
-                "📋 Scenarios ({} of {})",
+                "Scenarios ({} of {})",
                 available_scenarios.len(),
                 raw_scenario_count
             )
         } else {
-            format!("📋 Scenarios ({})", available_scenarios.len())
+            format!("Scenarios ({})", available_scenarios.len())
         };
 
         backend_content = backend_content.push(
@@ -340,7 +363,7 @@ fn render_backend_scenarios<'a>(
             backend_content = backend_content.push(
                 column![
                     text(format!(
-                        "⚠️ Failed to load {} scenario files",
+                        "Failed to load {} scenario files",
                         load_errors.len()
                     ))
                     .size(scaled(14, zoom))
@@ -359,11 +382,15 @@ fn render_backend_scenarios<'a>(
     if !active_executions.is_empty() {
         backend_content = backend_content.push(
             column![
-                text("🎮 Active Executions")
-                    .size(scaled(16, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.success_green)
-                    }),
+                row![
+                    Icon::Gamepad2.svg_sized_colored(scaled(16, zoom), colors.success_green),
+                    text(" Active Executions")
+                        .size(scaled(16, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(colors.success_green)
+                        })
+                ]
+                .align_y(iced::Alignment::Center),
                 render_active_executions(
                     &active_executions,
                     backend_name,
@@ -452,27 +479,43 @@ fn render_scenario_card<'a>(
     container(
         column![
             row![
-                text(format!("📋 {}", scenario.name))
-                    .size(scaled(16, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_primary)
-                    }),
+                row![
+                    Icon::Clipboard.svg_sized_colored(scaled(14, zoom), colors.text_primary),
+                    text(format!(" {}", scenario.name))
+                        .size(scaled(16, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(colors.text_primary)
+                        })
+                ]
+                .align_y(iced::Alignment::Center),
                 space().width(Length::Fill),
-                button(text("▶️ Execute").size(scaled(12, zoom)))
-                    .on_press(TcGuiMessage::ShowInterfaceSelectionDialog {
-                        backend_name: backend_name.to_string(),
-                        scenario_id: scenario.id.clone(),
-                    })
-                    .style(move |_, _| button::Style {
-                        background: Some(iced::Background::Color(colors.success_green)),
-                        text_color: Color::WHITE,
-                        ..button::Style::default()
-                    }),
-                button(text("👁 Details").size(scaled(12, zoom)))
-                    .on_press(TcGuiMessage::ShowScenarioDetails {
-                        scenario: scenario.clone()
-                    })
-                    .style(button::secondary),
+                button(
+                    row![
+                        Icon::Play.svg_sized_colored(scaled(12, zoom), Color::WHITE),
+                        text(" Execute").size(scaled(12, zoom))
+                    ]
+                    .align_y(iced::Alignment::Center),
+                )
+                .on_press(TcGuiMessage::ShowInterfaceSelectionDialog {
+                    backend_name: backend_name.to_string(),
+                    scenario_id: scenario.id.clone(),
+                })
+                .style(move |_, _| button::Style {
+                    background: Some(iced::Background::Color(colors.success_green)),
+                    text_color: Color::WHITE,
+                    ..button::Style::default()
+                }),
+                button(
+                    row![
+                        Icon::Eye.svg_sized_colored(scaled(12, zoom), colors.text_primary),
+                        text(" Details").size(scaled(12, zoom))
+                    ]
+                    .align_y(iced::Alignment::Center),
+                )
+                .on_press(TcGuiMessage::ShowScenarioDetails {
+                    scenario: scenario.clone()
+                })
+                .style(button::secondary),
             ]
             .spacing(scaled_spacing(8, zoom))
             .align_y(iced::Alignment::Center),
@@ -572,11 +615,11 @@ fn render_execution_card<'a>(
     zoom: f32,
 ) -> Element<'a, TcGuiMessage> {
     let (state_icon, state_color) = match &execution.state {
-        ExecutionState::Running => ("▶️", colors.success_green),
-        ExecutionState::Paused { .. } => ("⏸️", colors.warning_orange),
-        ExecutionState::Stopped => ("⏹️", colors.error_red),
-        ExecutionState::Completed => ("✅", colors.primary_blue),
-        ExecutionState::Failed { .. } => ("❌", colors.error_red),
+        ExecutionState::Running => (Icon::Play, colors.success_green),
+        ExecutionState::Paused { .. } => (Icon::Pause, colors.warning_orange),
+        ExecutionState::Stopped => (Icon::Square, colors.error_red),
+        ExecutionState::Completed => (Icon::CheckCircle, colors.primary_blue),
+        ExecutionState::Failed { .. } => (Icon::XCircle, colors.error_red),
     };
 
     let progress_text = format!(
@@ -627,18 +670,18 @@ fn render_execution_card<'a>(
     // Build step timeline
     let mut timeline_content = column![].spacing(scaled_spacing(2, zoom));
     for (i, step) in execution.scenario.steps.iter().enumerate() {
-        let (icon, step_color) = if i < execution.current_step {
-            ("✓", colors.success_green)
+        let (step_icon, step_color) = if i < execution.current_step {
+            (Icon::Check, colors.success_green)
         } else if i == execution.current_step {
             match &execution.state {
-                ExecutionState::Running => ("▶", colors.primary_blue),
-                ExecutionState::Paused { .. } => ("⏸", colors.warning_orange),
-                ExecutionState::Stopped => ("⏹", colors.error_red),
-                ExecutionState::Completed => ("✓", colors.success_green),
-                ExecutionState::Failed { .. } => ("✗", colors.error_red),
+                ExecutionState::Running => (Icon::Play, colors.primary_blue),
+                ExecutionState::Paused { .. } => (Icon::Pause, colors.warning_orange),
+                ExecutionState::Stopped => (Icon::Square, colors.error_red),
+                ExecutionState::Completed => (Icon::Check, colors.success_green),
+                ExecutionState::Failed { .. } => (Icon::X, colors.error_red),
             }
         } else {
-            ("○", colors.text_secondary)
+            (Icon::Circle, colors.text_secondary)
         };
 
         let is_current = i == execution.current_step;
@@ -651,14 +694,8 @@ fn render_execution_card<'a>(
         timeline_content = timeline_content.push(
             container(
                 row![
-                    container(
-                        text(icon)
-                            .size(scaled(11, zoom))
-                            .style(move |_| text::Style {
-                                color: Some(step_color)
-                            })
-                    )
-                    .width(scaled(16, zoom)),
+                    container(step_icon.svg_sized_colored(scaled(11, zoom), step_color))
+                        .width(scaled(16, zoom)),
                     column![
                         text(format!("Step {}: {}", i + 1, step.description))
                             .size(scaled(11, zoom))
@@ -698,21 +735,19 @@ fn render_execution_card<'a>(
 
     // Header row with name, loop indicator, and controls
     let loop_info = if execution.loop_execution {
-        format!(" 🔁 Loop #{}", execution.loop_iteration + 1)
+        format!(" Loop #{}", execution.loop_iteration + 1)
     } else {
         String::new()
     };
 
     card_content = card_content.push(
         row![
-            text(format!(
-                "{} {}{}",
-                state_icon, execution.scenario.name, loop_info
-            ))
-            .size(scaled(16, zoom))
-            .style(move |_| text::Style {
-                color: Some(colors.text_primary)
-            }),
+            state_icon.svg_sized_colored(scaled(16, zoom), state_color),
+            text(format!(" {}{}", execution.scenario.name, loop_info))
+                .size(scaled(16, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.text_primary)
+                }),
             space().width(Length::Fill),
             render_execution_controls(execution, backend_name, colors.clone(), zoom)
         ]
@@ -857,12 +892,16 @@ fn render_execution_card<'a>(
         }));
 
     // Collapsible step timeline header
-    let toggle_icon = if is_timeline_collapsed { "▶" } else { "▼" };
+    let toggle_icon = if is_timeline_collapsed {
+        Icon::Play
+    } else {
+        Icon::ArrowUp
+    };
     let step_count = execution.scenario.steps.len();
     let timeline_header_text = if is_timeline_collapsed {
-        format!("{} Steps Timeline ({} steps)", toggle_icon, step_count)
+        format!(" Steps Timeline ({} steps)", step_count)
     } else {
-        format!("{} Steps Timeline", toggle_icon)
+        " Steps Timeline".to_string()
     };
 
     let backend_name_owned = backend_name.to_string();
@@ -871,11 +910,15 @@ fn render_execution_card<'a>(
 
     card_content = card_content.push(
         button(
-            text(timeline_header_text)
-                .size(scaled(12, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.text_secondary),
-                }),
+            row![
+                toggle_icon.svg_sized_colored(scaled(12, zoom), colors.text_secondary),
+                text(timeline_header_text)
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary),
+                    })
+            ]
+            .align_y(iced::Alignment::Center),
         )
         .padding([scaled_padding(4, zoom), 0.0])
         .style(move |_, _| button::Style {
@@ -918,7 +961,7 @@ fn render_execution_controls<'a>(
 ) -> Element<'a, TcGuiMessage> {
     match &execution.state {
         ExecutionState::Running => row![
-            button(text("⏸️").size(scaled(14, zoom)))
+            button(Icon::Pause.svg_sized_colored(scaled(14, zoom), colors.text_primary))
                 .on_press(TcGuiMessage::PauseScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -929,7 +972,7 @@ fn render_execution_controls<'a>(
                     text_color: Color::WHITE,
                     ..button::Style::default()
                 }),
-            button(text("⏹️").size(scaled(14, zoom)))
+            button(Icon::Square.svg_sized_colored(scaled(14, zoom), colors.error_red))
                 .on_press(TcGuiMessage::StopScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -944,7 +987,7 @@ fn render_execution_controls<'a>(
         .spacing(scaled_spacing(4, zoom))
         .into(),
         ExecutionState::Paused { .. } => row![
-            button(text("▶️").size(scaled(14, zoom)))
+            button(Icon::Play.svg_sized_colored(scaled(14, zoom), colors.success_green))
                 .on_press(TcGuiMessage::ResumeScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -955,7 +998,7 @@ fn render_execution_controls<'a>(
                     text_color: Color::WHITE,
                     ..button::Style::default()
                 }),
-            button(text("⏹️").size(scaled(14, zoom)))
+            button(Icon::Square.svg_sized_colored(scaled(14, zoom), colors.error_red))
                 .on_press(TcGuiMessage::StopScenarioExecution {
                     backend_name: backend_name.to_string(),
                     namespace: execution.target_namespace.clone(),
@@ -991,15 +1034,25 @@ fn render_scenario_details<'a>(
     // Header with close button
     details_content = details_content.push(
         row![
-            text(format!("📋 Scenario Details: {}", scenario.name))
-                .size(scaled(20, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.text_primary)
-                }),
+            row![
+                Icon::Clipboard.svg_sized_colored(scaled(18, zoom), colors.text_primary),
+                text(format!(" Scenario Details: {}", scenario.name))
+                    .size(scaled(20, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_primary)
+                    })
+            ]
+            .align_y(iced::Alignment::Center),
             space().width(Length::Fill),
-            button(text("✕ Close").size(scaled(12, zoom)))
-                .on_press(TcGuiMessage::HideScenarioDetails)
-                .style(button::secondary)
+            button(
+                row![
+                    Icon::X.svg_sized_colored(scaled(12, zoom), colors.text_primary),
+                    text(" Close").size(scaled(12, zoom))
+                ]
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(TcGuiMessage::HideScenarioDetails)
+            .style(button::secondary)
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center),
