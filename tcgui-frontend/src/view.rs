@@ -5,6 +5,7 @@
 
 use crate::backend_manager::{BackendGroup, BackendManager, NamespaceGroup};
 use crate::bandwidth_history::BandwidthHistoryManager;
+use crate::icons::Icon;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::ScenarioManager;
 use crate::scenario_view;
@@ -137,16 +138,21 @@ fn render_tabs<'a>(
 ) -> Element<'a, TcGuiMessage> {
     let current_tab = ui_state.current_tab();
 
+    let interfaces_tab_color = if current_tab == crate::ui_state::AppTab::Interfaces {
+        Color::WHITE
+    } else {
+        colors.text_primary
+    };
     let interfaces_button = button(
-        text("🌐 Interfaces")
-            .size(scaled(14, zoom))
-            .style(move |_| text::Style {
-                color: Some(if current_tab == crate::ui_state::AppTab::Interfaces {
-                    Color::WHITE
-                } else {
-                    colors.text_primary
-                }),
-            }),
+        row![
+            Icon::Globe.svg_sized_colored(scaled(14, zoom), interfaces_tab_color),
+            text(" Interfaces")
+                .size(scaled(14, zoom))
+                .style(move |_| text::Style {
+                    color: Some(interfaces_tab_color),
+                })
+        ]
+        .align_y(iced::Alignment::Center),
     )
     .on_press(TcGuiMessage::SwitchTab(crate::ui_state::AppTab::Interfaces))
     .style(move |_, _| button::Style {
@@ -170,39 +176,43 @@ fn render_tabs<'a>(
         ..button::Style::default()
     });
 
-    let scenarios_button =
-        button(
-            text("📊 Scenarios")
+    let scenarios_tab_color = if current_tab == crate::ui_state::AppTab::Scenarios {
+        Color::WHITE
+    } else {
+        colors.text_primary
+    };
+    let scenarios_button = button(
+        row![
+            Icon::BarChart3.svg_sized_colored(scaled(14, zoom), scenarios_tab_color),
+            text(" Scenarios")
                 .size(scaled(14, zoom))
                 .style(move |_| text::Style {
-                    color: Some(if current_tab == crate::ui_state::AppTab::Scenarios {
-                        Color::WHITE
-                    } else {
-                        colors.text_primary
-                    }),
-                }),
-        )
-        .on_press(TcGuiMessage::SwitchTab(crate::ui_state::AppTab::Scenarios))
-        .style(move |_, _| button::Style {
-            background: Some(iced::Background::Color(
-                if current_tab == crate::ui_state::AppTab::Scenarios {
-                    colors.primary_blue
-                } else {
-                    colors.background_card
-                },
-            )),
-            text_color: if current_tab == crate::ui_state::AppTab::Scenarios {
-                Color::WHITE
+                    color: Some(scenarios_tab_color),
+                })
+        ]
+        .align_y(iced::Alignment::Center),
+    )
+    .on_press(TcGuiMessage::SwitchTab(crate::ui_state::AppTab::Scenarios))
+    .style(move |_, _| button::Style {
+        background: Some(iced::Background::Color(
+            if current_tab == crate::ui_state::AppTab::Scenarios {
+                colors.primary_blue
             } else {
-                colors.text_primary
+                colors.background_card
             },
-            border: iced::Border {
-                radius: 8.0.into(),
-                width: 1.0,
-                color: Color::from_rgb(0.88, 0.92, 0.98),
-            },
-            ..button::Style::default()
-        });
+        )),
+        text_color: if current_tab == crate::ui_state::AppTab::Scenarios {
+            Color::WHITE
+        } else {
+            colors.text_primary
+        },
+        border: iced::Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: Color::from_rgb(0.88, 0.92, 0.98),
+        },
+        ..button::Style::default()
+    });
 
     container(row![interfaces_button, scenarios_button].spacing(0))
         .padding([scaled_padding(8, zoom), scaled_padding(12, zoom)])
@@ -226,10 +236,10 @@ fn render_header<'a>(
 
     // Theme toggle button
     let theme_icon = match theme.mode {
-        ThemeMode::Light => "🌙", // Moon to switch to dark
-        ThemeMode::Dark => "☀️",  // Sun to switch to light
+        ThemeMode::Light => Icon::Moon, // Moon to switch to dark
+        ThemeMode::Dark => Icon::Sun,   // Sun to switch to light
     };
-    let theme_button = button(text(theme_icon).size(scaled(14, zoom)))
+    let theme_button = button(theme_icon.svg_sized_colored(scaled(14, zoom), colors.text_primary))
         .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
         .on_press(TcGuiMessage::ToggleTheme)
         .style(move |_, _| button::Style {
@@ -244,11 +254,15 @@ fn render_header<'a>(
         });
 
     // Zoom indicator (display only - use Ctrl+Scroll or Ctrl+/- to zoom)
-    let zoom_indicator = text(format!("🔍 {}", ui_state.zoom_percentage()))
-        .size(scaled(12, zoom))
-        .style(move |_| text::Style {
-            color: Some(colors.text_secondary),
-        });
+    let zoom_indicator = row![
+        Icon::Search.svg_sized_colored(scaled(12, zoom), colors.text_secondary),
+        text(format!(" {}", ui_state.zoom_percentage()))
+            .size(scaled(12, zoom))
+            .style(move |_| text::Style {
+                color: Some(colors.text_secondary),
+            })
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Namespace type filter checkboxes
     let filter = ui_state.namespace_filter();
@@ -396,23 +410,27 @@ fn render_status_line<'a>(
 
     if backend_names.is_empty() {
         backend_statuses.push(
-            text("⚠️ No backends")
-                .size(scaled(14, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.warning_orange),
-                })
-                .into(),
+            row![
+                Icon::AlertTriangle.svg_sized_colored(scaled(14, zoom), colors.warning_orange),
+                text(" No backends")
+                    .size(scaled(14, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.warning_orange),
+                    })
+            ]
+            .align_y(iced::Alignment::Center)
+            .into(),
         );
     } else {
         for (i, backend_name) in backend_names.iter().enumerate() {
             if let Some(backend_group) = backend_manager.backends().get(backend_name) {
-                let (indicator, color) = if backend_group.is_connected {
-                    ("🔗", colors.success_green)
+                let (icon, color) = if backend_group.is_connected {
+                    (Icon::Link, colors.success_green)
                 } else {
-                    ("⚠️", colors.error_red)
+                    (Icon::AlertTriangle, colors.error_red)
                 };
 
-                backend_statuses.push(text(indicator).size(scaled(14, zoom)).into());
+                backend_statuses.push(icon.svg_sized_colored(scaled(14, zoom), color).into());
                 backend_statuses.push(
                     text(backend_name.clone())
                         .size(scaled(14, zoom))
@@ -517,11 +535,15 @@ fn render_active_interfaces(
     } else {
         // Show placeholder when no active interfaces to maintain consistent layout
         row![container(
-            text("📊 No active traffic")
-                .size(scaled(11, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
-                })
+            row![
+                Icon::BarChart3.svg_sized_colored(scaled(11, zoom), colors.text_secondary),
+                text(" No active traffic")
+                    .size(scaled(11, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary)
+                    })
+            ]
+            .align_y(iced::Alignment::Center)
         )
         .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
         .style(move |_| container::Style {
@@ -561,8 +583,8 @@ fn render_active_interface_item(
 
     container(
         row![
-            text("🚀").size(scaled(11, zoom)),
-            text(format!("{}: {}", display_ns, iface))
+            Icon::Activity.svg_sized_colored(scaled(11, zoom), colors.primary_blue),
+            text(format!(" {}: {}", display_ns, iface))
                 .size(scaled(11, zoom))
                 .style(move |_| text::Style {
                     color: Some(colors.text_primary)
@@ -601,7 +623,7 @@ fn render_empty_state(
     if any_backend_connected {
         container(
             column![
-                text("📡").size(scaled(48, zoom)),
+                Icon::Radio.svg_sized_colored(scaled(48, zoom), colors.text_secondary),
                 text("No Network Interfaces")
                     .size(scaled(20, zoom))
                     .style(move |_| text::Style {
@@ -632,7 +654,7 @@ fn render_empty_state(
         container(
             container(
                 column![
-                    text("🔄").size(scaled(48, zoom)),
+                    Icon::RefreshCw.svg_sized_colored(scaled(48, zoom), colors.warning_orange),
                     text("Connecting to Backend")
                         .size(scaled(20, zoom))
                         .style(move |_| text::Style {
@@ -916,19 +938,15 @@ fn render_namespace_header<'a>(
 ) -> Element<'a, TcGuiMessage> {
     // Determine icon and display info based on namespace type
     let (namespace_icon, display_name, subtitle) = match namespace_type {
-        NamespaceType::Default => ("🏠", namespace_name.to_string(), None),
-        NamespaceType::Traditional => ("📁", namespace_name.to_string(), None),
+        NamespaceType::Default => (Icon::Home, namespace_name.to_string(), None),
+        NamespaceType::Traditional => (Icon::Folder, namespace_name.to_string(), None),
         NamespaceType::Container {
             runtime,
             container_id,
             image,
         } => {
-            // Use container-specific icons
-            let icon = match runtime.to_lowercase().as_str() {
-                "docker" => "🐳",
-                "podman" => "🦭",
-                _ => "📦",
-            };
+            // Use container icon for all container types
+            let icon = Icon::Container;
             // Strip "container:" prefix from display name
             let name = namespace_name
                 .strip_prefix("container:")
@@ -941,14 +959,15 @@ fn render_namespace_header<'a>(
 
     let namespace_title = if let Some(sub) = subtitle {
         column![
-            text(format!(
-                "{} {} ({})",
-                namespace_icon, display_name, backend_name
-            ))
-            .size(scaled(20, zoom))
-            .style(move |_| text::Style {
-                color: Some(colors.text_primary),
-            }),
+            row![
+                namespace_icon.svg_sized_colored(scaled(20, zoom), colors.text_primary),
+                text(format!(" {} ({})", display_name, backend_name))
+                    .size(scaled(20, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_primary),
+                    })
+            ]
+            .align_y(iced::Alignment::Center),
             text(sub)
                 .size(scaled(11, zoom))
                 .style(move |_| text::Style {
@@ -957,14 +976,15 @@ fn render_namespace_header<'a>(
         ]
         .spacing(scaled_spacing(2, zoom))
     } else {
-        column![text(format!(
-            "{} {} ({})",
-            namespace_icon, display_name, backend_name
-        ))
-        .size(scaled(20, zoom))
-        .style(move |_| text::Style {
-            color: Some(colors.text_primary),
-        })]
+        column![row![
+            namespace_icon.svg_sized_colored(scaled(20, zoom), colors.text_primary),
+            text(format!(" {} ({})", display_name, backend_name))
+                .size(scaled(20, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.text_primary),
+                })
+        ]
+        .align_y(iced::Alignment::Center)]
     };
 
     // Enhanced toggle button with modern styling
@@ -1009,8 +1029,8 @@ fn render_toggle_button<'a>(
     if is_hidden {
         button(
             row![
-                text("👁").size(scaled(12, zoom)),
-                text("Show").size(scaled(12, zoom))
+                Icon::Eye.svg_sized_colored(scaled(12, zoom), Color::WHITE),
+                text(" Show").size(scaled(12, zoom))
             ]
             .spacing(scaled_spacing(4, zoom))
             .align_y(iced::Alignment::Center),
@@ -1039,8 +1059,8 @@ fn render_toggle_button<'a>(
     } else {
         button(
             row![
-                text("🙈").size(scaled(12, zoom)),
-                text("Hide").size(scaled(12, zoom))
+                Icon::EyeOff.svg_sized_colored(scaled(12, zoom), Color::WHITE),
+                text(" Hide").size(scaled(12, zoom))
             ]
             .spacing(scaled_spacing(4, zoom))
             .align_y(iced::Alignment::Center),
@@ -1084,8 +1104,8 @@ fn render_namespace_bandwidth_summary<'a>(
     {
         container(
             row![
-                text("📈").size(scaled(14, zoom)),
-                text(format!("Top: {} ({})", interface_name, rate_display))
+                Icon::TrendingUp.svg_sized_colored(scaled(14, zoom), colors.primary_blue),
+                text(format!(" Top: {} ({})", interface_name, rate_display))
                     .size(scaled(13, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.primary_blue)
@@ -1110,8 +1130,8 @@ fn render_namespace_bandwidth_summary<'a>(
     } else {
         container(
             row![
-                text("📊").size(scaled(14, zoom)),
-                text("No active traffic")
+                Icon::BarChart3.svg_sized_colored(scaled(14, zoom), colors.text_secondary),
+                text(" No active traffic")
                     .size(scaled(13, zoom))
                     .style(move |_| {
                         text::Style {
@@ -1188,7 +1208,7 @@ fn render_ui_stats_footer(
 
     if hidden_backend_count > 0 || hidden_namespace_count > 0 {
         let stats_text = format!(
-            "🙈 UI Stats: {} hidden backends, {} hidden namespaces (Total: {})",
+            "UI Stats: {} hidden backends, {} hidden namespaces (Total: {})",
             visibility_stats.hidden_backend_count,
             visibility_stats.hidden_namespace_count,
             visibility_stats.total_hidden_items
@@ -1379,8 +1399,9 @@ fn render_interface_selection_dialog<'a>(
         let mut content = column![
             // Dialog header
             row![
+                Icon::Target.svg_sized_colored(scaled(18, zoom), colors.text_primary),
                 text(format!(
-                    "🎯 Select Interface for Scenario: {}",
+                    " Select Interface for Scenario: {}",
                     dialog.scenario_id
                 ))
                 .size(scaled(18, zoom))
@@ -1388,7 +1409,7 @@ fn render_interface_selection_dialog<'a>(
                     color: Some(colors.text_primary),
                 }),
                 space().width(Length::Fill),
-                button(text("✕").size(scaled(14, zoom)))
+                button(Icon::X.svg_sized_colored(scaled(14, zoom), Color::WHITE))
                     .on_press(TcGuiMessage::HideInterfaceSelectionDialog)
                     .style(move |_, _| button::Style {
                         background: Some(iced::Background::Color(colors.error_red)),
@@ -1434,16 +1455,20 @@ fn render_interface_selection_dialog<'a>(
 
             // Namespace button
             let namespace_button = button(
-                text(format!(
-                    "🏷️ {} ({} interfaces)",
-                    if namespace_name == "default" {
-                        "default (host)"
-                    } else {
-                        namespace_name
-                    },
-                    namespace_group.tc_interfaces.len()
-                ))
-                .size(scaled(14, zoom)),
+                row![
+                    Icon::Tag.svg_sized_colored(scaled(14, zoom), colors.text_primary),
+                    text(format!(
+                        " {} ({} interfaces)",
+                        if namespace_name == "default" {
+                            "default (host)"
+                        } else {
+                            namespace_name
+                        },
+                        namespace_group.tc_interfaces.len()
+                    ))
+                    .size(scaled(14, zoom))
+                ]
+                .align_y(iced::Alignment::Center),
             )
             .width(Length::Fill)
             .on_press(TcGuiMessage::SelectExecutionNamespace(
@@ -1556,8 +1581,18 @@ fn render_interface_selection_dialog<'a>(
 
         // Loop execution toggle
         let loop_enabled = dialog.loop_execution;
+        let loop_icon = if loop_enabled {
+            Icon::Repeat
+        } else {
+            Icon::ArrowRight
+        };
+        let loop_icon_color = if loop_enabled {
+            Color::WHITE
+        } else {
+            colors.text_primary
+        };
         let loop_toggle = row![
-            button(text(if loop_enabled { "🔁" } else { "➡️" }).size(scaled(16, zoom)))
+            button(loop_icon.svg_sized_colored(scaled(16, zoom), loop_icon_color))
                 .padding([scaled_padding(6, zoom), scaled_padding(10, zoom)])
                 .on_press(TcGuiMessage::ToggleLoopExecution)
                 .style(move |_, _| button::Style {
@@ -1679,11 +1714,15 @@ fn render_interface_selection_dialog<'a>(
         container(
             container(
                 column![
-                    text(format!("⚠️ Backend '{}' not found", dialog.backend_name))
-                        .size(scaled(16, zoom))
-                        .style(move |_| text::Style {
-                            color: Some(colors.error_red),
-                        }),
+                    row![
+                        Icon::AlertTriangle.svg_sized_colored(scaled(16, zoom), colors.error_red),
+                        text(format!(" Backend '{}' not found", dialog.backend_name))
+                            .size(scaled(16, zoom))
+                            .style(move |_| text::Style {
+                                color: Some(colors.error_red),
+                            })
+                    ]
+                    .align_y(iced::Alignment::Center),
                     button(text("Close").size(scaled(14, zoom)))
                         .padding([scaled_padding(8, zoom), scaled_padding(16, zoom)])
                         .on_press(TcGuiMessage::HideInterfaceSelectionDialog)

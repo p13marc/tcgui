@@ -89,6 +89,10 @@ pub enum Icon {
     Target,
     /// Chain link - connected
     Link,
+    /// Tag/label
+    Tag,
+    /// Arrow right - sequential flow
+    ArrowRight,
 }
 
 impl Icon {
@@ -140,6 +144,8 @@ impl Icon {
             Icon::Gamepad2 => include_bytes!("../icons/gamepad-2.svg"),
             Icon::Target => include_bytes!("../icons/target.svg"),
             Icon::Link => include_bytes!("../icons/link.svg"),
+            Icon::Tag => include_bytes!("../icons/tag.svg"),
+            Icon::ArrowRight => include_bytes!("../icons/arrow-right.svg"),
         }
     }
 
