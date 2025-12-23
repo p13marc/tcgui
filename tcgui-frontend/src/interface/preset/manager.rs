@@ -8,6 +8,7 @@ use iced::widget::{button, row, text};
 use iced::Element;
 use tcgui_shared::presets::{CustomPreset, PresetList};
 
+use crate::icons::Icon;
 use crate::interface::state::InterfaceState;
 use crate::messages::TcInterfaceMessage;
 use crate::view::{scaled, scaled_spacing};
@@ -195,10 +196,13 @@ impl PresetManagerComponent {
             row(buttons).spacing(scaled_spacing(2, zoom)).into()
         } else {
             // When collapsed, show a button with current preset name
-            button(row![
-                text(current_label).size(scaled(11, zoom)),
-                text(" ▼").size(scaled(9, zoom)),
-            ])
+            button(
+                row![
+                    text(current_label).size(scaled(11, zoom)),
+                    Icon::ChevronDown.svg_sized(scaled(9, zoom)),
+                ]
+                .align_y(iced::Alignment::Center),
+            )
             .padding([2.0 * zoom, 6.0 * zoom])
             .on_press(TcInterfaceMessage::TogglePresetDropdown)
             .into()
