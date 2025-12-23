@@ -6,6 +6,7 @@ pub mod app;
 pub mod backend_manager;
 pub mod bandwidth_chart;
 pub mod bandwidth_history;
+pub mod icons;
 pub mod interface;
 pub mod interface_selector;
 pub mod message_handlers;
