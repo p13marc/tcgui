@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "GUI frontend for tcgui traffic control application"
 authors = ["Your Name <you@example.com>"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/p13marc/tcgui"
 homepage = "https://github.com/p13marc/tcgui"
 keywords = ["gui", "traffic-control", "networking", "iced", "linux"]
@@ -67,7 +67,7 @@ maintainer-scripts = "../packaging/debian/frontend/"
 
 [package.metadata.generate-rpm]
 summary = "GUI frontend for tcgui traffic control application"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[package.metadata.generate-rpm.assets]]
 source = "../target/release/tcgui-frontend"

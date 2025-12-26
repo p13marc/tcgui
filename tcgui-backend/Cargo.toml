@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Privileged backend service for tcgui network operations"
 authors = ["Your Name <you@example.com>"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/p13marc/tcgui"
 homepage = "https://github.com/p13marc/tcgui"
 keywords = ["networking", "traffic-control", "tc", "linux", "network-namespaces"]
@@ -85,7 +85,7 @@ maintainer-scripts = "../packaging/debian/backend/"
 
 [package.metadata.generate-rpm]
 summary = "Privileged backend service for tcgui network operations"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[package.metadata.generate-rpm.assets]]
 source = "../target/release/tcgui-backend"
