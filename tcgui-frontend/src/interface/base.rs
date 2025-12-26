@@ -314,7 +314,9 @@ impl TcInterface {
         let expandable_rows = self.render_expandable_features(theme, zoom);
 
         // Build chart section if expanded
-        let content = if self.state.chart_expanded {
+        
+
+        if self.state.chart_expanded {
             let chart_height = scaled(80, zoom);
             let dark_mode = theme.is_dark();
             let chart_element = bandwidth_chart_view(bandwidth_history, chart_height, dark_mode);
@@ -326,9 +328,7 @@ impl TcInterface {
             column![main_row, expandable_rows]
                 .spacing(scaled_spacing(4, zoom))
                 .into()
-        };
-
-        content
+        }
     }
 
     /// Render the main interface row with core controls

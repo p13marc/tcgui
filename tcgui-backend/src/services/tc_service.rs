@@ -527,66 +527,56 @@ impl TcService {
             cmd_parts.push(loss_part);
         }
 
-        if let Some(delay) = delay_ms {
-            if delay > 0.0 {
+        if let Some(delay) = delay_ms
+            && delay > 0.0 {
                 let mut delay_part = format!("delay {}ms", delay);
-                if let Some(jitter) = delay_jitter_ms {
-                    if jitter > 0.0 {
+                if let Some(jitter) = delay_jitter_ms
+                    && jitter > 0.0 {
                         delay_part.push_str(&format!(" {}ms", jitter));
-                        if let Some(delay_corr) = delay_correlation {
-                            if delay_corr > 0.0 {
+                        if let Some(delay_corr) = delay_correlation
+                            && delay_corr > 0.0 {
                                 delay_part.push_str(&format!(" {}%", delay_corr));
                             }
-                        }
                     }
-                }
                 cmd_parts.push(delay_part);
             }
-        }
 
-        if let Some(duplicate) = duplicate_percent {
-            if duplicate > 0.0 {
+        if let Some(duplicate) = duplicate_percent
+            && duplicate > 0.0 {
                 let mut duplicate_part = format!("duplicate {}%", duplicate);
-                if let Some(dup_corr) = duplicate_correlation {
-                    if dup_corr > 0.0 {
+                if let Some(dup_corr) = duplicate_correlation
+                    && dup_corr > 0.0 {
                         duplicate_part.push_str(&format!(" {}%", dup_corr));
                     }
-                }
                 cmd_parts.push(duplicate_part);
             }
-        }
 
-        if let Some(reorder) = reorder_percent {
-            if reorder > 0.0 {
+        if let Some(reorder) = reorder_percent
+            && reorder > 0.0 {
                 let mut reorder_part = format!("reorder {}%", reorder);
-                if let Some(reorder_corr) = reorder_correlation {
-                    if reorder_corr > 0.0 {
+                if let Some(reorder_corr) = reorder_correlation
+                    && reorder_corr > 0.0 {
                         reorder_part.push_str(&format!(" {}%", reorder_corr));
                     }
-                }
-                if let Some(gap) = reorder_gap {
-                    if gap > 0 {
+                if let Some(gap) = reorder_gap
+                    && gap > 0 {
                         reorder_part.push_str(&format!(" gap {}", gap));
                     }
-                }
                 cmd_parts.push(reorder_part);
             }
-        }
 
-        if let Some(corrupt) = corrupt_percent {
-            if corrupt > 0.0 {
+        if let Some(corrupt) = corrupt_percent
+            && corrupt > 0.0 {
                 let mut corrupt_part = format!("corrupt {}%", corrupt);
-                if let Some(corrupt_corr) = corrupt_correlation {
-                    if corrupt_corr > 0.0 {
+                if let Some(corrupt_corr) = corrupt_correlation
+                    && corrupt_corr > 0.0 {
                         corrupt_part.push_str(&format!(" {}%", corrupt_corr));
                     }
-                }
                 cmd_parts.push(corrupt_part);
             }
-        }
 
-        if let Some(rate) = rate_limit_kbps {
-            if rate > 0 {
+        if let Some(rate) = rate_limit_kbps
+            && rate > 0 {
                 let rate_part = if rate >= 1000 {
                     format!("rate {}mbit", rate / 1000)
                 } else {
@@ -594,7 +584,6 @@ impl TcService {
                 };
                 cmd_parts.push(rate_part);
             }
-        }
 
         TcConfiguration {
             loss,

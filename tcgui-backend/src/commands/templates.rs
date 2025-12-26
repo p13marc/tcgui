@@ -959,8 +959,8 @@ impl TemplateManager {
                             ));
                         }
                     }
-                    if let Some(ref allowed) = constraints.allowed_values {
-                        if !allowed.contains(s) {
+                    if let Some(ref allowed) = constraints.allowed_values
+                        && !allowed.contains(s) {
                             return Err(anyhow!(
                                 "Parameter '{}' value '{}' is not in allowed values: {:?}",
                                 param.name,
@@ -968,14 +968,13 @@ impl TemplateManager {
                                 allowed
                             ));
                         }
-                    }
                 }
             }
             (ParameterType::Integer, ParameterValue::Integer(i)) => {
                 if let Some(ref constraints) = param.constraints {
                     let value_f64 = *i as f64;
-                    if let Some(min) = constraints.min {
-                        if value_f64 < min {
+                    if let Some(min) = constraints.min
+                        && value_f64 < min {
                             return Err(anyhow!(
                                 "Parameter '{}' value {} is less than minimum {}",
                                 param.name,
@@ -983,9 +982,8 @@ impl TemplateManager {
                                 min
                             ));
                         }
-                    }
-                    if let Some(max) = constraints.max {
-                        if value_f64 > max {
+                    if let Some(max) = constraints.max
+                        && value_f64 > max {
                             return Err(anyhow!(
                                 "Parameter '{}' value {} is greater than maximum {}",
                                 param.name,
@@ -993,13 +991,12 @@ impl TemplateManager {
                                 max
                             ));
                         }
-                    }
                 }
             }
             (ParameterType::Float, ParameterValue::Float(f)) => {
                 if let Some(ref constraints) = param.constraints {
-                    if let Some(min) = constraints.min {
-                        if *f < min {
+                    if let Some(min) = constraints.min
+                        && *f < min {
                             return Err(anyhow!(
                                 "Parameter '{}' value {} is less than minimum {}",
                                 param.name,
@@ -1007,9 +1004,8 @@ impl TemplateManager {
                                 min
                             ));
                         }
-                    }
-                    if let Some(max) = constraints.max {
-                        if *f > max {
+                    if let Some(max) = constraints.max
+                        && *f > max {
                             return Err(anyhow!(
                                 "Parameter '{}' value {} is greater than maximum {}",
                                 param.name,
@@ -1017,7 +1013,6 @@ impl TemplateManager {
                                 max
                             ));
                         }
-                    }
                 }
             }
             (ParameterType::Boolean, ParameterValue::Boolean(_)) => {

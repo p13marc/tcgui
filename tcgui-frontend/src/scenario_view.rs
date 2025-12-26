@@ -137,11 +137,10 @@ pub fn render_scenario_view<'a>(
     );
 
     // Show scenario details if selected
-    if scenario_manager.is_showing_details() {
-        if let Some(scenario) = scenario_manager.get_selected_scenario() {
+    if scenario_manager.is_showing_details()
+        && let Some(scenario) = scenario_manager.get_selected_scenario() {
             content = content.push(render_scenario_details(scenario, colors.clone(), zoom));
         }
-    }
 
     // Scenario sections for each backend
     for backend_name in &connected_backends {
@@ -325,8 +324,8 @@ fn render_backend_scenarios<'a>(
     }
 
     // Show load errors if any
-    if let Some(load_errors) = scenario_manager.get_load_errors(backend_name) {
-        if !load_errors.is_empty() {
+    if let Some(load_errors) = scenario_manager.get_load_errors(backend_name)
+        && !load_errors.is_empty() {
             let mut error_items: Column<'_, TcGuiMessage> =
                 column![].spacing(scaled_spacing(4, zoom));
             for load_error in load_errors {
@@ -378,7 +377,6 @@ fn render_backend_scenarios<'a>(
                 .spacing(scaled_spacing(6, zoom)),
             );
         }
-    }
 
     // Active executions section
     let active_executions = scenario_manager.get_active_executions(backend_name);

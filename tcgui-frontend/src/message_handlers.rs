@@ -99,12 +99,11 @@ fn apply_tc_configuration_to_interface(
             let _ = tc_interface.update(TcInterfaceMessage::LossToggled(true));
             let _ = tc_interface.update(TcInterfaceMessage::LossChanged(config.loss));
 
-            if let Some(correlation) = config.correlation {
-                if correlation > 0.0 {
+            if let Some(correlation) = config.correlation
+                && correlation > 0.0 {
                     let _ =
                         tc_interface.update(TcInterfaceMessage::CorrelationChanged(correlation));
                 }
-            }
         } else {
             // If loss is 0.0, uncheck the Loss checkbox
             let _ = tc_interface.update(TcInterfaceMessage::LossToggled(false));
@@ -116,18 +115,16 @@ fn apply_tc_configuration_to_interface(
                 let _ = tc_interface.update(TcInterfaceMessage::DelayToggled(true));
                 let _ = tc_interface.update(TcInterfaceMessage::DelayChanged(delay_ms));
 
-                if let Some(jitter) = config.delay_jitter_ms {
-                    if jitter > 0.0 {
+                if let Some(jitter) = config.delay_jitter_ms
+                    && jitter > 0.0 {
                         let _ = tc_interface.update(TcInterfaceMessage::DelayJitterChanged(jitter));
                     }
-                }
 
-                if let Some(delay_corr) = config.delay_correlation {
-                    if delay_corr > 0.0 {
+                if let Some(delay_corr) = config.delay_correlation
+                    && delay_corr > 0.0 {
                         let _ = tc_interface
                             .update(TcInterfaceMessage::DelayCorrelationChanged(delay_corr));
                     }
-                }
             } else {
                 // If delay is 0.0, uncheck the Delay checkbox
                 let _ = tc_interface.update(TcInterfaceMessage::DelayToggled(false));
@@ -145,12 +142,11 @@ fn apply_tc_configuration_to_interface(
                     duplicate_percent,
                 ));
 
-                if let Some(dup_corr) = config.duplicate_correlation {
-                    if dup_corr > 0.0 {
+                if let Some(dup_corr) = config.duplicate_correlation
+                    && dup_corr > 0.0 {
                         let _ = tc_interface
                             .update(TcInterfaceMessage::DuplicateCorrelationChanged(dup_corr));
                     }
-                }
             } else {
                 // If duplicate is 0.0, disable the Duplicate checkbox if enabled
                 if tc_interface.duplicate_enabled() {
@@ -172,18 +168,16 @@ fn apply_tc_configuration_to_interface(
                     reorder_percent,
                 ));
 
-                if let Some(reorder_corr) = config.reorder_correlation {
-                    if reorder_corr > 0.0 {
+                if let Some(reorder_corr) = config.reorder_correlation
+                    && reorder_corr > 0.0 {
                         let _ = tc_interface
                             .update(TcInterfaceMessage::ReorderCorrelationChanged(reorder_corr));
                     }
-                }
 
-                if let Some(gap) = config.reorder_gap {
-                    if gap > 0 {
+                if let Some(gap) = config.reorder_gap
+                    && gap > 0 {
                         let _ = tc_interface.update(TcInterfaceMessage::ReorderGapChanged(gap));
                     }
-                }
             } else {
                 // If reorder is 0.0, disable the Reorder checkbox
                 if tc_interface.reorder_enabled() {
@@ -205,12 +199,11 @@ fn apply_tc_configuration_to_interface(
                     corrupt_percent,
                 ));
 
-                if let Some(corrupt_corr) = config.corrupt_correlation {
-                    if corrupt_corr > 0.0 {
+                if let Some(corrupt_corr) = config.corrupt_correlation
+                    && corrupt_corr > 0.0 {
                         let _ = tc_interface
                             .update(TcInterfaceMessage::CorruptCorrelationChanged(corrupt_corr));
                     }
-                }
             } else {
                 // If corrupt is 0.0, disable the Corrupt checkbox
                 if tc_interface.corrupt_enabled() {
@@ -339,9 +332,9 @@ pub fn handle_tc_interface_message(
     tc_message: TcInterfaceMessage,
 ) -> Task<TcGuiMessage> {
     // Use the provided backend and namespace to route the message directly
-    if let Some(backend_group) = backend_manager.backends_mut().get_mut(&backend_name) {
-        if let Some(namespace_group) = backend_group.namespaces.get_mut(&namespace) {
-            if let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface_name) {
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(&backend_name)
+        && let Some(namespace_group) = backend_group.namespaces.get_mut(&namespace)
+            && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface_name) {
                 let task = tc_interface.update(tc_message.clone());
 
                 // Handle messages that need to be sent to backend
@@ -1208,8 +1201,6 @@ pub fn handle_tc_interface_message(
                 });
                 return Task::batch([interface_task, backend_task]);
             }
-        }
-    }
     Task::none()
 }
 

@@ -1,7 +1,7 @@
 [package]
 name = "tcgui-backend"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Privileged backend service for tcgui network operations"
 authors = ["Your Name <you@example.com>"]
 license = "MIT"

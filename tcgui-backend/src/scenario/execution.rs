@@ -7,15 +7,15 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, RwLock};
-use tokio::time::{sleep, Duration, Instant};
+use tokio::sync::{RwLock, mpsc};
+use tokio::time::{Duration, Instant, sleep};
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 
 use tcgui_shared::scenario::{
     ExecutionState, ExecutionStats, NetworkScenario, ScenarioError, ScenarioExecution,
 };
-use tcgui_shared::{topics, TcOperation, TcRequest, TcResponse};
+use tcgui_shared::{TcOperation, TcRequest, TcResponse, topics};
 
 use crate::tc_commands::{CapturedTcState, TcCommandManager};
 
@@ -314,6 +314,7 @@ impl ScenarioExecutionEngine {
     }
 
     /// Spawn execution task for a scenario
+    #[allow(clippy::too_many_arguments)]
     fn spawn_execution_task(
         &self,
         mut execution: ScenarioExecution,
@@ -396,13 +397,13 @@ impl ScenarioExecutionEngine {
                             };
 
                             // Perform rollback
-                            if cleanup_on_failure {
-                                if let Some(ref captured_state) = pre_execution_state {
-                                    info!("Performing TC state rollback due to execution failure");
-                                    match tc_manager.restore_tc_state(captured_state).await {
-                                        Ok(msg) => info!("TC rollback successful: {}", msg),
-                                        Err(e) => error!("TC rollback failed: {}", e),
-                                    }
+                            if cleanup_on_failure
+                                && let Some(ref captured_state) = pre_execution_state
+                            {
+                                info!("Performing TC state rollback due to execution failure");
+                                match tc_manager.restore_tc_state(captured_state).await {
+                                    Ok(msg) => info!("TC rollback successful: {}", msg),
+                                    Err(e) => error!("TC rollback failed: {}", e),
                                 }
                             }
 
@@ -440,13 +441,13 @@ impl ScenarioExecutionEngine {
                             };
 
                             // Perform rollback
-                            if cleanup_on_failure {
-                                if let Some(ref captured_state) = pre_execution_state {
-                                    info!("Performing TC state rollback due to execution failure");
-                                    match tc_manager.restore_tc_state(captured_state).await {
-                                        Ok(msg) => info!("TC rollback successful: {}", msg),
-                                        Err(e) => error!("TC rollback failed: {}", e),
-                                    }
+                            if cleanup_on_failure
+                                && let Some(ref captured_state) = pre_execution_state
+                            {
+                                info!("Performing TC state rollback due to execution failure");
+                                match tc_manager.restore_tc_state(captured_state).await {
+                                    Ok(msg) => info!("TC rollback successful: {}", msg),
+                                    Err(e) => error!("TC rollback failed: {}", e),
                                 }
                             }
 
@@ -786,8 +787,8 @@ impl ScenarioExecutionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::scenario::{NetworkScenario, ScenarioStep};
     use tcgui_shared::TcNetemConfig;
+    use tcgui_shared::scenario::{NetworkScenario, ScenarioStep};
     use zenoh::Wait;
 
     fn create_test_scenario() -> NetworkScenario {

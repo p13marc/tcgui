@@ -866,64 +866,53 @@ impl TcCommandManager {
         let mut active_params = Vec::new();
         if loss > 0.0 {
             active_params.push(format!("loss={}%", loss));
-            if let Some(corr) = correlation {
-                if corr > 0.0 {
+            if let Some(corr) = correlation
+                && corr > 0.0 {
                     active_params.push(format!("loss_correlation={}%", corr));
                 }
-            }
         }
-        if let Some(delay) = delay_ms {
-            if delay > 0.0 {
+        if let Some(delay) = delay_ms
+            && delay > 0.0 {
                 active_params.push(format!("delay={}ms", delay));
-                if let Some(jitter) = delay_jitter_ms {
-                    if jitter > 0.0 {
+                if let Some(jitter) = delay_jitter_ms
+                    && jitter > 0.0 {
                         active_params.push(format!("jitter={}ms", jitter));
-                        if let Some(delay_corr) = delay_correlation {
-                            if delay_corr > 0.0 {
+                        if let Some(delay_corr) = delay_correlation
+                            && delay_corr > 0.0 {
                                 active_params.push(format!("delay_correlation={}%", delay_corr));
                             }
-                        }
                     }
-                }
             }
-        }
-        if let Some(duplicate) = duplicate_percent {
-            if duplicate > 0.0 {
+        if let Some(duplicate) = duplicate_percent
+            && duplicate > 0.0 {
                 active_params.push(format!("duplicate={}%", duplicate));
-                if let Some(dup_corr) = duplicate_correlation {
-                    if dup_corr > 0.0 {
+                if let Some(dup_corr) = duplicate_correlation
+                    && dup_corr > 0.0 {
                         active_params.push(format!("duplicate_correlation={}%", dup_corr));
                     }
-                }
             }
-        }
-        if let Some(reorder) = reorder_percent {
-            if reorder > 0.0 {
+        if let Some(reorder) = reorder_percent
+            && reorder > 0.0 {
                 active_params.push(format!("reorder={}%", reorder));
-                if let Some(reorder_corr) = reorder_correlation {
-                    if reorder_corr > 0.0 {
+                if let Some(reorder_corr) = reorder_correlation
+                    && reorder_corr > 0.0 {
                         active_params.push(format!("reorder_correlation={}%", reorder_corr));
                     }
-                }
-                if let Some(gap) = reorder_gap {
-                    if gap > 0 {
+                if let Some(gap) = reorder_gap
+                    && gap > 0 {
                         active_params.push(format!("gap={}", gap));
                     }
-                }
             }
-        }
-        if let Some(corrupt) = corrupt_percent {
-            if corrupt > 0.0 {
+        if let Some(corrupt) = corrupt_percent
+            && corrupt > 0.0 {
                 active_params.push(format!("corrupt={}%", corrupt));
-                if let Some(corrupt_corr) = corrupt_correlation {
-                    if corrupt_corr > 0.0 {
+                if let Some(corrupt_corr) = corrupt_correlation
+                    && corrupt_corr > 0.0 {
                         active_params.push(format!("corrupt_correlation={}%", corrupt_corr));
                     }
-                }
             }
-        }
-        if let Some(rate) = rate_limit_kbps {
-            if rate > 0 {
+        if let Some(rate) = rate_limit_kbps
+            && rate > 0 {
                 let rate_display = if rate >= 1000 {
                     format!("{}mbit", rate / 1000)
                 } else {
@@ -931,7 +920,6 @@ impl TcCommandManager {
                 };
                 active_params.push(format!("rate={}", rate_display));
             }
-        }
 
         // If reordering is requested but no delay specified, netem requires a delay. Add a small automatic delay.
         let reorder_requested = reorder_percent.unwrap_or(0.0) > 0.0;
@@ -988,37 +976,33 @@ impl TcCommandManager {
             cmd.args(["loss", "random", &format!("{}%", loss)]);
 
             // Add loss correlation if specified (directly after the percentage)
-            if let Some(corr) = correlation {
-                if corr > 0.0 {
+            if let Some(corr) = correlation
+                && corr > 0.0 {
                     cmd.args([&format!("{}%", corr)]);
                 }
-            }
         }
 
         // Track whether we've already added a delay (required for reordering)
         let mut has_delay = false;
 
         // Add delay parameters if delay is specified
-        if let Some(delay) = delay_ms {
-            if delay > 0.0 {
+        if let Some(delay) = delay_ms
+            && delay > 0.0 {
                 cmd.args(["delay", &format!("{}ms", delay)]);
                 has_delay = true;
 
                 // Add delay jitter if specified
-                if let Some(jitter) = delay_jitter_ms {
-                    if jitter > 0.0 {
+                if let Some(jitter) = delay_jitter_ms
+                    && jitter > 0.0 {
                         cmd.args([&format!("{}ms", jitter)]);
 
                         // Add delay correlation if specified (only valid with jitter)
-                        if let Some(delay_corr) = delay_correlation {
-                            if delay_corr > 0.0 {
+                        if let Some(delay_corr) = delay_correlation
+                            && delay_corr > 0.0 {
                                 cmd.args([&format!("{}%", delay_corr)]);
                             }
-                        }
                     }
-                }
             }
-        }
 
         // If we need reordering but no delay was provided, add a minimal delay automatically
         if auto_add_delay && !has_delay {
@@ -1027,22 +1011,20 @@ impl TcCommandManager {
         }
 
         // Add duplication parameters if duplication is specified
-        if let Some(duplicate) = duplicate_percent {
-            if duplicate > 0.0 {
+        if let Some(duplicate) = duplicate_percent
+            && duplicate > 0.0 {
                 cmd.args(["duplicate", &format!("{}%", duplicate)]);
 
                 // Add duplication correlation if specified
-                if let Some(dup_corr) = duplicate_correlation {
-                    if dup_corr > 0.0 {
+                if let Some(dup_corr) = duplicate_correlation
+                    && dup_corr > 0.0 {
                         cmd.args([&format!("{}%", dup_corr)]);
                     }
-                }
             }
-        }
 
         // Add reordering parameters if reordering is specified
-        if let Some(reorder) = reorder_percent {
-            if reorder > 0.0 {
+        if let Some(reorder) = reorder_percent
+            && reorder > 0.0 {
                 // Ensure delay is present (netem requires some delay for reorder)
                 if !has_delay {
                     cmd.args(["delay", "1ms"]);
@@ -1050,38 +1032,33 @@ impl TcCommandManager {
                 cmd.args(["reorder", &format!("{}%", reorder)]);
 
                 // Add reordering correlation if specified
-                if let Some(reorder_corr) = reorder_correlation {
-                    if reorder_corr > 0.0 {
+                if let Some(reorder_corr) = reorder_correlation
+                    && reorder_corr > 0.0 {
                         cmd.args([&format!("{}%", reorder_corr)]);
                     }
-                }
 
                 // Add reordering gap if specified
-                if let Some(gap) = reorder_gap {
-                    if gap > 0 {
+                if let Some(gap) = reorder_gap
+                    && gap > 0 {
                         cmd.args(["gap", &format!("{}", gap)]);
                     }
-                }
             }
-        }
 
         // Add corruption parameters if corruption is specified
-        if let Some(corrupt) = corrupt_percent {
-            if corrupt > 0.0 {
+        if let Some(corrupt) = corrupt_percent
+            && corrupt > 0.0 {
                 cmd.args(["corrupt", &format!("{}%", corrupt)]);
 
                 // Add corruption correlation if specified
-                if let Some(corrupt_corr) = corrupt_correlation {
-                    if corrupt_corr > 0.0 {
+                if let Some(corrupt_corr) = corrupt_correlation
+                    && corrupt_corr > 0.0 {
                         cmd.args([&format!("{}%", corrupt_corr)]);
                     }
-                }
             }
-        }
 
         // Add rate limiting parameters if rate limiting is specified
-        if let Some(rate) = rate_limit_kbps {
-            if rate > 0 {
+        if let Some(rate) = rate_limit_kbps
+            && rate > 0 {
                 // Convert kbps to appropriate unit for tc netem rate parameter
                 if rate >= 1000 {
                     cmd.args(["rate", &format!("{}mbit", rate / 1000)]);
@@ -1089,7 +1066,6 @@ impl TcCommandManager {
                     cmd.args(["rate", &format!("{}kbit", rate)]);
                 }
             }
-        }
 
         info!("Executing TC {} command: {:?}", action, cmd);
 

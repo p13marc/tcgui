@@ -1,10 +1,10 @@
-use iced::task::{sipper, Never, Sipper};
 use iced::Subscription;
+use iced::task::{Never, Sipper, sipper};
 use std::sync::Arc;
 use tcgui_shared::{
-    presets::PresetList, scenario::ScenarioExecutionUpdate, topics, BackendHealthStatus,
-    BandwidthUpdate, InterfaceControlResponse, InterfaceListUpdate, InterfaceStateEvent,
-    TcConfigUpdate, TcResponse, ZenohConfig,
+    BackendHealthStatus, BandwidthUpdate, InterfaceControlResponse, InterfaceListUpdate,
+    InterfaceStateEvent, TcConfigUpdate, TcResponse, ZenohConfig, presets::PresetList,
+    scenario::ScenarioExecutionUpdate, topics,
 };
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -87,9 +87,14 @@ fn handle_bandwidth_update_sample(sample: zenoh::sample::Sample) -> Option<Zenoh
         BandwidthUpdate,
         "bandwidth update",
         |backend_name: &str, update: &BandwidthUpdate| {
-            info!("Frontend received bandwidth update from '{}' for {}/{}: RX {:.2} B/s, TX {:.2} B/s",
-                backend_name, update.namespace, update.interface,
-                update.stats.rx_bytes_per_sec, update.stats.tx_bytes_per_sec);
+            info!(
+                "Frontend received bandwidth update from '{}' for {}/{}: RX {:.2} B/s, TX {:.2} B/s",
+                backend_name,
+                update.namespace,
+                update.interface,
+                update.stats.rx_bytes_per_sec,
+                update.stats.tx_bytes_per_sec
+            );
         },
         ZenohEvent::BandwidthUpdate
     )
@@ -288,8 +293,8 @@ impl ZenohManager {
     }
 
     /// Create the zenoh sipper with the configured settings
-    pub fn create_sipper(&self) -> impl Sipper<Never, ZenohEvent> {
-        let config = Arc::clone(&self.config);
+    pub fn create_sipper(self) -> impl Sipper<Never, ZenohEvent> {
+        let config = self.config;
         sipper(async move |mut output| {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
@@ -649,14 +654,13 @@ impl ZenohManager {
                                                             match reply.into_result() {
                                                                 Ok(sample) => {
                                                                     let payload_bytes = sample.payload().to_bytes();
-                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
-                                                                            if let Ok(response) = serde_json::from_str::<TcResponse>(payload_str) {
+                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
+                                                                            && let Ok(response) = serde_json::from_str::<TcResponse>(payload_str) {
                                                                                 // Send response back via original response channel if available
                                                                                 if let Some(ref response_sender) = tc_query.response_sender {
                                                                                     let _ = response_sender.send((tc_query.backend_name.clone(), response));
                                                                                 }
                                                                             }
-                                                                    }
                                                                 }
                                                                 Err(e) => {
                                                                     error!("TC query reply error: {}", e);
@@ -688,14 +692,13 @@ impl ZenohManager {
                                                             match reply.into_result() {
                                                                 Ok(sample) => {
                                                                     let payload_bytes = sample.payload().to_bytes();
-                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
-                                                                            if let Ok(response) = serde_json::from_str::<InterfaceControlResponse>(payload_str) {
+                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
+                                                                            && let Ok(response) = serde_json::from_str::<InterfaceControlResponse>(payload_str) {
                                                                                 // Send response back via original response channel if available
                                                                                 if let Some(ref response_sender) = interface_query.response_sender {
                                                                                     let _ = response_sender.send((interface_query.backend_name.clone(), response));
                                                                                 }
                                                                             }
-                                                                    }
                                                                 }
                                                                 Err(e) => {
                                                                     error!("Interface control query reply error: {}", e);
@@ -731,8 +734,8 @@ impl ZenohManager {
                                                             match reply.into_result() {
                                                                 Ok(sample) => {
                                                                     let payload_bytes = sample.payload().to_bytes();
-                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
-                                                                        if let Ok(response) = serde_json::from_str::<ScenarioResponse>(payload_str) {
+                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
+                                                                        && let Ok(response) = serde_json::from_str::<ScenarioResponse>(payload_str) {
                                                                             // Send response as ZenohEvent
                                                                             let event = ZenohEvent::ScenarioResponse {
                                                                                 backend_name: backend_name.clone(),
@@ -740,7 +743,6 @@ impl ZenohManager {
                                                                             };
                                                                             let _ = output_clone.send(event).await;
                                                                         }
-                                                                    }
                                                                 }
                                                                 Err(e) => {
                                                                     error!("Scenario query reply error: {}", e);
@@ -773,14 +775,13 @@ impl ZenohManager {
                                                             match reply.into_result() {
                                                                 Ok(sample) => {
                                                                     let payload_bytes = sample.payload().to_bytes();
-                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes) {
-                                                                            if let Ok(response) = serde_json::from_str::<ScenarioExecutionResponse>(payload_str) {
+                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
+                                                                            && let Ok(response) = serde_json::from_str::<ScenarioExecutionResponse>(payload_str) {
                                                                                 // Send response back via original response channel if available
                                                                                 if let Some(ref response_sender) = execution_query.response_sender {
                                                                                     let _ = response_sender.send((execution_query.backend_name.clone(), response));
                                                                                 }
                                                                             }
-                                                                    }
                                                                 }
                                                                 Err(e) => {
                                                                     error!("Scenario execution query reply error: {}", e);
@@ -817,15 +818,14 @@ impl ZenohManager {
 
 /// Creates a zenoh manager sipper with the provided configuration (takes Arc)
 pub fn zenoh_manager_with_arc(config: Arc<ZenohConfig>) -> impl Sipper<Never, ZenohEvent> {
-    let manager = ZenohManager { config };
-    manager.create_sipper()
+    ZenohManager { config }.create_sipper()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tcgui_shared::{
-        topics, BackendMetadata, InterfaceType, NamespaceType, NetworkInterface, NetworkNamespace,
+        BackendMetadata, InterfaceType, NamespaceType, NetworkInterface, NetworkNamespace, topics,
     };
     use zenoh::key_expr::{KeyExpr, OwnedKeyExpr};
 

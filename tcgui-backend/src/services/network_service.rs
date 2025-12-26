@@ -122,14 +122,12 @@ impl NetworkService {
     #[instrument(skip(self), fields(service = "network", namespace))]
     pub async fn get_interfaces(&mut self, namespace: &str) -> Result<Vec<Interface>> {
         // Check if we have a cached version that's still fresh
-        if let Some(last_scan) = self.last_scan_times.get(namespace) {
-            if last_scan.elapsed() < self.cache_duration {
-                if let Some(cached_interfaces) = self.interface_cache.get(namespace) {
+        if let Some(last_scan) = self.last_scan_times.get(namespace)
+            && last_scan.elapsed() < self.cache_duration
+                && let Some(cached_interfaces) = self.interface_cache.get(namespace) {
                     info!("Returning cached interfaces for namespace: {}", namespace);
                     return Ok(cached_interfaces.clone());
                 }
-            }
-        }
 
         // Cache miss or stale data - perform fresh scan
         info!("Scanning interfaces for namespace: {}", namespace);

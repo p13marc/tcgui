@@ -2,7 +2,7 @@ use clap::{Arg, Command};
 use tracing::info;
 
 use tcgui_frontend::app::TcGui;
-use tcgui_shared::{errors::ZenohConfigError, ZenohConfig, ZenohMode};
+use tcgui_shared::{ZenohConfig, ZenohMode, errors::ZenohConfigError};
 
 pub fn main() -> iced::Result {
     let matches = Command::new("tcgui-frontend")
@@ -55,7 +55,9 @@ pub fn main() -> iced::Result {
         &std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string())
     };
 
-    std::env::set_var("RUST_LOG", log_level);
+    // SAFETY: This is called during single-threaded initialization before any
+    // threads are spawned, so there's no risk of data races.
+    unsafe { std::env::set_var("RUST_LOG", log_level) };
 
     // Initialize tracing with component prefix for frontend
     tracing_subscriber::fmt()
@@ -133,7 +135,10 @@ pub fn main() -> iced::Result {
                     eprintln!("Error: Invalid endpoint '{}' - {}", endpoint, reason);
                 }
                 ZenohConfigError::InvalidProtocol { protocol, endpoint } => {
-                    eprintln!("Error: Unsupported protocol '{}' in endpoint '{}'. Supported: tcp, udp, tls, quic", protocol, endpoint);
+                    eprintln!(
+                        "Error: Unsupported protocol '{}' in endpoint '{}'. Supported: tcp, udp, tls, quic",
+                        protocol, endpoint
+                    );
                 }
                 ZenohConfigError::ModeEndpointMismatch { mode, reason } => {
                     eprintln!("Error: {:?} mode {}", mode, reason);

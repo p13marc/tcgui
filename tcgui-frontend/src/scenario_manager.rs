@@ -511,11 +511,10 @@ impl ScenarioManager {
     /// Remove execution when it completes or is stopped
     pub fn remove_execution(&mut self, backend_name: &str, namespace: &str, interface: &str) {
         let execution_key = format!("{}/{}", namespace, interface);
-        if let Some(executions) = self.active_executions.get_mut(backend_name) {
-            if executions.remove(&execution_key).is_some() {
+        if let Some(executions) = self.active_executions.get_mut(backend_name)
+            && executions.remove(&execution_key).is_some() {
                 info!("Removed execution for {}", execution_key);
             }
-        }
     }
 
     /// Clean up backend state when backend disconnects

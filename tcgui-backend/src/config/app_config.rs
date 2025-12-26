@@ -107,17 +107,24 @@ impl AppConfig {
             match env::var("RUST_LOG") {
                 Ok(existing_log) if !existing_log.is_empty() => {
                     // Respect existing RUST_LOG but still filter noisy crates
-                    format!("{},zenoh_transport=warn,zenoh_runtime=warn,zenoh_protocol=warn,netlink_proto=warn", existing_log)
+                    format!(
+                        "{},zenoh_transport=warn,zenoh_runtime=warn,zenoh_protocol=warn,netlink_proto=warn",
+                        existing_log
+                    )
                 }
                 _ => {
                     // Default configuration
-                    format!("{},zenoh_transport=warn,zenoh_runtime=warn,zenoh_protocol=warn,netlink_proto=warn",
-                           self.log_level.to_filter_string())
+                    format!(
+                        "{},zenoh_transport=warn,zenoh_runtime=warn,zenoh_protocol=warn,netlink_proto=warn",
+                        self.log_level.to_filter_string()
+                    )
                 }
             }
         };
 
-        env::set_var("RUST_LOG", &log_filter);
+        // SAFETY: This is called during single-threaded initialization before any
+        // threads are spawned, so there's no risk of data races.
+        unsafe { env::set_var("RUST_LOG", &log_filter) };
 
         // Initialize tracing with structured format
         tracing_subscriber::fmt()
