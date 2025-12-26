@@ -28,5 +28,11 @@ rtnetlink = "0.18.1"
 # Frontend-specific dependencies
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }
 
+[workspace.package]
+authors = ["Marc Pardo <p13marc@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/p13marc/tcgui"
+homepage = "https://github.com/p13marc/tcgui"
+
 [workspace.metadata]
 rust-version = "1.70"

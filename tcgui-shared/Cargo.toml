@@ -3,7 +3,10 @@ name = "tcgui-shared"
 version = "0.1.0"
 edition = "2024"
 description = "Shared types and utilities for tcgui frontend and backend"
-license = "MIT"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 zenoh = { workspace = true }

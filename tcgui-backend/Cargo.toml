@@ -3,10 +3,10 @@ name = "tcgui-backend"
 version = "0.1.0"
 edition = "2024"
 description = "Privileged backend service for tcgui network operations"
-authors = ["Your Name <you@example.com>"]
-license = "MIT"
-repository = "https://github.com/p13marc/tcgui"
-homepage = "https://github.com/p13marc/tcgui"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["networking", "traffic-control", "tc", "linux", "network-namespaces"]
 categories = ["network-programming", "command-line-utilities"]
 
@@ -63,8 +63,8 @@ tempfile = "3.0"
 # Package metadata for DEB/RPM generation
 [package.metadata.deb]
 name = "tcgui-backend"
-maintainer = "Your Name <you@example.com>"
-copyright = "2024, Your Name <you@example.com>"
+maintainer = "Marc Pardo <p13marc@gmail.com>"
+copyright = "2024, Marc Pardo <p13marc@gmail.com>"
 license-file = ["../LICENSE-MIT", "2"]
 changelog = "../debian/changelog"
 depends = "iproute2, sudo"
