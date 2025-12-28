@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <component type="desktop-application">
   <id>com.github.p13marc.TcGui</id>
   <name>TC GUI</name>
@@ -16,10 +16,12 @@
     </p>
     <p>Features:</p>
     <ul>
-      <li>Configure network delay, loss, corruption, duplication, and reordering</li>
+      <li
+            >Configure network delay, loss, corruption, duplication, and reordering</li>
       <li>Rate limiting with configurable bandwidth</li>
       <li>Network namespace support for container networking</li>
-      <li>Presets for common network conditions (satellite, cellular, poor WiFi)</li>
+      <li
+            >Presets for common network conditions (satellite, cellular, poor WiFi)</li>
       <li>Scenarios for automated network condition sequences</li>
       <li>Real-time bandwidth monitoring</li>
     </ul>
@@ -55,9 +57,9 @@
     <keyword>zenoh</keyword>
   </keywords>
   <releases>
-    <release version="0.1.0" date="2024-12-28">
+    <release version="0.2.0" date="2024-12-28">
       <description>
-        <p>Initial release</p>
+        <p>First public release with Flatpak and Docker packaging</p>
       </description>
     </release>
   </releases>

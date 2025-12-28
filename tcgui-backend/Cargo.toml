@@ -1,6 +1,6 @@
 [package]
 name = "tcgui-backend"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Privileged backend service for tcgui network operations"
 authors.workspace = true
