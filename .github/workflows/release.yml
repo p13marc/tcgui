@@ -18,6 +18,150 @@ env:
 
 jobs:
   # =============================================================================
+  # Build Debian packages for tcgui-frontend
+  # =============================================================================
+  build-deb-frontend:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: ubuntu22.04
+          - os: ubuntu-24.04
+            name: ubuntu24.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build release binary
+        run: cargo build --release -p tcgui-frontend
+
+      - name: Build .deb package for tcgui-frontend
+        run: cargo deb -p tcgui-frontend --no-build
+
+      - name: Rename package with distro suffix
+        run: |
+          cd target/debian
+          for f in *.deb; do
+            mv "$f" "${f%.deb}-${{ matrix.name }}.deb"
+          done
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-tcgui-frontend-${{ matrix.name }}
+          path: target/debian/*.deb
+          if-no-files-found: error
+
+  # =============================================================================
+  # Build Debian packages for tcgui-backend
+  # =============================================================================
+  build-deb-backend:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: ubuntu22.04
+          - os: ubuntu-24.04
+            name: ubuntu24.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build release binary
+        run: cargo build --release -p tcgui-backend
+
+      - name: Build .deb package for tcgui-backend
+        run: cargo deb -p tcgui-backend --no-build
+
+      - name: Rename package with distro suffix
+        run: |
+          cd target/debian
+          for f in *.deb; do
+            mv "$f" "${f%.deb}-${{ matrix.name }}.deb"
+          done
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-tcgui-backend-${{ matrix.name }}
+          path: target/debian/*.deb
+          if-no-files-found: error
+
+  # =============================================================================
+  # Build RPM packages using Fedora container
+  # =============================================================================
+  build-rpm-fedora:
+    runs-on: ubuntu-latest
+    container: fedora:41
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          dnf install -y gcc pkg-config \
+            libxkbcommon-devel wayland-devel openssl-devel perl-FindBin
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install cargo-generate-rpm
+        run: |
+          source $HOME/.cargo/env
+          cargo install cargo-generate-rpm
+
+      - name: Build release binaries
+        run: |
+          source $HOME/.cargo/env
+          cargo build --release -p tcgui-frontend
+          cargo build --release -p tcgui-backend
+
+      - name: Build .rpm packages
+        run: |
+          source $HOME/.cargo/env
+          cargo generate-rpm -p tcgui-frontend
+          cargo generate-rpm -p tcgui-backend
+
+      - name: Rename packages with distro suffix
+        run: |
+          cd target/generate-rpm
+          for f in *.rpm; do
+            mv "$f" "${f%.rpm}-fc41.rpm"
+          done
+
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-fedora41
+          path: target/generate-rpm/*.rpm
+          if-no-files-found: error
+
+  # =============================================================================
   # Build Flatpak for tcgui-frontend
   # =============================================================================
   build-flatpak:
@@ -92,10 +236,11 @@ jobs:
           platforms: linux/amd64
 
   # =============================================================================
-  # Create GitHub Release with Flatpak artifact
+  # Create GitHub Release with all artifacts
   # =============================================================================
   release:
-    needs: [build-flatpak]
+    needs:
+      [build-deb-frontend, build-deb-backend, build-rpm-fedora, build-flatpak]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags') && !cancelled()
     permissions:
@@ -103,7 +248,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Flatpak artifact
+      - name: Download deb-frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: deb-tcgui-frontend-*
+
+      - name: Download deb-backend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: deb-tcgui-backend-*
+
+      - name: Download rpm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: rpm-*
+
+      - name: Download flatpak artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -117,4 +280,6 @@ jobs:
         with:
           generate_release_notes: true
           files: |
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
             artifacts/**/*.flatpak
