@@ -1,0 +1,33 @@
+# Build artifacts
+target/
+*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# CI/CD
+.github/
+.pre-commit-config.yaml
+
+# Development files
+Justfile
+deny.toml
+.actrc
+
+# Flatpak (not needed for Docker)
+flatpak/
+
+# Example files
+example.yml

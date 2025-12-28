@@ -1,0 +1,44 @@
+app-id: com.github.p13marc.TcGui
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: tcgui-frontend
+
+finish-args:
+  # Wayland and X11 display access
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # GPU acceleration for Iced/wgpu
+  - --device=dri
+  # Network access for Zenoh connections to backend
+  - --share=network
+  # Access to config directory
+  - --filesystem=xdg-config/tcgui:create
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/tcgui-frontend/cargo
+    RUST_BACKTRACE: "1"
+
+modules:
+  - name: tcgui-frontend
+    buildsystem: simple
+    build-options:
+      # Allow network during build to fetch crates
+      build-args:
+        - --share=network
+    build-commands:
+      - cargo fetch --manifest-path Cargo.toml
+      - cargo build --release -p tcgui-frontend
+      - install -Dm755 target/release/tcgui-frontend ${FLATPAK_DEST}/bin/tcgui-frontend
+      - install -Dm644 flatpak/com.github.p13marc.TcGui.desktop ${FLATPAK_DEST}/share/applications/com.github.p13marc.TcGui.desktop
+      - install -Dm644 flatpak/com.github.p13marc.TcGui.metainfo.xml ${FLATPAK_DEST}/share/metainfo/com.github.p13marc.TcGui.metainfo.xml
+      - install -Dm644 flatpak/icons/hicolor/scalable/apps/com.github.p13marc.TcGui.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.github.p13marc.TcGui.svg
+      - install -Dm644 flatpak/icons/hicolor/symbolic/apps/com.github.p13marc.TcGui-symbolic.svg ${FLATPAK_DEST}/share/icons/hicolor/symbolic/apps/com.github.p13marc.TcGui-symbolic.svg
+    sources:
+      - type: dir
+        path: ..

@@ -1,0 +1,57 @@
+# Multi-stage Dockerfile for tcgui-backend
+# Build with: docker build -f docker/Dockerfile.backend .
+
+# =============================================================================
+# Stage 1: Build the backend binary
+# =============================================================================
+FROM rust:1.83-bookworm AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace files first for better layer caching
+COPY Cargo.toml Cargo.lock ./
+COPY tcgui-shared ./tcgui-shared
+COPY tcgui-backend ./tcgui-backend
+COPY tcgui-frontend ./tcgui-frontend
+
+# Build the backend in release mode
+RUN cargo build --release -p tcgui-backend
+
+# =============================================================================
+# Stage 2: Create minimal runtime image
+# =============================================================================
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+# - iproute2: provides tc command for traffic control
+# - ca-certificates: for TLS connections
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the built binary
+COPY --from=builder /build/target/release/tcgui-backend /usr/local/bin/tcgui-backend
+
+# Copy default scenarios and presets
+COPY scenarios /usr/share/tcgui/scenarios
+COPY presets /usr/share/tcgui/presets
+
+# Create config directory
+RUN mkdir -p /etc/tcgui
+
+# Ports:
+# - 7447: Zenoh default port (TCP)
+EXPOSE 7447
+
+# The backend needs NET_ADMIN capability to run tc commands
+# Run with: docker run --cap-add=NET_ADMIN ...
+
+ENTRYPOINT ["/usr/local/bin/tcgui-backend"]
+CMD ["--help"]

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3584e4"/>
+      <stop offset="100%" style="stop-color:#1a5fb4"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="url(#bg)"/>
+  <!-- Network/traffic lines -->
+  <path d="M24 64 L44 44 L64 64 L84 44 L104 64" stroke="white" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 84 L44 64 L64 84 L84 64 L104 84" stroke="white" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+  <!-- TC text -->
+  <text x="64" y="108" font-family="sans-serif" font-size="20" font-weight="bold" fill="white" text-anchor="middle">TC</text>
+</svg>
