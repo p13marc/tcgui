@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# Reload systemd daemon
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+fi
+
+echo "To start tcgui-backend:"
+echo "  sudo systemctl enable --now tcgui-backend"
+
+exit 0

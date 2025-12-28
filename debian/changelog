@@ -1,0 +1,13 @@
+tcgui (0.2.0) stable; urgency=medium
+
+  * First public release with Flatpak and Docker packaging
+  * Add workspace version inheritance
+  * Add .deb and .rpm package builds
+
+ -- Marc Pardo <p13marc@gmail.com>  Sat, 28 Dec 2024 12:00:00 +0000
+
+tcgui (0.1.0) stable; urgency=medium
+
+  * Initial release
+
+ -- Marc Pardo <p13marc@gmail.com>  Sat, 21 Oct 2024 12:00:00 +0000

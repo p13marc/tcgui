@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Stop the service before removal
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop tcgui-backend || true
+    systemctl disable tcgui-backend || true
+fi
+
+exit 0
