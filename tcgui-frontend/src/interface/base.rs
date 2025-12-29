@@ -4,8 +4,9 @@
 //! feature-specific components while maintaining the same external API as
 //! the original monolithic interface.
 
-use iced::widget::{checkbox, column, row, slider, text, tooltip};
-use iced::{Element, Task};
+use iced::widget::{checkbox, column, container, row, slider, text, tooltip};
+use iced::{Background, Color, Element, Task};
+use iced_anim::Animation;
 use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
 use tcgui_shared::presets::PresetList;
@@ -300,6 +301,10 @@ impl TcInterface {
                 self.state.chart_expanded = !self.state.chart_expanded;
                 Task::none()
             }
+            TcInterfaceMessage::AnimateTcIntensity(event) => {
+                self.state.tc_active_intensity.update(event);
+                Task::none()
+            }
         }
     }
 
@@ -314,21 +319,42 @@ impl TcInterface {
         let main_row = self.render_main_row(preset_list, theme, zoom);
         let expandable_rows = self.render_expandable_features(theme, zoom);
 
-        // Build chart section if expanded
-
-        if self.state.chart_expanded {
+        // Build content column with optional chart
+        let content = if self.state.chart_expanded {
             let chart_height = scaled(80, zoom);
             let dark_mode = theme.is_dark();
             let chart_element = bandwidth_chart_view(bandwidth_history, chart_height, dark_mode);
 
-            column![main_row, expandable_rows, chart_element]
-                .spacing(scaled_spacing(4, zoom))
-                .into()
+            column![main_row, expandable_rows, chart_element].spacing(scaled_spacing(4, zoom))
         } else {
-            column![main_row, expandable_rows]
-                .spacing(scaled_spacing(4, zoom))
-                .into()
-        }
+            column![main_row, expandable_rows].spacing(scaled_spacing(4, zoom))
+        };
+
+        // Get current animated TC intensity (0.0 = inactive, 1.0 = active)
+        let intensity = *self.state.tc_active_intensity.value();
+
+        // Interpolate background color based on intensity and theme
+        let tc_active = theme.colors.tc_active;
+        let bg_color = Color::from_rgba(tc_active.r, tc_active.g, tc_active.b, 0.1 * intensity);
+
+        // Wrap content in animated container
+        let styled_container =
+            container(content)
+                .padding(scaled_spacing(8, zoom))
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(Background::Color(bg_color)),
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                });
+
+        // Wrap in Animation widget to drive the animation
+        Animation::new(&self.state.tc_active_intensity, styled_container)
+            .on_update(TcInterfaceMessage::AnimateTcIntensity)
+            .into()
     }
 
     /// Render the main interface row with core controls
@@ -431,6 +457,7 @@ impl TcInterface {
     ) -> Element<'a, TcInterfaceMessage> {
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             // Loss: randomly drop packets
@@ -448,7 +475,8 @@ impl TcInterface {
                 text("Packet Loss: randomly drop packets at a specified rate"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             // Delay: add latency to packets
             tooltip(
                 row![
@@ -464,7 +492,8 @@ impl TcInterface {
                 text("Delay: add latency with optional jitter"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             // Duplicate: send duplicate packets
             tooltip(
                 row![
@@ -480,7 +509,8 @@ impl TcInterface {
                 text("Duplicate: send duplicate copies of packets"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             // Reorder: change packet order
             tooltip(
                 row![
@@ -496,7 +526,8 @@ impl TcInterface {
                 text("Reorder: change the order of packets"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             // Corrupt: introduce bit errors
             tooltip(
                 row![
@@ -512,7 +543,8 @@ impl TcInterface {
                 text("Corrupt: introduce random bit errors in packets"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             // Rate Limit: cap bandwidth
             tooltip(
                 row![
@@ -528,7 +560,8 @@ impl TcInterface {
                 text("Rate Limit: cap maximum bandwidth"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(4, zoom))
         .into()
@@ -625,6 +658,7 @@ impl TcInterface {
         let loss_config = &self.state.features.loss.config;
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             tooltip(
@@ -654,7 +688,8 @@ impl TcInterface {
                 text("Percentage of packets to drop randomly"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Corr:")
@@ -682,7 +717,8 @@ impl TcInterface {
                 text("How much loss depends on previous packet (burst loss)"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -698,6 +734,7 @@ impl TcInterface {
         let duplicate_config = &self.state.features.duplicate.config;
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             tooltip(
@@ -727,7 +764,8 @@ impl TcInterface {
                 text("Percentage of packets to duplicate"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Corr:")
@@ -755,7 +793,8 @@ impl TcInterface {
                 text("How much duplication depends on previous packet"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -767,6 +806,7 @@ impl TcInterface {
         let reorder_config = &self.state.features.reorder.config;
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             tooltip(
@@ -796,7 +836,8 @@ impl TcInterface {
                 text("Percentage of packets to reorder"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Gap:")
@@ -822,7 +863,8 @@ impl TcInterface {
                 text("Number of packets to delay before sending"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Corr:")
@@ -850,7 +892,8 @@ impl TcInterface {
                 text("How much reordering depends on previous packet"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -862,6 +905,7 @@ impl TcInterface {
         let corrupt_config = &self.state.features.corrupt.config;
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             tooltip(
@@ -891,7 +935,8 @@ impl TcInterface {
                 text("Percentage of packets with random bit errors"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Corr:")
@@ -919,7 +964,8 @@ impl TcInterface {
                 text("How much corruption depends on previous packet"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -935,6 +981,7 @@ impl TcInterface {
         let rate_config = &self.state.features.rate_limit.config;
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             tooltip(
@@ -962,7 +1009,8 @@ impl TcInterface {
                 text("Maximum bandwidth in kilobits per second"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -974,6 +1022,7 @@ impl TcInterface {
         let delay_config = &self.state.features.delay.config;
         let text_color = theme.colors.text_primary;
         let tooltip_delay = Duration::from_millis(500);
+        let tooltip_style = theme.tooltip_style();
 
         row![
             tooltip(
@@ -1003,7 +1052,8 @@ impl TcInterface {
                 text("Base latency added to each packet in milliseconds"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Jitter:")
@@ -1031,7 +1081,8 @@ impl TcInterface {
                 text("Random variation added to delay (delay +/- jitter)"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
             tooltip(
                 row![
                     text("Corr:")
@@ -1059,7 +1110,8 @@ impl TcInterface {
                 text("How much delay depends on previous packet"),
                 tooltip::Position::Top
             )
-            .delay(tooltip_delay),
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)

@@ -100,10 +100,10 @@ fn apply_tc_configuration_to_interface(
             let _ = tc_interface.update(TcInterfaceMessage::LossChanged(config.loss));
 
             if let Some(correlation) = config.correlation
-                && correlation > 0.0 {
-                    let _ =
-                        tc_interface.update(TcInterfaceMessage::CorrelationChanged(correlation));
-                }
+                && correlation > 0.0
+            {
+                let _ = tc_interface.update(TcInterfaceMessage::CorrelationChanged(correlation));
+            }
         } else {
             // If loss is 0.0, uncheck the Loss checkbox
             let _ = tc_interface.update(TcInterfaceMessage::LossToggled(false));
@@ -116,15 +116,17 @@ fn apply_tc_configuration_to_interface(
                 let _ = tc_interface.update(TcInterfaceMessage::DelayChanged(delay_ms));
 
                 if let Some(jitter) = config.delay_jitter_ms
-                    && jitter > 0.0 {
-                        let _ = tc_interface.update(TcInterfaceMessage::DelayJitterChanged(jitter));
-                    }
+                    && jitter > 0.0
+                {
+                    let _ = tc_interface.update(TcInterfaceMessage::DelayJitterChanged(jitter));
+                }
 
                 if let Some(delay_corr) = config.delay_correlation
-                    && delay_corr > 0.0 {
-                        let _ = tc_interface
-                            .update(TcInterfaceMessage::DelayCorrelationChanged(delay_corr));
-                    }
+                    && delay_corr > 0.0
+                {
+                    let _ = tc_interface
+                        .update(TcInterfaceMessage::DelayCorrelationChanged(delay_corr));
+                }
             } else {
                 // If delay is 0.0, uncheck the Delay checkbox
                 let _ = tc_interface.update(TcInterfaceMessage::DelayToggled(false));
@@ -143,10 +145,11 @@ fn apply_tc_configuration_to_interface(
                 ));
 
                 if let Some(dup_corr) = config.duplicate_correlation
-                    && dup_corr > 0.0 {
-                        let _ = tc_interface
-                            .update(TcInterfaceMessage::DuplicateCorrelationChanged(dup_corr));
-                    }
+                    && dup_corr > 0.0
+                {
+                    let _ = tc_interface
+                        .update(TcInterfaceMessage::DuplicateCorrelationChanged(dup_corr));
+                }
             } else {
                 // If duplicate is 0.0, disable the Duplicate checkbox if enabled
                 if tc_interface.duplicate_enabled() {
@@ -169,15 +172,17 @@ fn apply_tc_configuration_to_interface(
                 ));
 
                 if let Some(reorder_corr) = config.reorder_correlation
-                    && reorder_corr > 0.0 {
-                        let _ = tc_interface
-                            .update(TcInterfaceMessage::ReorderCorrelationChanged(reorder_corr));
-                    }
+                    && reorder_corr > 0.0
+                {
+                    let _ = tc_interface
+                        .update(TcInterfaceMessage::ReorderCorrelationChanged(reorder_corr));
+                }
 
                 if let Some(gap) = config.reorder_gap
-                    && gap > 0 {
-                        let _ = tc_interface.update(TcInterfaceMessage::ReorderGapChanged(gap));
-                    }
+                    && gap > 0
+                {
+                    let _ = tc_interface.update(TcInterfaceMessage::ReorderGapChanged(gap));
+                }
             } else {
                 // If reorder is 0.0, disable the Reorder checkbox
                 if tc_interface.reorder_enabled() {
@@ -200,10 +205,11 @@ fn apply_tc_configuration_to_interface(
                 ));
 
                 if let Some(corrupt_corr) = config.corrupt_correlation
-                    && corrupt_corr > 0.0 {
-                        let _ = tc_interface
-                            .update(TcInterfaceMessage::CorruptCorrelationChanged(corrupt_corr));
-                    }
+                    && corrupt_corr > 0.0
+                {
+                    let _ = tc_interface
+                        .update(TcInterfaceMessage::CorruptCorrelationChanged(corrupt_corr));
+                }
             } else {
                 // If corrupt is 0.0, disable the Corrupt checkbox
                 if tc_interface.corrupt_enabled() {
@@ -334,873 +340,864 @@ pub fn handle_tc_interface_message(
     // Use the provided backend and namespace to route the message directly
     if let Some(backend_group) = backend_manager.backends_mut().get_mut(&backend_name)
         && let Some(namespace_group) = backend_group.namespaces.get_mut(&namespace)
-            && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface_name) {
-                let task = tc_interface.update(tc_message.clone());
+        && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface_name)
+    {
+        let task = tc_interface.update(tc_message.clone());
 
-                // Handle messages that need to be sent to backend
-                let backend_task = match tc_message {
-                    TcInterfaceMessage::LossChanged(_)
-                    | TcInterfaceMessage::CorrelationChanged(_)
-                    | TcInterfaceMessage::DelayChanged(_)
-                    | TcInterfaceMessage::DelayJitterChanged(_)
-                    | TcInterfaceMessage::DelayCorrelationChanged(_)
-                    | TcInterfaceMessage::DuplicatePercentageChanged(_)
-                    | TcInterfaceMessage::DuplicateCorrelationChanged(_)
-                    | TcInterfaceMessage::ReorderPercentageChanged(_)
-                    | TcInterfaceMessage::ReorderCorrelationChanged(_)
-                    | TcInterfaceMessage::ReorderGapChanged(_)
-                    | TcInterfaceMessage::CorruptPercentageChanged(_)
-                    | TcInterfaceMessage::CorruptCorrelationChanged(_)
-                    | TcInterfaceMessage::RateLimitChanged(_) => {
-                        // Auto-apply TC changes immediately
-                        let correlation_value = if tc_interface.correlation_value() > 0.0 {
-                            Some(tc_interface.correlation_value())
-                        } else {
-                            None
-                        };
+        // Handle messages that need to be sent to backend
+        let backend_task = match tc_message {
+            TcInterfaceMessage::LossChanged(_)
+            | TcInterfaceMessage::CorrelationChanged(_)
+            | TcInterfaceMessage::DelayChanged(_)
+            | TcInterfaceMessage::DelayJitterChanged(_)
+            | TcInterfaceMessage::DelayCorrelationChanged(_)
+            | TcInterfaceMessage::DuplicatePercentageChanged(_)
+            | TcInterfaceMessage::DuplicateCorrelationChanged(_)
+            | TcInterfaceMessage::ReorderPercentageChanged(_)
+            | TcInterfaceMessage::ReorderCorrelationChanged(_)
+            | TcInterfaceMessage::ReorderGapChanged(_)
+            | TcInterfaceMessage::CorruptPercentageChanged(_)
+            | TcInterfaceMessage::CorruptCorrelationChanged(_)
+            | TcInterfaceMessage::RateLimitChanged(_) => {
+                // Auto-apply TC changes immediately
+                let correlation_value = if tc_interface.correlation_value() > 0.0 {
+                    Some(tc_interface.correlation_value())
+                } else {
+                    None
+                };
 
-                        // For parameter changes, respect feature checkbox enabled states
-                        let loss_value = if tc_interface.loss_enabled() && tc_interface.loss() > 0.0
-                        {
-                            tc_interface.loss()
-                        } else {
-                            0.0
-                        };
+                // For parameter changes, respect feature checkbox enabled states
+                let loss_value = if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
+                    tc_interface.loss()
+                } else {
+                    0.0
+                };
 
-                        let delay_ms_value = if tc_interface.delay_enabled() {
-                            if tc_interface.delay_ms() > 0.0 {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                Some(10.0) // Default 10ms delay when Delay checkbox enabled but slider not moved
-                            }
-                        } else {
-                            None
-                        };
-
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: loss_value,
-                            correlation: correlation_value,
-                            delay_ms: delay_ms_value,
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
+                let delay_ms_value = if tc_interface.delay_enabled() {
+                    if tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        Some(10.0) // Default 10ms delay when Delay checkbox enabled but slider not moved
                     }
-                    // Handle LossToggled separately to properly handle enabling/disabling Loss feature
-                    TcInterfaceMessage::LossToggled(enabled) => {
-                        // When Loss checkbox is toggled, send appropriate loss value based on enabled state
-                        let loss_value = if enabled {
-                            // When enabling Loss checkbox, use current value or meaningful default
-                            if tc_interface.loss() > 0.0 {
-                                tc_interface.loss()
-                            } else {
-                                1.0 // Default 1% loss when Loss feature is enabled but slider not moved
-                            }
-                        } else {
-                            // When disabling Loss checkbox, send 0.0% to remove loss
-                            0.0
-                        };
+                } else {
+                    None
+                };
 
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: loss_value,
-                            correlation: None,
-                            delay_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                None
-                            },
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: loss_value,
+                    correlation: correlation_value,
+                    delay_ms: delay_ms_value,
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Handle LossToggled separately to properly handle enabling/disabling Loss feature
+            TcInterfaceMessage::LossToggled(enabled) => {
+                // When Loss checkbox is toggled, send appropriate loss value based on enabled state
+                let loss_value = if enabled {
+                    // When enabling Loss checkbox, use current value or meaningful default
+                    if tc_interface.loss() > 0.0 {
+                        tc_interface.loss()
+                    } else {
+                        1.0 // Default 1% loss when Loss feature is enabled but slider not moved
                     }
-                    // Handle DelayToggled separately to properly handle enabling/disabling Delay feature
-                    TcInterfaceMessage::DelayToggled(enabled) => {
-                        // When Delay checkbox is toggled, send appropriate delay value based on enabled state
-                        let delay_ms_value = if enabled {
-                            // When enabling Delay checkbox, use current value or meaningful default
-                            if tc_interface.delay_ms() > 0.0 {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                Some(10.0) // Default 10ms delay when Delay feature is enabled but slider not moved
-                            }
-                        } else {
-                            // When disabling Delay checkbox, send None to remove delay
-                            None
-                        };
+                } else {
+                    // When disabling Loss checkbox, send 0.0% to remove loss
+                    0.0
+                };
 
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
-                                tc_interface.loss()
-                            } else {
-                                0.0
-                            },
-                            correlation: if tc_interface.correlation_value() > 0.0 {
-                                Some(tc_interface.correlation_value())
-                            } else {
-                                None
-                            },
-                            delay_ms: delay_ms_value,
-                            delay_jitter_ms: if enabled && tc_interface.delay_jitter_ms() > 0.0 {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if enabled && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: loss_value,
+                    correlation: None,
+                    delay_ms: if tc_interface.delay_enabled() && tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        None
+                    },
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Handle DelayToggled separately to properly handle enabling/disabling Delay feature
+            TcInterfaceMessage::DelayToggled(enabled) => {
+                // When Delay checkbox is toggled, send appropriate delay value based on enabled state
+                let delay_ms_value = if enabled {
+                    // When enabling Delay checkbox, use current value or meaningful default
+                    if tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        Some(10.0) // Default 10ms delay when Delay feature is enabled but slider not moved
                     }
-                    // Handle DuplicateToggled separately to properly handle enabling/disabling Duplicate feature
-                    TcInterfaceMessage::DuplicateToggled(_) => {
-                        // When Duplicate checkbox is toggled, send appropriate duplicate value based on enabled state
-                        let duplicate_percent_value = if tc_interface.duplicate_enabled() {
-                            // When enabling Duplicate checkbox, use current value or meaningful default
-                            if tc_interface.duplicate_percentage() > 0.0 {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                Some(1.0) // Default 1% duplicate when Duplicate feature is enabled but slider not moved
-                            }
-                        } else {
-                            // When disabling Duplicate checkbox, send None to remove duplicate
-                            None
-                        };
+                } else {
+                    // When disabling Delay checkbox, send None to remove delay
+                    None
+                };
 
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
-                                tc_interface.loss()
-                            } else {
-                                0.0
-                            },
-                            correlation: if tc_interface.correlation_value() > 0.0 {
-                                Some(tc_interface.correlation_value())
-                            } else {
-                                None
-                            },
-                            delay_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                None
-                            },
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: duplicate_percent_value,
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
+                        tc_interface.loss()
+                    } else {
+                        0.0
+                    },
+                    correlation: if tc_interface.correlation_value() > 0.0 {
+                        Some(tc_interface.correlation_value())
+                    } else {
+                        None
+                    },
+                    delay_ms: delay_ms_value,
+                    delay_jitter_ms: if enabled && tc_interface.delay_jitter_ms() > 0.0 {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if enabled && tc_interface.delay_correlation() > 0.0 {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Handle DuplicateToggled separately to properly handle enabling/disabling Duplicate feature
+            TcInterfaceMessage::DuplicateToggled(_) => {
+                // When Duplicate checkbox is toggled, send appropriate duplicate value based on enabled state
+                let duplicate_percent_value = if tc_interface.duplicate_enabled() {
+                    // When enabling Duplicate checkbox, use current value or meaningful default
+                    if tc_interface.duplicate_percentage() > 0.0 {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        Some(1.0) // Default 1% duplicate when Duplicate feature is enabled but slider not moved
                     }
-                    // Handle ReorderToggled separately to properly handle enabling/disabling Reorder feature
-                    TcInterfaceMessage::ReorderToggled(_) => {
-                        // When Reorder checkbox is toggled, send appropriate reorder value based on enabled state
-                        let reorder_percent_value = if tc_interface.reorder_enabled() {
-                            // When enabling Reorder checkbox, use current value or meaningful default
-                            if tc_interface.reorder_percentage() > 0.0 {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                Some(1.0) // Default 1% reorder when Reorder feature is enabled but slider not moved
-                            }
-                        } else {
-                            // When disabling Reorder checkbox, send None to remove reorder
-                            None
-                        };
+                } else {
+                    // When disabling Duplicate checkbox, send None to remove duplicate
+                    None
+                };
 
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
-                                tc_interface.loss()
-                            } else {
-                                0.0
-                            },
-                            correlation: if tc_interface.correlation_value() > 0.0 {
-                                Some(tc_interface.correlation_value())
-                            } else {
-                                None
-                            },
-                            delay_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                None
-                            },
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: reorder_percent_value,
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && reorder_percent_value.is_some()
-                                && tc_interface.reorder_gap() > 0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
+                        tc_interface.loss()
+                    } else {
+                        0.0
+                    },
+                    correlation: if tc_interface.correlation_value() > 0.0 {
+                        Some(tc_interface.correlation_value())
+                    } else {
+                        None
+                    },
+                    delay_ms: if tc_interface.delay_enabled() && tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        None
+                    },
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: duplicate_percent_value,
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Handle ReorderToggled separately to properly handle enabling/disabling Reorder feature
+            TcInterfaceMessage::ReorderToggled(_) => {
+                // When Reorder checkbox is toggled, send appropriate reorder value based on enabled state
+                let reorder_percent_value = if tc_interface.reorder_enabled() {
+                    // When enabling Reorder checkbox, use current value or meaningful default
+                    if tc_interface.reorder_percentage() > 0.0 {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        Some(1.0) // Default 1% reorder when Reorder feature is enabled but slider not moved
                     }
-                    // Handle CorruptToggled separately to properly handle enabling/disabling Corrupt feature
-                    TcInterfaceMessage::CorruptToggled(_) => {
-                        // When Corrupt checkbox is toggled, send appropriate corrupt value based on enabled state
-                        let corrupt_percent_value = if tc_interface.corrupt_enabled() {
-                            // When enabling Corrupt checkbox, use current value or meaningful default
-                            if tc_interface.corrupt_percentage() > 0.0 {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                Some(1.0) // Default 1% corrupt when Corrupt feature is enabled but slider not moved
-                            }
-                        } else {
-                            // When disabling Corrupt checkbox, send None to remove corrupt
-                            None
-                        };
+                } else {
+                    // When disabling Reorder checkbox, send None to remove reorder
+                    None
+                };
 
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
-                                tc_interface.loss()
-                            } else {
-                                0.0
-                            },
-                            correlation: if tc_interface.correlation_value() > 0.0 {
-                                Some(tc_interface.correlation_value())
-                            } else {
-                                None
-                            },
-                            delay_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                None
-                            },
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: corrupt_percent_value,
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
+                        tc_interface.loss()
+                    } else {
+                        0.0
+                    },
+                    correlation: if tc_interface.correlation_value() > 0.0 {
+                        Some(tc_interface.correlation_value())
+                    } else {
+                        None
+                    },
+                    delay_ms: if tc_interface.delay_enabled() && tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        None
+                    },
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: reorder_percent_value,
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && reorder_percent_value.is_some()
+                        && tc_interface.reorder_gap() > 0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Handle CorruptToggled separately to properly handle enabling/disabling Corrupt feature
+            TcInterfaceMessage::CorruptToggled(_) => {
+                // When Corrupt checkbox is toggled, send appropriate corrupt value based on enabled state
+                let corrupt_percent_value = if tc_interface.corrupt_enabled() {
+                    // When enabling Corrupt checkbox, use current value or meaningful default
+                    if tc_interface.corrupt_percentage() > 0.0 {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        Some(1.0) // Default 1% corrupt when Corrupt feature is enabled but slider not moved
                     }
-                    // Handle RateLimitToggled separately to properly handle enabling/disabling Rate Limit feature
-                    TcInterfaceMessage::RateLimitToggled(_) => {
-                        // When Rate Limit checkbox is toggled, send appropriate rate limit value based on enabled state
-                        let rate_limit_value = if tc_interface.rate_limit_enabled() {
-                            // When enabling Rate Limit checkbox, use current value or meaningful default
-                            if tc_interface.rate_limit_kbps() > 0 {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                Some(1000) // Default 1000 kbps rate limit when Rate Limit feature is enabled but slider not moved
-                            }
-                        } else {
-                            // When disabling Rate Limit checkbox, send None to remove rate limit
-                            None
-                        };
+                } else {
+                    // When disabling Corrupt checkbox, send None to remove corrupt
+                    None
+                };
 
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
-                                tc_interface.loss()
-                            } else {
-                                0.0
-                            },
-                            correlation: if tc_interface.correlation_value() > 0.0 {
-                                Some(tc_interface.correlation_value())
-                            } else {
-                                None
-                            },
-                            delay_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                None
-                            },
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: rate_limit_value,
-                        })
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
+                        tc_interface.loss()
+                    } else {
+                        0.0
+                    },
+                    correlation: if tc_interface.correlation_value() > 0.0 {
+                        Some(tc_interface.correlation_value())
+                    } else {
+                        None
+                    },
+                    delay_ms: if tc_interface.delay_enabled() && tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        None
+                    },
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: corrupt_percent_value,
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Handle RateLimitToggled separately to properly handle enabling/disabling Rate Limit feature
+            TcInterfaceMessage::RateLimitToggled(_) => {
+                // When Rate Limit checkbox is toggled, send appropriate rate limit value based on enabled state
+                let rate_limit_value = if tc_interface.rate_limit_enabled() {
+                    // When enabling Rate Limit checkbox, use current value or meaningful default
+                    if tc_interface.rate_limit_kbps() > 0 {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        Some(1000) // Default 1000 kbps rate limit when Rate Limit feature is enabled but slider not moved
                     }
-                    TcInterfaceMessage::InterfaceToggled(enabled) => {
-                        // Send interface up/down command to backend
-                        if enabled {
-                            Task::done(TcGuiMessage::EnableInterface {
-                                backend_name: backend_name.clone(),
-                                namespace: namespace.clone(),
-                                interface: interface_name.clone(),
-                            })
-                        } else {
-                            Task::done(TcGuiMessage::DisableInterface {
-                                backend_name: backend_name.clone(),
-                                namespace: namespace.clone(),
-                                interface: interface_name.clone(),
-                            })
-                        }
-                    }
-                    // Preset messages - apply all TC settings from preset
-                    TcInterfaceMessage::PresetSelected(_) => {
-                        // Preset was applied in TcInterface::update(), now send to backend
-                        Task::done(TcGuiMessage::ApplyTc {
-                            backend_name: backend_name.clone(),
-                            namespace: namespace.clone(),
-                            interface: interface_name.clone(),
-                            loss: if tc_interface.loss_enabled() {
-                                tc_interface.loss()
-                            } else {
-                                0.0
-                            },
-                            correlation: if tc_interface.loss_enabled()
-                                && tc_interface.correlation_value() > 0.0
-                            {
-                                Some(tc_interface.correlation_value())
-                            } else {
-                                None
-                            },
-                            delay_ms: if tc_interface.delay_enabled() {
-                                Some(tc_interface.delay_ms())
-                            } else {
-                                None
-                            },
-                            delay_jitter_ms: if tc_interface.delay_enabled()
-                                && tc_interface.delay_jitter_ms() > 0.0
-                            {
-                                Some(tc_interface.delay_jitter_ms())
-                            } else {
-                                None
-                            },
-                            delay_correlation: if tc_interface.delay_enabled()
-                                && tc_interface.delay_correlation() > 0.0
-                            {
-                                Some(tc_interface.delay_correlation())
-                            } else {
-                                None
-                            },
-                            duplicate_percent: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_percentage() > 0.0
-                            {
-                                Some(tc_interface.duplicate_percentage())
-                            } else {
-                                None
-                            },
-                            duplicate_correlation: if tc_interface.duplicate_enabled()
-                                && tc_interface.duplicate_correlation() > 0.0
-                            {
-                                Some(tc_interface.duplicate_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_percent: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_percentage())
-                            } else {
-                                None
-                            },
-                            reorder_correlation: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_correlation() > 0.0
-                            {
-                                Some(tc_interface.reorder_correlation())
-                            } else {
-                                None
-                            },
-                            reorder_gap: if tc_interface.reorder_enabled()
-                                && tc_interface.reorder_percentage() > 0.0
-                            {
-                                Some(tc_interface.reorder_gap())
-                            } else {
-                                None
-                            },
-                            corrupt_percent: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_percentage() > 0.0
-                            {
-                                Some(tc_interface.corrupt_percentage())
-                            } else {
-                                None
-                            },
-                            corrupt_correlation: if tc_interface.corrupt_enabled()
-                                && tc_interface.corrupt_correlation() > 0.0
-                            {
-                                Some(tc_interface.corrupt_correlation())
-                            } else {
-                                None
-                            },
-                            rate_limit_kbps: if tc_interface.rate_limit_enabled()
-                                && tc_interface.rate_limit_kbps() > 0
-                            {
-                                Some(tc_interface.rate_limit_kbps())
-                            } else {
-                                None
-                            },
-                        })
-                    }
-                    // Toggle preset dropdown is UI-only, no backend action needed
-                    TcInterfaceMessage::TogglePresetDropdown => Task::none(),
-                    // Clear all features - remove the TC qdisc entirely
-                    TcInterfaceMessage::ClearAllFeatures => Task::done(TcGuiMessage::RemoveTc {
+                } else {
+                    // When disabling Rate Limit checkbox, send None to remove rate limit
+                    None
+                };
+
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: if tc_interface.loss_enabled() && tc_interface.loss() > 0.0 {
+                        tc_interface.loss()
+                    } else {
+                        0.0
+                    },
+                    correlation: if tc_interface.correlation_value() > 0.0 {
+                        Some(tc_interface.correlation_value())
+                    } else {
+                        None
+                    },
+                    delay_ms: if tc_interface.delay_enabled() && tc_interface.delay_ms() > 0.0 {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        None
+                    },
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: rate_limit_value,
+                })
+            }
+            TcInterfaceMessage::InterfaceToggled(enabled) => {
+                // Send interface up/down command to backend
+                if enabled {
+                    Task::done(TcGuiMessage::EnableInterface {
                         backend_name: backend_name.clone(),
                         namespace: namespace.clone(),
                         interface: interface_name.clone(),
-                    }),
-                    // Toggle chart visibility is UI-only, no backend action needed
-                    TcInterfaceMessage::ToggleChart => Task::none(),
-                };
-
-                let backend_copy = backend_name.clone();
-                let ns_copy = namespace.clone();
-                let iface_name_copy = interface_name.clone();
-                let interface_task = task.map(move |msg| {
-                    TcGuiMessage::TcInterfaceMessage(
-                        backend_copy.clone(),
-                        ns_copy.clone(),
-                        iface_name_copy.clone(),
-                        msg,
-                    )
-                });
-                return Task::batch([interface_task, backend_task]);
+                    })
+                } else {
+                    Task::done(TcGuiMessage::DisableInterface {
+                        backend_name: backend_name.clone(),
+                        namespace: namespace.clone(),
+                        interface: interface_name.clone(),
+                    })
+                }
             }
+            // Preset messages - apply all TC settings from preset
+            TcInterfaceMessage::PresetSelected(_) => {
+                // Preset was applied in TcInterface::update(), now send to backend
+                Task::done(TcGuiMessage::ApplyTc {
+                    backend_name: backend_name.clone(),
+                    namespace: namespace.clone(),
+                    interface: interface_name.clone(),
+                    loss: if tc_interface.loss_enabled() {
+                        tc_interface.loss()
+                    } else {
+                        0.0
+                    },
+                    correlation: if tc_interface.loss_enabled()
+                        && tc_interface.correlation_value() > 0.0
+                    {
+                        Some(tc_interface.correlation_value())
+                    } else {
+                        None
+                    },
+                    delay_ms: if tc_interface.delay_enabled() {
+                        Some(tc_interface.delay_ms())
+                    } else {
+                        None
+                    },
+                    delay_jitter_ms: if tc_interface.delay_enabled()
+                        && tc_interface.delay_jitter_ms() > 0.0
+                    {
+                        Some(tc_interface.delay_jitter_ms())
+                    } else {
+                        None
+                    },
+                    delay_correlation: if tc_interface.delay_enabled()
+                        && tc_interface.delay_correlation() > 0.0
+                    {
+                        Some(tc_interface.delay_correlation())
+                    } else {
+                        None
+                    },
+                    duplicate_percent: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_percentage() > 0.0
+                    {
+                        Some(tc_interface.duplicate_percentage())
+                    } else {
+                        None
+                    },
+                    duplicate_correlation: if tc_interface.duplicate_enabled()
+                        && tc_interface.duplicate_correlation() > 0.0
+                    {
+                        Some(tc_interface.duplicate_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_percent: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_percentage())
+                    } else {
+                        None
+                    },
+                    reorder_correlation: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_correlation() > 0.0
+                    {
+                        Some(tc_interface.reorder_correlation())
+                    } else {
+                        None
+                    },
+                    reorder_gap: if tc_interface.reorder_enabled()
+                        && tc_interface.reorder_percentage() > 0.0
+                    {
+                        Some(tc_interface.reorder_gap())
+                    } else {
+                        None
+                    },
+                    corrupt_percent: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_percentage() > 0.0
+                    {
+                        Some(tc_interface.corrupt_percentage())
+                    } else {
+                        None
+                    },
+                    corrupt_correlation: if tc_interface.corrupt_enabled()
+                        && tc_interface.corrupt_correlation() > 0.0
+                    {
+                        Some(tc_interface.corrupt_correlation())
+                    } else {
+                        None
+                    },
+                    rate_limit_kbps: if tc_interface.rate_limit_enabled()
+                        && tc_interface.rate_limit_kbps() > 0
+                    {
+                        Some(tc_interface.rate_limit_kbps())
+                    } else {
+                        None
+                    },
+                })
+            }
+            // Toggle preset dropdown is UI-only, no backend action needed
+            TcInterfaceMessage::TogglePresetDropdown => Task::none(),
+            // Clear all features - remove the TC qdisc entirely
+            TcInterfaceMessage::ClearAllFeatures => Task::done(TcGuiMessage::RemoveTc {
+                backend_name: backend_name.clone(),
+                namespace: namespace.clone(),
+                interface: interface_name.clone(),
+            }),
+            // Toggle chart visibility is UI-only, no backend action needed
+            TcInterfaceMessage::ToggleChart => Task::none(),
+            // Animation events are UI-only, handled by the interface component
+            TcInterfaceMessage::AnimateTcIntensity(_) => Task::none(),
+        };
+
+        let backend_copy = backend_name.clone();
+        let ns_copy = namespace.clone();
+        let iface_name_copy = interface_name.clone();
+        let interface_task = task.map(move |msg| {
+            TcGuiMessage::TcInterfaceMessage(
+                backend_copy.clone(),
+                ns_copy.clone(),
+                iface_name_copy.clone(),
+                msg,
+            )
+        });
+        return Task::batch([interface_task, backend_task]);
+    }
     Task::none()
 }
 
