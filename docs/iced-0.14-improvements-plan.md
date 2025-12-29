@@ -93,20 +93,24 @@ column(interface_cards)
 
 ---
 
-### 5. Auto-Scrolling for Scenario Execution
+### 5. Auto-Scrolling for Scenario Execution (Deferred)
 
 **Current State**: Scenario execution progress may require manual scrolling to see current step.
 
 **Improvement**: Use scrollable auto-scrolling to keep the currently executing step visible.
 
-**Files to Modify**:
-- `tcgui-frontend/src/scenario_view.rs`
+**Investigation Results**:
+The implementation requires:
+1. Adding a scrollable with a widget ID around the timeline
+2. Tracking step changes in ScenarioManager
+3. Returning `iced::widget::scrollable::snap_to()` Tasks when steps change
+4. Coordinating between view rendering and state updates
 
-**Implementation**:
-- Track the currently executing step
-- Use scrollable's new auto-scroll capability to scroll to the active step
+This is more complex than initially estimated due to Iced's message-driven architecture.
 
-**Effort**: Medium
+**Status**: Deferred - requires significant refactoring of scenario execution flow
+
+**Effort**: High (was: Medium)
 
 ---
 
