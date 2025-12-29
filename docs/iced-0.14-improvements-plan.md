@@ -134,64 +134,38 @@ This is more complex than initially estimated due to Iced's message-driven archi
 
 ## P3: Lower Priority / Higher Complexity
 
-### 7. Animation with iced_anim
+### 7. Animation with iced_anim (Dependency Added, Implementation Deferred)
 
 **Current State**: TC state changes (active/inactive) are instant with static colors.
 
 **Improvement**: Add smooth animations using the [iced_anim](https://github.com/bradysimon/iced_anim) crate (v0.3.x for Iced 0.14).
+
+**Progress**:
+- [x] Added `iced_anim = "0.3"` dependency to Cargo.toml
+- [ ] Implement animated interface card backgrounds
+- [ ] Implement animated scenario step transitions
 
 **Why iced_anim**:
 - Provides `Animated<T>` wrapper for state values
 - Supports spring-based animations (ideal for interactive UI) and transition-based with easing curves
 - Built-in support for `f32`, `iced::Color`, and `iced::Theme`
 - Can derive `Animate` trait for custom structs
-- Pre-animated widget variants available via `widgets` feature
 
-**Animation Candidates**:
-- TC activation/deactivation (fade between `tc_active` and `tc_inactive` colors)
-- Interface card hover states
-- Scenario step transitions (progress indicator)
-- Button hover/press states
+**Implementation Complexity**:
+Adding animations requires restructuring the component architecture:
+1. `InterfaceState` must include `Animated<Color>` for background transitions
+2. Animation tick messages need to propagate through the message hierarchy
+3. Views must wrap content in `Animation` widgets
+4. The `TcInterface::update()` must handle animation events
 
-**Files to Modify**:
-- `tcgui-frontend/Cargo.toml` (add `iced_anim = "0.3"`)
-- `tcgui-frontend/src/interface.rs`
-- `tcgui-frontend/src/scenario_view.rs`
+**Animation Candidates** (prioritized):
+1. TC activation/deactivation background color fade
+2. Status indicator color transitions
+3. Scenario step progress highlighting
 
-**Implementation Example**:
-```rust
-use iced_anim::{Animated, Spring};
+**Status**: Dependency added; implementation deferred for future PR
 
-// In state
-struct InterfaceState {
-    background_color: Animated<Color>,
-    // ...
-}
-
-// On TC state change
-self.background_color.set_target(if active { 
-    colors.tc_active 
-} else { 
-    colors.tc_inactive 
-});
-
-// In view - wrap with Animation widget
-Animation::new(&self.background_color, |color| {
-    container(content)
-        .style(move |_, _| container::Style {
-            background: Some(Background::Color(color)),
-            ..
-        })
-})
-```
-
-**Considerations**:
-- Adds external dependency
-- Must handle animation events in update loop
-- Keep animations subtle (200-300ms transitions)
-- Test performance impact
-
-**Effort**: Medium-High
+**Effort**: High (requires architectural changes to state management)
 
 ---
 
@@ -237,14 +211,16 @@ Animation::new(&self.background_color, |color| {
 
 ---
 
-## Implementation Order Recommendation
+## Implementation Status
 
-1. **Tooltip delays** (P1) - Quick win, improves UX immediately
-2. **Smart scrollbars** (P1) - Cleaner UI with minimal effort
-3. **Grid for TC controls** (P2) - Code cleanup and visual consistency
-4. **Column wrap** (P2) - Better widescreen support
-5. **Auto-scrolling scenarios** (P2) - Better scenario execution UX
-6. **Animations with iced_anim** (P3) - Polish, implement last
+| Item | Status | Notes |
+|------|--------|-------|
+| Tooltip delays (P1) | **Done** | 500ms delay on all TC controls |
+| Smart scrollbars (P1) | **Done** | State-based opacity (idle/hover/drag) |
+| Grid for TC controls (P2) | **Skipped** | Not suitable - Grid uses equal-sized cells |
+| Column wrap (P2) | **Done** | Interface cards wrap on wide screens |
+| Auto-scrolling scenarios (P2) | **Deferred** | High complexity - requires widget IDs and Task coordination |
+| Animations with iced_anim (P3) | **Deferred** | Dependency added; implementation requires architectural changes |
 
 ---
 

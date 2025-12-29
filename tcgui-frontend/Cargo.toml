@@ -23,6 +23,7 @@ tcgui-shared = { path = "../tcgui-shared" }
 
 # GUI framework
 iced = { workspace = true }
+iced_anim = "0.3"
 
 # Communication
 zenoh = { workspace = true }
