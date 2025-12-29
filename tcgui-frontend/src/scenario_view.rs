@@ -3,7 +3,7 @@
 //! This module provides UI components for displaying and managing scenarios,
 //! including scenario lists, details view, and execution controls.
 
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input, Column};
+use iced::widget::{Column, button, column, container, row, scrollable, space, text, text_input};
 use iced::{Color, Element, Length};
 
 use tcgui_shared::scenario::{ExecutionState, NetworkScenario, ScenarioExecution};
@@ -138,9 +138,10 @@ pub fn render_scenario_view<'a>(
 
     // Show scenario details if selected
     if scenario_manager.is_showing_details()
-        && let Some(scenario) = scenario_manager.get_selected_scenario() {
-            content = content.push(render_scenario_details(scenario, colors.clone(), zoom));
-        }
+        && let Some(scenario) = scenario_manager.get_selected_scenario()
+    {
+        content = content.push(render_scenario_details(scenario, colors.clone(), zoom));
+    }
 
     // Scenario sections for each backend
     for backend_name in &connected_backends {
@@ -153,9 +154,11 @@ pub fn render_scenario_view<'a>(
         ));
     }
 
-    container(scrollable(content.spacing(scaled_spacing(16, zoom))))
-        .padding(scaled_padding(12, zoom))
-        .into()
+    container(
+        scrollable(content.spacing(scaled_spacing(16, zoom))).style(theme.smart_scrollbar_style()),
+    )
+    .padding(scaled_padding(12, zoom))
+    .into()
 }
 
 /// Renders the no backends available message
@@ -253,11 +256,13 @@ fn render_backend_scenarios<'a>(
 
         // Sort buttons
         let mut sort_buttons =
-            row![text("Sort:")
-                .size(scaled(12, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
-                })]
+            row![
+                text("Sort:")
+                    .size(scaled(12, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary)
+                    })
+            ]
             .spacing(scaled_spacing(4, zoom))
             .align_y(iced::Alignment::Center);
 
@@ -325,58 +330,58 @@ fn render_backend_scenarios<'a>(
 
     // Show load errors if any
     if let Some(load_errors) = scenario_manager.get_load_errors(backend_name)
-        && !load_errors.is_empty() {
-            let mut error_items: Column<'_, TcGuiMessage> =
-                column![].spacing(scaled_spacing(4, zoom));
-            for load_error in load_errors {
-                error_items = error_items.push(
-                    container(
-                        column![
-                            text(format!("File: {}", load_error.file_path))
-                                .size(scaled(11, zoom))
-                                .style(move |_| text::Style {
-                                    color: Some(colors.text_primary),
-                                }),
-                            text(format!("  {}", load_error.error.message))
-                                .size(scaled(10, zoom))
-                                .style(move |_| text::Style {
-                                    color: Some(colors.error_red),
-                                }),
-                        ]
-                        .spacing(scaled_spacing(2, zoom)),
-                    )
-                    .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
-                    .style(move |_| {
-                        let err = colors.error_red;
-                        container::Style {
-                            background: Some(iced::Background::Color(Color::from_rgba(
-                                err.r, err.g, err.b, 0.05,
-                            ))),
-                            border: iced::Border {
-                                radius: 4.0.into(),
-                                ..iced::Border::default()
-                            },
-                            ..container::Style::default()
-                        }
-                    }),
-                );
-            }
-
-            backend_content = backend_content.push(
-                column![
-                    text(format!(
-                        "Failed to load {} scenario files",
-                        load_errors.len()
-                    ))
-                    .size(scaled(14, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.warning_orange)
-                    }),
-                    error_items
-                ]
-                .spacing(scaled_spacing(6, zoom)),
+        && !load_errors.is_empty()
+    {
+        let mut error_items: Column<'_, TcGuiMessage> = column![].spacing(scaled_spacing(4, zoom));
+        for load_error in load_errors {
+            error_items = error_items.push(
+                container(
+                    column![
+                        text(format!("File: {}", load_error.file_path))
+                            .size(scaled(11, zoom))
+                            .style(move |_| text::Style {
+                                color: Some(colors.text_primary),
+                            }),
+                        text(format!("  {}", load_error.error.message))
+                            .size(scaled(10, zoom))
+                            .style(move |_| text::Style {
+                                color: Some(colors.error_red),
+                            }),
+                    ]
+                    .spacing(scaled_spacing(2, zoom)),
+                )
+                .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
+                .style(move |_| {
+                    let err = colors.error_red;
+                    container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba(
+                            err.r, err.g, err.b, 0.05,
+                        ))),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..iced::Border::default()
+                        },
+                        ..container::Style::default()
+                    }
+                }),
             );
         }
+
+        backend_content = backend_content.push(
+            column![
+                text(format!(
+                    "Failed to load {} scenario files",
+                    load_errors.len()
+                ))
+                .size(scaled(14, zoom))
+                .style(move |_| text::Style {
+                    color: Some(colors.warning_orange)
+                }),
+                error_items
+            ]
+            .spacing(scaled_spacing(6, zoom)),
+        );
+    }
 
     // Active executions section
     let active_executions = scenario_manager.get_active_executions(backend_name);
@@ -835,15 +840,17 @@ fn render_execution_card<'a>(
 
     // Show error message if failed
     if let ExecutionState::Failed { error } = &execution.state {
-        let mut error_content: Column<'_, TcGuiMessage> = column![text(format!(
-            "Error [{}]: {}",
-            error.category_str(),
-            error.message
-        ))
-        .size(scaled(11, zoom))
-        .style(move |_| text::Style {
-            color: Some(colors.error_red),
-        }),];
+        let mut error_content: Column<'_, TcGuiMessage> = column![
+            text(format!(
+                "Error [{}]: {}",
+                error.category_str(),
+                error.message
+            ))
+            .size(scaled(11, zoom))
+            .style(move |_| text::Style {
+                color: Some(colors.error_red),
+            }),
+        ];
 
         // Show step info if available
         if let Some(step_idx) = error.step_index {

@@ -4,10 +4,11 @@
 //! feature-specific components while maintaining the same external API as
 //! the original monolithic interface.
 
-use iced::widget::{checkbox, column, row, slider, text};
+use iced::widget::{checkbox, column, row, slider, text, tooltip};
 use iced::{Element, Task};
-use tcgui_shared::presets::PresetList;
+use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
+use tcgui_shared::presets::PresetList;
 
 use super::state::InterfaceState;
 use crate::bandwidth_chart::bandwidth_chart_view;
@@ -314,7 +315,6 @@ impl TcInterface {
         let expandable_rows = self.render_expandable_features(theme, zoom);
 
         // Build chart section if expanded
-        
 
         if self.state.chart_expanded {
             let chart_height = scaled(80, zoom);
@@ -338,8 +338,8 @@ impl TcInterface {
         theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
-        use iced::widget::container;
         use iced::Length;
+        use iced::widget::container;
 
         // Colors from theme
         let text_primary = theme.colors.text_primary;
@@ -430,69 +430,105 @@ impl TcInterface {
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            // Loss is always visible as it was in the original main row
-            row![
-                checkbox(self.state.features.loss.enabled)
-                    .on_toggle(TcInterfaceMessage::LossToggled),
-                text("LSS")
-                    .size(scaled(12, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_color)
-                    })
-            ]
-            .spacing(scaled_spacing(2, zoom)),
-            row![
-                checkbox(self.state.features.delay.enabled)
-                    .on_toggle(TcInterfaceMessage::DelayToggled),
-                text("DLY")
-                    .size(scaled(12, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_color)
-                    })
-            ]
-            .spacing(scaled_spacing(2, zoom)),
-            row![
-                checkbox(self.state.features.duplicate.enabled)
-                    .on_toggle(|_| TcInterfaceMessage::DuplicateToggled(())),
-                text("DUP")
-                    .size(scaled(12, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_color)
-                    })
-            ]
-            .spacing(scaled_spacing(2, zoom)),
-            row![
-                checkbox(self.state.features.reorder.enabled)
-                    .on_toggle(|_| TcInterfaceMessage::ReorderToggled(())),
-                text("RO")
-                    .size(scaled(12, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_color)
-                    })
-            ]
-            .spacing(scaled_spacing(2, zoom)),
-            row![
-                checkbox(self.state.features.corrupt.enabled)
-                    .on_toggle(|_| TcInterfaceMessage::CorruptToggled(())),
-                text("CR")
-                    .size(scaled(12, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_color)
-                    })
-            ]
-            .spacing(scaled_spacing(2, zoom)),
-            row![
-                checkbox(self.state.features.rate_limit.enabled)
-                    .on_toggle(|_| TcInterfaceMessage::RateLimitToggled(())),
-                text("RL")
-                    .size(scaled(12, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_color)
-                    })
-            ]
-            .spacing(scaled_spacing(2, zoom)),
+            // Loss: randomly drop packets
+            tooltip(
+                row![
+                    checkbox(self.state.features.loss.enabled)
+                        .on_toggle(TcInterfaceMessage::LossToggled),
+                    text("LSS")
+                        .size(scaled(12, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        })
+                ]
+                .spacing(scaled_spacing(2, zoom)),
+                text("Packet Loss: randomly drop packets at a specified rate"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
+            // Delay: add latency to packets
+            tooltip(
+                row![
+                    checkbox(self.state.features.delay.enabled)
+                        .on_toggle(TcInterfaceMessage::DelayToggled),
+                    text("DLY")
+                        .size(scaled(12, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        })
+                ]
+                .spacing(scaled_spacing(2, zoom)),
+                text("Delay: add latency with optional jitter"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
+            // Duplicate: send duplicate packets
+            tooltip(
+                row![
+                    checkbox(self.state.features.duplicate.enabled)
+                        .on_toggle(|_| TcInterfaceMessage::DuplicateToggled(())),
+                    text("DUP")
+                        .size(scaled(12, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        })
+                ]
+                .spacing(scaled_spacing(2, zoom)),
+                text("Duplicate: send duplicate copies of packets"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
+            // Reorder: change packet order
+            tooltip(
+                row![
+                    checkbox(self.state.features.reorder.enabled)
+                        .on_toggle(|_| TcInterfaceMessage::ReorderToggled(())),
+                    text("RO")
+                        .size(scaled(12, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        })
+                ]
+                .spacing(scaled_spacing(2, zoom)),
+                text("Reorder: change the order of packets"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
+            // Corrupt: introduce bit errors
+            tooltip(
+                row![
+                    checkbox(self.state.features.corrupt.enabled)
+                        .on_toggle(|_| TcInterfaceMessage::CorruptToggled(())),
+                    text("CR")
+                        .size(scaled(12, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        })
+                ]
+                .spacing(scaled_spacing(2, zoom)),
+                text("Corrupt: introduce random bit errors in packets"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
+            // Rate Limit: cap bandwidth
+            tooltip(
+                row![
+                    checkbox(self.state.features.rate_limit.enabled)
+                        .on_toggle(|_| TcInterfaceMessage::RateLimitToggled(())),
+                    text("RL")
+                        .size(scaled(12, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        })
+                ]
+                .spacing(scaled_spacing(2, zoom)),
+                text("Rate Limit: cap maximum bandwidth"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(4, zoom))
         .into()
@@ -588,46 +624,65 @@ impl TcInterface {
     fn render_loss_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let loss_config = &self.state.features.loss.config;
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            text("Loss:")
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                loss_config.percentage,
-                TcInterfaceMessage::LossChanged
+            tooltip(
+                row![
+                    text("Loss:")
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        loss_config.percentage,
+                        TcInterfaceMessage::LossChanged
+                    )
+                    .width(120.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", loss_config.percentage))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Percentage of packets to drop randomly"),
+                tooltip::Position::Top
             )
-            .width(120.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", loss_config.percentage))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Corr:")
-                .size(scaled(12, zoom))
-                .width(40.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                loss_config.correlation,
-                TcInterfaceMessage::CorrelationChanged
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Corr:")
+                        .size(scaled(12, zoom))
+                        .width(40.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        loss_config.correlation,
+                        TcInterfaceMessage::CorrelationChanged
+                    )
+                    .width(100.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", loss_config.correlation))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("How much loss depends on previous packet (burst loss)"),
+                tooltip::Position::Top
             )
-            .width(100.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", loss_config.correlation))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -642,46 +697,65 @@ impl TcInterface {
     ) -> Element<'_, TcInterfaceMessage> {
         let duplicate_config = &self.state.features.duplicate.config;
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            text("Duplicate:")
-                .size(scaled(12, zoom))
-                .width(80.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                duplicate_config.percentage,
-                TcInterfaceMessage::DuplicatePercentageChanged
+            tooltip(
+                row![
+                    text("Duplicate:")
+                        .size(scaled(12, zoom))
+                        .width(80.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        duplicate_config.percentage,
+                        TcInterfaceMessage::DuplicatePercentageChanged
+                    )
+                    .width(120.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", duplicate_config.percentage))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Percentage of packets to duplicate"),
+                tooltip::Position::Top
             )
-            .width(120.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", duplicate_config.percentage))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Corr:")
-                .size(scaled(12, zoom))
-                .width(40.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                duplicate_config.correlation,
-                TcInterfaceMessage::DuplicateCorrelationChanged
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Corr:")
+                        .size(scaled(12, zoom))
+                        .width(40.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        duplicate_config.correlation,
+                        TcInterfaceMessage::DuplicateCorrelationChanged
+                    )
+                    .width(100.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", duplicate_config.correlation))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("How much duplication depends on previous packet"),
+                tooltip::Position::Top
             )
-            .width(100.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", duplicate_config.correlation))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -692,63 +766,91 @@ impl TcInterface {
     fn render_reorder_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let reorder_config = &self.state.features.reorder.config;
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            text("Reorder:")
-                .size(scaled(12, zoom))
-                .width(60.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                reorder_config.percentage,
-                TcInterfaceMessage::ReorderPercentageChanged
+            tooltip(
+                row![
+                    text("Reorder:")
+                        .size(scaled(12, zoom))
+                        .width(60.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        reorder_config.percentage,
+                        TcInterfaceMessage::ReorderPercentageChanged
+                    )
+                    .width(100.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", reorder_config.percentage))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Percentage of packets to reorder"),
+                tooltip::Position::Top
             )
-            .width(100.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", reorder_config.percentage))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Gap:")
-                .size(scaled(12, zoom))
-                .width(35.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(1.0..=10.0, reorder_config.gap as f32, |v| {
-                TcInterfaceMessage::ReorderGapChanged(v as u32)
-            })
-            .width(80.0 * zoom)
-            .step(1.0),
-            text(format!("{}", reorder_config.gap))
-                .size(scaled(12, zoom))
-                .width(35.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Corr:")
-                .size(scaled(12, zoom))
-                .width(40.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                reorder_config.correlation,
-                TcInterfaceMessage::ReorderCorrelationChanged
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Gap:")
+                        .size(scaled(12, zoom))
+                        .width(35.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(1.0..=10.0, reorder_config.gap as f32, |v| {
+                        TcInterfaceMessage::ReorderGapChanged(v as u32)
+                    })
+                    .width(80.0 * zoom)
+                    .step(1.0),
+                    text(format!("{}", reorder_config.gap))
+                        .size(scaled(12, zoom))
+                        .width(35.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Number of packets to delay before sending"),
+                tooltip::Position::Top
             )
-            .width(80.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", reorder_config.correlation))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Corr:")
+                        .size(scaled(12, zoom))
+                        .width(40.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        reorder_config.correlation,
+                        TcInterfaceMessage::ReorderCorrelationChanged
+                    )
+                    .width(80.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", reorder_config.correlation))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("How much reordering depends on previous packet"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -759,46 +861,65 @@ impl TcInterface {
     fn render_corrupt_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let corrupt_config = &self.state.features.corrupt.config;
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            text("Corrupt:")
-                .size(scaled(12, zoom))
-                .width(70.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                corrupt_config.percentage,
-                TcInterfaceMessage::CorruptPercentageChanged
+            tooltip(
+                row![
+                    text("Corrupt:")
+                        .size(scaled(12, zoom))
+                        .width(70.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        corrupt_config.percentage,
+                        TcInterfaceMessage::CorruptPercentageChanged
+                    )
+                    .width(120.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", corrupt_config.percentage))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Percentage of packets with random bit errors"),
+                tooltip::Position::Top
             )
-            .width(120.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", corrupt_config.percentage))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Corr:")
-                .size(scaled(12, zoom))
-                .width(40.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                corrupt_config.correlation,
-                TcInterfaceMessage::CorruptCorrelationChanged
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Corr:")
+                        .size(scaled(12, zoom))
+                        .width(40.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        corrupt_config.correlation,
+                        TcInterfaceMessage::CorruptCorrelationChanged
+                    )
+                    .width(100.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", corrupt_config.correlation))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("How much corruption depends on previous packet"),
+                tooltip::Position::Top
             )
-            .width(100.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", corrupt_config.correlation))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -813,25 +934,35 @@ impl TcInterface {
     ) -> Element<'_, TcInterfaceMessage> {
         let rate_config = &self.state.features.rate_limit.config;
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            text("Rate Limit:")
-                .size(scaled(12, zoom))
-                .width(80.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(1.0..=1000000.0, rate_config.rate_kbps as f32, |v| {
-                TcInterfaceMessage::RateLimitChanged(v as u32)
-            })
-            .width(150.0 * zoom)
-            .step(1.0),
-            text(format!("{} kbps", rate_config.rate_kbps))
-                .size(scaled(12, zoom))
-                .width(80.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
+            tooltip(
+                row![
+                    text("Rate Limit:")
+                        .size(scaled(12, zoom))
+                        .width(80.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(1.0..=1000000.0, rate_config.rate_kbps as f32, |v| {
+                        TcInterfaceMessage::RateLimitChanged(v as u32)
+                    })
+                    .width(150.0 * zoom)
+                    .step(1.0),
+                    text(format!("{} kbps", rate_config.rate_kbps))
+                        .size(scaled(12, zoom))
+                        .width(80.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Maximum bandwidth in kilobits per second"),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)
@@ -842,65 +973,93 @@ impl TcInterface {
     fn render_delay_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let delay_config = &self.state.features.delay.config;
         let text_color = theme.colors.text_primary;
+        let tooltip_delay = Duration::from_millis(500);
 
         row![
-            text("Delay:")
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=5000.0,
-                delay_config.base_ms,
-                TcInterfaceMessage::DelayChanged
+            tooltip(
+                row![
+                    text("Delay:")
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=5000.0,
+                        delay_config.base_ms,
+                        TcInterfaceMessage::DelayChanged
+                    )
+                    .width(100.0 * zoom)
+                    .step(1.0),
+                    text(format!("{:.0}ms", delay_config.base_ms))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Base latency added to each packet in milliseconds"),
+                tooltip::Position::Top
             )
-            .width(100.0 * zoom)
-            .step(1.0),
-            text(format!("{:.0}ms", delay_config.base_ms))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Jitter:")
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=1000.0,
-                delay_config.jitter_ms,
-                TcInterfaceMessage::DelayJitterChanged
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Jitter:")
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=1000.0,
+                        delay_config.jitter_ms,
+                        TcInterfaceMessage::DelayJitterChanged
+                    )
+                    .width(100.0 * zoom)
+                    .step(1.0),
+                    text(format!("{:.0}ms", delay_config.jitter_ms))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("Random variation added to delay (delay +/- jitter)"),
+                tooltip::Position::Top
             )
-            .width(100.0 * zoom)
-            .step(1.0),
-            text(format!("{:.0}ms", delay_config.jitter_ms))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            text("Corr:")
-                .size(scaled(12, zoom))
-                .width(40.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
-            slider(
-                0.0..=100.0,
-                delay_config.correlation,
-                TcInterfaceMessage::DelayCorrelationChanged
+            .delay(tooltip_delay),
+            tooltip(
+                row![
+                    text("Corr:")
+                        .size(scaled(12, zoom))
+                        .width(40.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                    slider(
+                        0.0..=100.0,
+                        delay_config.correlation,
+                        TcInterfaceMessage::DelayCorrelationChanged
+                    )
+                    .width(80.0 * zoom)
+                    .step(0.1),
+                    text(format!("{:.1}%", delay_config.correlation))
+                        .size(scaled(12, zoom))
+                        .width(50.0 * zoom)
+                        .style(move |_| text::Style {
+                            color: Some(text_color)
+                        }),
+                ]
+                .spacing(scaled_spacing(4, zoom))
+                .align_y(iced::Alignment::Center),
+                text("How much delay depends on previous packet"),
+                tooltip::Position::Top
             )
-            .width(80.0 * zoom)
-            .step(0.1),
-            text(format!("{:.1}%", delay_config.correlation))
-                .size(scaled(12, zoom))
-                .width(50.0 * zoom)
-                .style(move |_| text::Style {
-                    color: Some(text_color)
-                }),
+            .delay(tooltip_delay),
         ]
         .spacing(scaled_spacing(8, zoom))
         .align_y(iced::Alignment::Center)

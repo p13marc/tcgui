@@ -3,7 +3,8 @@
 //! Provides centralized color management with light and dark mode support.
 //! All UI components should use colors from the theme rather than hardcoded values.
 
-use iced::Color;
+use iced::widget::scrollable::{self, AutoScroll, Rail, Scroller, Status};
+use iced::{Background, Border, Color, Shadow};
 
 /// Theme mode selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -190,6 +191,66 @@ impl Theme {
     /// Check if dark mode is active.
     pub fn is_dark(&self) -> bool {
         self.mode == ThemeMode::Dark
+    }
+
+    /// Create a smart scrollbar style function for this theme.
+    ///
+    /// Smart scrollbars are semi-transparent when idle and become fully visible
+    /// when hovered or dragged, providing a cleaner UI while maintaining usability.
+    pub fn smart_scrollbar_style(&self) -> impl Fn(&iced::Theme, Status) -> scrollable::Style {
+        let is_dark = self.is_dark();
+
+        move |_theme: &iced::Theme, status: Status| {
+            // Base colors depend on theme mode
+            let (rail_bg, scroller_idle, scroller_hover, scroller_drag) = if is_dark {
+                (
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.05), // Very subtle rail
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.15), // Semi-transparent idle
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.35), // More visible on hover
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.5),  // Fully visible when dragging
+                )
+            } else {
+                (
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.05), // Very subtle rail
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.15), // Semi-transparent idle
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.35), // More visible on hover
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.5),  // Fully visible when dragging
+                )
+            };
+
+            // Determine scroller color based on status
+            let scroller_color = match status {
+                Status::Active { .. } => scroller_idle,
+                Status::Hovered { .. } => scroller_hover,
+                Status::Dragged { .. } => scroller_drag,
+            };
+
+            let rail = Rail {
+                background: Some(Background::Color(rail_bg)),
+                border: Border::default(),
+                scroller: Scroller {
+                    background: Background::Color(scroller_color),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                },
+            };
+
+            scrollable::Style {
+                container: iced::widget::container::Style::default(),
+                vertical_rail: rail,
+                horizontal_rail: rail,
+                gap: None,
+                auto_scroll: AutoScroll {
+                    background: Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7)),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    icon: Color::WHITE,
+                },
+            }
+        }
     }
 }
 
