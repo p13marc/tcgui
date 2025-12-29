@@ -527,6 +527,10 @@ impl TcGui {
                 self.save_settings();
                 Task::none()
             }
+            TcGuiMessage::ToggleInterfaceViewMode => {
+                self.ui_state.toggle_interface_view_mode();
+                Task::none()
+            }
             // Namespace filters (persistent)
             TcGuiMessage::ToggleHostFilter => {
                 self.ui_state.toggle_host_filter();

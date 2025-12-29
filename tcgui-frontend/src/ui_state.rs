@@ -16,6 +16,16 @@ pub enum AppTab {
     Scenarios,
 }
 
+/// View mode for interface display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterfaceViewMode {
+    /// Card view with full controls and bandwidth charts
+    #[default]
+    Cards,
+    /// Compact table view for overview
+    Table,
+}
+
 /// Interface selection dialog state
 #[derive(Debug, Clone, Default)]
 pub struct InterfaceSelectionDialog {
@@ -101,6 +111,8 @@ pub struct UiStateManager {
     theme: Theme,
     /// Namespace type filter for interface visibility
     namespace_filter: NamespaceFilter,
+    /// View mode for interface display (Cards or Table)
+    interface_view_mode: InterfaceViewMode,
 }
 
 impl Default for UiStateManager {
@@ -113,6 +125,7 @@ impl Default for UiStateManager {
             zoom_level: ZOOM_DEFAULT,
             theme: Theme::default(),
             namespace_filter: NamespaceFilter::default(),
+            interface_view_mode: InterfaceViewMode::default(),
         }
     }
 }
@@ -139,6 +152,7 @@ impl UiStateManager {
             zoom_level: settings.zoom_level,
             theme,
             namespace_filter: settings.namespace_filter.clone().into(),
+            interface_view_mode: InterfaceViewMode::default(),
         }
     }
 
@@ -308,6 +322,24 @@ impl UiStateManager {
     /// Set the current tab
     pub fn set_current_tab(&mut self, tab: AppTab) {
         self.current_tab = tab;
+    }
+
+    /// Get the current interface view mode
+    pub fn interface_view_mode(&self) -> InterfaceViewMode {
+        self.interface_view_mode
+    }
+
+    /// Set the interface view mode
+    pub fn set_interface_view_mode(&mut self, mode: InterfaceViewMode) {
+        self.interface_view_mode = mode;
+    }
+
+    /// Toggle between Cards and Table view modes
+    pub fn toggle_interface_view_mode(&mut self) {
+        self.interface_view_mode = match self.interface_view_mode {
+            InterfaceViewMode::Cards => InterfaceViewMode::Table,
+            InterfaceViewMode::Table => InterfaceViewMode::Cards,
+        };
     }
 
     /// Show the interface selection dialog
@@ -602,10 +634,12 @@ mod tests {
         // Select interface
         manager.toggle_execution_interface("eth0".to_string());
         assert!(manager.can_confirm_execution());
-        assert!(manager
-            .interface_selection_dialog()
-            .selected_interfaces
-            .contains("eth0"));
+        assert!(
+            manager
+                .interface_selection_dialog()
+                .selected_interfaces
+                .contains("eth0")
+        );
 
         // Toggle loop execution
         assert!(!manager.interface_selection_dialog().loop_execution);
@@ -636,10 +670,12 @@ mod tests {
 
         // Change namespace - interfaces should be cleared
         manager.select_execution_namespace("ns2".to_string());
-        assert!(manager
-            .interface_selection_dialog()
-            .selected_interfaces
-            .is_empty());
+        assert!(
+            manager
+                .interface_selection_dialog()
+                .selected_interfaces
+                .is_empty()
+        );
     }
 
     #[test]

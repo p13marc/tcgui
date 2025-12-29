@@ -103,6 +103,10 @@ pub enum Icon {
     CircleDot,
     /// Square with checkmark - checked checkbox
     SquareCheck,
+    /// Grid layout - card view mode
+    LayoutGrid,
+    /// Table - table view mode
+    Table,
 }
 
 impl Icon {
@@ -161,6 +165,8 @@ impl Icon {
             Icon::Wrench => include_bytes!("../icons/wrench.svg"),
             Icon::CircleDot => include_bytes!("../icons/circle-dot.svg"),
             Icon::SquareCheck => include_bytes!("../icons/square-check.svg"),
+            Icon::LayoutGrid => include_bytes!("../icons/layout-grid.svg"),
+            Icon::Table => include_bytes!("../icons/table.svg"),
         }
     }
 

@@ -9,8 +9,9 @@ use crate::icons::Icon;
 use crate::messages::TcGuiMessage;
 use crate::scenario_manager::ScenarioManager;
 use crate::scenario_view;
+use crate::table_view;
 use crate::theme::{Theme, ThemeMode};
-use crate::ui_state::UiStateManager;
+use crate::ui_state::{InterfaceViewMode, UiStateManager};
 use iced::widget::{button, checkbox, column, container, row, scrollable, space, text};
 use iced::{Color, Element, Length};
 use std::collections::HashMap;
@@ -253,6 +254,27 @@ fn render_header<'a>(
             ..button::Style::default()
         });
 
+    // View mode toggle button (Cards / Table)
+    let view_mode = ui_state.interface_view_mode();
+    let view_icon = match view_mode {
+        InterfaceViewMode::Cards => Icon::LayoutGrid,
+        InterfaceViewMode::Table => Icon::Table,
+    };
+    let view_mode_button =
+        button(view_icon.svg_sized_colored(scaled(14, zoom), colors.text_primary))
+            .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
+            .on_press(TcGuiMessage::ToggleInterfaceViewMode)
+            .style(move |_, _| button::Style {
+                background: Some(iced::Background::Color(colors.background_card)),
+                text_color: colors.text_primary,
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: colors.text_secondary,
+                },
+                ..button::Style::default()
+            });
+
     // Zoom indicator (display only - use Ctrl+Scroll or Ctrl+/- to zoom)
     let zoom_indicator = row![
         Icon::Search.svg_sized_colored(scaled(12, zoom), colors.text_secondary),
@@ -359,6 +381,7 @@ fn render_header<'a>(
             status_line,
             space::horizontal(),
             filter_row,
+            view_mode_button,
             theme_button,
             zoom_indicator,
         ]
@@ -701,31 +724,41 @@ fn render_backend_content<'a>(
     zoom: f32,
     theme: &'a Theme,
 ) -> Element<'a, TcGuiMessage> {
-    let namespace_sections = render_namespace_sections(
-        backend_manager,
-        bandwidth_history,
-        ui_state,
-        colors.clone(),
-        zoom,
-        theme,
-    );
-    let all_namespaces_column: Element<_> = column(namespace_sections)
-        .spacing(scaled_spacing(8, zoom))
-        .into();
+    // Check view mode to determine which layout to render
+    match ui_state.interface_view_mode() {
+        InterfaceViewMode::Table => {
+            // Render compact table view
+            table_view::render_interface_table(backend_manager, theme, zoom)
+        }
+        InterfaceViewMode::Cards => {
+            // Render full card view with namespace sections
+            let namespace_sections = render_namespace_sections(
+                backend_manager,
+                bandwidth_history,
+                ui_state,
+                colors.clone(),
+                zoom,
+                theme,
+            );
+            let all_namespaces_column: Element<_> = column(namespace_sections)
+                .spacing(scaled_spacing(8, zoom))
+                .into();
 
-    // Add UI stats footer
-    let ui_stats_footer = render_ui_stats_footer(ui_state, colors.clone(), zoom);
+            // Add UI stats footer
+            let ui_stats_footer = render_ui_stats_footer(ui_state, colors.clone(), zoom);
 
-    let content_with_footer =
-        column![all_namespaces_column, ui_stats_footer,].spacing(scaled_spacing(8, zoom));
+            let content_with_footer =
+                column![all_namespaces_column, ui_stats_footer,].spacing(scaled_spacing(8, zoom));
 
-    // Enhanced scrollable content with smart scrollbar styling
-    let scrollable_content = scrollable(content_with_footer)
-        .height(Length::Fill)
-        .width(Length::Fill)
-        .style(theme.smart_scrollbar_style());
+            // Enhanced scrollable content with smart scrollbar styling
+            let scrollable_content = scrollable(content_with_footer)
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .style(theme.smart_scrollbar_style());
 
-    scrollable_content.into()
+            scrollable_content.into()
+        }
+    }
 }
 
 /// Renders all namespace sections
