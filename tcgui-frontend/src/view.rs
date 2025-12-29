@@ -899,8 +899,11 @@ fn render_namespace_section<'a>(
             zoom,
             bandwidth_history,
         );
-        let interfaces_column: Element<_> =
-            column(interfaces).spacing(scaled_spacing(4, zoom)).into();
+        // Use wrapping column to flow interface cards horizontally on wide screens
+        let interfaces_column: Element<_> = column(interfaces)
+            .spacing(scaled_spacing(8, zoom))
+            .wrap()
+            .into();
 
         // Modern namespace container with card styling
         container(column![namespace_header, interfaces_column].spacing(scaled_spacing(16, zoom)))

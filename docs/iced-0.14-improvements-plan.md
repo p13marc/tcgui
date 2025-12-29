@@ -53,32 +53,18 @@ tooltip(
 
 ## P2: Medium Priority Improvements
 
-### 3. Grid Widget for TC Controls
+### 3. ~~Grid Widget for TC Controls~~ (Not Applicable)
 
-**Current State**: TC feature controls (Loss, Delay, Duplicate, etc.) use manual row/column layouts.
+**Evaluation**: After investigating the Iced 0.14 Grid widget, it was determined to be unsuitable for TC controls:
 
-**Improvement**: Use the new `grid` widget for consistent alignment of checkboxes, sliders, and value inputs.
+- Grid uses equal-sized cells (designed for responsive image galleries)
+- TC controls require different column widths (labels ~50px, sliders ~120px, values ~50px)
+- Current row-based layout with explicit widths provides better control
+- The existing implementation with tooltips works well
 
-**Files to Modify**:
-- `tcgui-frontend/src/interface.rs`
+**Status**: Skipped - current row-based approach is more appropriate
 
-**Implementation**:
-```rust
-grid![
-    [checkbox("Loss"), slider(0..=100, loss_value), text_input(loss_str)],
-    [checkbox("Delay"), slider(0..=10000, delay_value), text_input(delay_str)],
-    // ...
-]
-.column_spacing(8)
-.row_spacing(4)
-```
-
-**Benefits**:
-- Consistent column alignment across all TC features
-- Cleaner code than nested row/column combinations
-- Easier to add new TC features
-
-**Effort**: Medium
+---
 
 ---
 
