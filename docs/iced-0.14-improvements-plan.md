@@ -220,7 +220,8 @@ Adding animations requires restructuring the component architecture:
 | Grid for TC controls (P2) | **Skipped** | Not suitable - Grid uses equal-sized cells |
 | Column wrap (P2) | **Done** | Interface cards wrap on wide screens |
 | Auto-scrolling scenarios (P2) | **Deferred** | High complexity - requires widget IDs and Task coordination |
-| Animations with iced_anim (P3) | **Deferred** | Dependency added; implementation requires architectural changes |
+| Animations with iced_anim (P3) | **Done** | TC active/inactive background fade animation |
+| Themed tooltips | **Done** | Dark background with light text for visibility |
 
 ---
 
