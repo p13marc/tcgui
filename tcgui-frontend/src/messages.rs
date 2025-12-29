@@ -89,6 +89,8 @@ pub enum TcGuiMessage {
     ZoomReset,
     // Theme toggle
     ToggleTheme,
+    // View mode toggle
+    ToggleInterfaceViewMode,
     // Namespace type filter toggles
     ToggleHostFilter,
     ToggleNamespaceTypeFilter,

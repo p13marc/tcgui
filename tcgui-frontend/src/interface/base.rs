@@ -1132,20 +1132,18 @@ impl TcInterface {
     // - add_status_message: Not used in current implementation
     // - mark_config_applied: Not used in current implementation
 
-    /// Get interface name (only used in tests)
+    /// Get interface name (for tests, use name() for general use)
     #[cfg(test)]
     pub fn interface_name(&self) -> &str {
         &self.state.name
     }
 
-    /// Check if interface is up (only used in tests)
-    #[cfg(test)]
+    /// Check if interface is up
     pub fn is_up(&self) -> bool {
         self.state.is_up()
     }
 
-    /// Check if TC qdisc is configured (only used in tests)
-    #[cfg(test)]
+    /// Check if TC qdisc is configured
     pub fn has_tc_qdisc(&self) -> bool {
         self.state.has_tc_qdisc()
     }

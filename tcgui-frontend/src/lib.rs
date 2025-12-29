@@ -15,6 +15,7 @@ pub mod query_manager;
 pub mod scenario_manager;
 pub mod scenario_view;
 pub mod settings;
+pub mod table_view;
 pub mod theme;
 pub mod ui_state;
 pub mod view;
