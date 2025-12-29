@@ -193,6 +193,42 @@ impl Theme {
         self.mode == ThemeMode::Dark
     }
 
+    /// Create a tooltip style for this theme.
+    ///
+    /// Tooltips have a solid background with good contrast for readability
+    /// in both light and dark modes, with a subtle border and shadow.
+    pub fn tooltip_style(&self) -> iced::widget::container::Style {
+        let (bg_color, text_color, border_color) = if self.is_dark() {
+            (
+                Color::from_rgb(0.2, 0.2, 0.24),   // Dark surface
+                Color::from_rgb(0.93, 0.93, 0.93), // Light text
+                Color::from_rgb(0.35, 0.35, 0.4),  // Subtle border
+            )
+        } else {
+            (
+                Color::from_rgb(0.15, 0.15, 0.18), // Dark background for contrast
+                Color::from_rgb(0.95, 0.95, 0.95), // Light text
+                Color::from_rgb(0.1, 0.1, 0.12),   // Dark border
+            )
+        };
+
+        iced::widget::container::Style {
+            background: Some(Background::Color(bg_color)),
+            text_color: Some(text_color),
+            border: Border {
+                radius: 4.0.into(),
+                width: 1.0,
+                color: border_color,
+            },
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                offset: iced::Vector::new(0.0, 2.0),
+                blur_radius: 4.0,
+            },
+            snap: false,
+        }
+    }
+
     /// Create a smart scrollbar style function for this theme.
     ///
     /// Smart scrollbars are semi-transparent when idle and become fully visible
