@@ -534,29 +534,31 @@ fn render_active_interfaces(
         row(top_interfaces).spacing(scaled_spacing(6, zoom)).into()
     } else {
         // Show placeholder when no active interfaces to maintain consistent layout
-        row![container(
-            row![
-                Icon::BarChart3.svg_sized_colored(scaled(11, zoom), colors.text_secondary),
-                text(" No active traffic")
-                    .size(scaled(11, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(colors.text_secondary)
-                    })
-            ]
-            .align_y(iced::Alignment::Center)
-        )
-        .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
-        .style(move |_| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(
-                0.4, 0.4, 0.4, 0.08,
-            ))),
-            border: iced::Border {
-                radius: 3.0.into(),
-                width: 0.0,
-                color: Color::TRANSPARENT,
-            },
-            ..container::Style::default()
-        })]
+        row![
+            container(
+                row![
+                    Icon::BarChart3.svg_sized_colored(scaled(11, zoom), colors.text_secondary),
+                    text(" No active traffic")
+                        .size(scaled(11, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(colors.text_secondary)
+                        })
+                ]
+                .align_y(iced::Alignment::Center)
+            )
+            .padding([scaled_padding(4, zoom), scaled_padding(8, zoom)])
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.4, 0.4, 0.4, 0.08,
+                ))),
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                ..container::Style::default()
+            })
+        ]
         .into()
     }
 }
@@ -717,10 +719,11 @@ fn render_backend_content<'a>(
     let content_with_footer =
         column![all_namespaces_column, ui_stats_footer,].spacing(scaled_spacing(8, zoom));
 
-    // Enhanced scrollable content with modern styling
+    // Enhanced scrollable content with smart scrollbar styling
     let scrollable_content = scrollable(content_with_footer)
         .height(Length::Fill)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .style(theme.smart_scrollbar_style());
 
     scrollable_content.into()
 }
@@ -976,15 +979,17 @@ fn render_namespace_header<'a>(
         ]
         .spacing(scaled_spacing(2, zoom))
     } else {
-        column![row![
-            namespace_icon.svg_sized_colored(scaled(20, zoom), colors.text_primary),
-            text(format!(" {} ({})", display_name, backend_name))
-                .size(scaled(20, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.text_primary),
-                })
+        column![
+            row![
+                namespace_icon.svg_sized_colored(scaled(20, zoom), colors.text_primary),
+                text(format!(" {} ({})", display_name, backend_name))
+                    .size(scaled(20, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_primary),
+                    })
+            ]
+            .align_y(iced::Alignment::Center)
         ]
-        .align_y(iced::Alignment::Center)]
     };
 
     // Enhanced toggle button with modern styling
@@ -1227,55 +1232,57 @@ fn render_ui_stats_footer(
             String::new()
         };
 
-        container(column![row![
-            text(format!("{}{}", stats_text, details_text))
-                .size(scaled(11, zoom))
-                .style(move |_| text::Style {
-                    color: Some(colors.text_secondary)
-                }),
-            space::horizontal(),
-            button(text("Show All").size(scaled(11, zoom)))
-                .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
-                .on_press(TcGuiMessage::ShowAllNamespaces)
-                .style(move |_, _| button::Style {
-                    background: Some(iced::Background::Color(colors.primary_blue)),
-                    text_color: Color::WHITE,
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        width: 0.0,
-                        color: Color::TRANSPARENT,
-                    },
-                    ..button::Style::default()
-                }),
-            button(text("Show All Backends").size(scaled(11, zoom)))
-                .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
-                .on_press(TcGuiMessage::ShowAllBackends)
-                .style(move |_, _| button::Style {
-                    background: Some(iced::Background::Color(colors.success_green)),
-                    text_color: Color::WHITE,
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        width: 0.0,
-                        color: Color::TRANSPARENT,
-                    },
-                    ..button::Style::default()
-                }),
-            button(text("Reset").size(scaled(11, zoom)))
-                .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
-                .on_press(TcGuiMessage::ResetUiState)
-                .style(move |_, _| button::Style {
-                    background: Some(iced::Background::Color(colors.warning_orange)),
-                    text_color: Color::WHITE,
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        width: 0.0,
-                        color: Color::TRANSPARENT,
-                    },
-                    ..button::Style::default()
-                }),
-        ]
-        .spacing(scaled_spacing(6, zoom))
-        .align_y(iced::Alignment::Center)])
+        container(column![
+            row![
+                text(format!("{}{}", stats_text, details_text))
+                    .size(scaled(11, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_secondary)
+                    }),
+                space::horizontal(),
+                button(text("Show All").size(scaled(11, zoom)))
+                    .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
+                    .on_press(TcGuiMessage::ShowAllNamespaces)
+                    .style(move |_, _| button::Style {
+                        background: Some(iced::Background::Color(colors.primary_blue)),
+                        text_color: Color::WHITE,
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
+                        ..button::Style::default()
+                    }),
+                button(text("Show All Backends").size(scaled(11, zoom)))
+                    .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
+                    .on_press(TcGuiMessage::ShowAllBackends)
+                    .style(move |_, _| button::Style {
+                        background: Some(iced::Background::Color(colors.success_green)),
+                        text_color: Color::WHITE,
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
+                        ..button::Style::default()
+                    }),
+                button(text("Reset").size(scaled(11, zoom)))
+                    .padding([scaled_padding(3, zoom), scaled_padding(6, zoom)])
+                    .on_press(TcGuiMessage::ResetUiState)
+                    .style(move |_, _| button::Style {
+                        background: Some(iced::Background::Color(colors.warning_orange)),
+                        text_color: Color::WHITE,
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
+                        ..button::Style::default()
+                    }),
+            ]
+            .spacing(scaled_spacing(6, zoom))
+            .align_y(iced::Alignment::Center)
+        ])
         .padding(scaled_padding(10, zoom))
         .style(move |_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
