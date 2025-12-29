@@ -3,6 +3,8 @@
 //! This module leverages the structured configuration types from Sprint 1
 //! to provide clean state management across all interface components.
 
+use iced_anim::{Animated, transition::Easing};
+use std::time::Duration;
 use tcgui_shared::{InterfaceFeatureStates, NetworkBandwidthStats};
 
 /// Centralized state for a network interface and all its components
@@ -41,7 +43,14 @@ pub struct InterfaceState {
 
     /// Whether the bandwidth chart is expanded/visible
     pub chart_expanded: bool,
+
+    /// Animated TC active intensity (0.0 = inactive, 1.0 = active).
+    /// Used to interpolate background color between theme colors in view.
+    pub tc_active_intensity: Animated<f32>,
 }
+
+/// Animation duration for background color transitions
+const BG_ANIMATION_DURATION: Duration = Duration::from_millis(300);
 
 impl InterfaceState {
     /// Create new interface state with defaults
@@ -58,6 +67,10 @@ impl InterfaceState {
             applying: false,
             applying_interface_state: false,
             chart_expanded: false,
+            tc_active_intensity: Animated::new(
+                0.0,
+                Easing::EASE_IN_OUT.with_duration(BG_ANIMATION_DURATION),
+            ),
         }
     }
 
@@ -107,8 +120,15 @@ impl InterfaceState {
         self.has_tc_qdisc
     }
 
-    /// Set interface up/down state from backend update
+    /// Set interface up/down state from backend update.
+    /// Also triggers the TC active intensity animation when TC state changes.
     pub fn set_interface_state(&mut self, is_up: bool, has_tc_qdisc: bool) {
+        // Trigger animation if TC state changed
+        if self.has_tc_qdisc != has_tc_qdisc {
+            let target = if has_tc_qdisc { 1.0 } else { 0.0 };
+            self.tc_active_intensity.set_target(target);
+        }
+
         self.is_up = is_up;
         self.has_tc_qdisc = has_tc_qdisc;
     }

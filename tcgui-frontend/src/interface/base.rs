@@ -4,8 +4,9 @@
 //! feature-specific components while maintaining the same external API as
 //! the original monolithic interface.
 
-use iced::widget::{checkbox, column, row, slider, text, tooltip};
-use iced::{Element, Task};
+use iced::widget::{checkbox, column, container, row, slider, text, tooltip};
+use iced::{Background, Color, Element, Task};
+use iced_anim::Animation;
 use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
 use tcgui_shared::presets::PresetList;
@@ -300,6 +301,10 @@ impl TcInterface {
                 self.state.chart_expanded = !self.state.chart_expanded;
                 Task::none()
             }
+            TcInterfaceMessage::AnimateTcIntensity(event) => {
+                self.state.tc_active_intensity.update(event);
+                Task::none()
+            }
         }
     }
 
@@ -314,21 +319,42 @@ impl TcInterface {
         let main_row = self.render_main_row(preset_list, theme, zoom);
         let expandable_rows = self.render_expandable_features(theme, zoom);
 
-        // Build chart section if expanded
-
-        if self.state.chart_expanded {
+        // Build content column with optional chart
+        let content = if self.state.chart_expanded {
             let chart_height = scaled(80, zoom);
             let dark_mode = theme.is_dark();
             let chart_element = bandwidth_chart_view(bandwidth_history, chart_height, dark_mode);
 
-            column![main_row, expandable_rows, chart_element]
-                .spacing(scaled_spacing(4, zoom))
-                .into()
+            column![main_row, expandable_rows, chart_element].spacing(scaled_spacing(4, zoom))
         } else {
-            column![main_row, expandable_rows]
-                .spacing(scaled_spacing(4, zoom))
-                .into()
-        }
+            column![main_row, expandable_rows].spacing(scaled_spacing(4, zoom))
+        };
+
+        // Get current animated TC intensity (0.0 = inactive, 1.0 = active)
+        let intensity = *self.state.tc_active_intensity.value();
+
+        // Interpolate background color based on intensity and theme
+        let tc_active = theme.colors.tc_active;
+        let bg_color = Color::from_rgba(tc_active.r, tc_active.g, tc_active.b, 0.1 * intensity);
+
+        // Wrap content in animated container
+        let styled_container =
+            container(content)
+                .padding(scaled_spacing(8, zoom))
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(Background::Color(bg_color)),
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                });
+
+        // Wrap in Animation widget to drive the animation
+        Animation::new(&self.state.tc_active_intensity, styled_container)
+            .on_update(TcInterfaceMessage::AnimateTcIntensity)
+            .into()
     }
 
     /// Render the main interface row with core controls
