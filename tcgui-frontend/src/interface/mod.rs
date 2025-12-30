@@ -15,8 +15,8 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
-//! use interface::TcInterface;
+//! ```rust,ignore
+//! use tcgui_frontend::interface::TcInterface;
 //!
 //! let mut interface = TcInterface::new("eth0");
 //! let view = interface.view();
