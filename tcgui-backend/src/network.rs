@@ -21,17 +21,19 @@ use std::collections::HashMap;
 use std::process::Command as StdCommand;
 use std::time::Duration;
 use tokio::process::Command;
-use tracing::{error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::{
+    InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent, InterfaceType, NamespaceType,
+    NetworkInterface, NetworkNamespace,
     errors::{BackendError, TcguiError},
-    topics, InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent, InterfaceType,
-    NamespaceType, NetworkInterface, NetworkNamespace,
+    topics,
 };
 
 use crate::container::{Container, ContainerManager};
+use crate::netns::{self, NamespacePath};
 
 /// Network interface manager for multi-namespace operations.
 ///
@@ -244,98 +246,144 @@ impl NetworkManager {
         Ok(discovered_interfaces)
     }
 
-    /// Discover interfaces via ip command (for named namespaces)
+    /// Discover interfaces via native sysfs reads (for named namespaces)
+    ///
+    /// Uses setns to enter the namespace and reads interface information
+    /// directly from /sys/class/net instead of spawning 'ip' commands.
     async fn discover_interfaces_via_ip_command(
         &self,
         namespace: &str,
     ) -> Result<HashMap<u32, NetworkInterface>> {
-        let output = Command::new("ip")
-            .args(["netns", "exec", namespace, "ip", "-j", "link", "show"])
-            .output()
-            .await?;
+        let ns_path = NamespacePath::Named(namespace.to_string());
+        let namespace_owned = namespace.to_string();
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to get interfaces: {}", stderr));
-        }
+        // Read interface info from sysfs within the namespace
+        let interface_data =
+            netns::run_in_namespace(ns_path, move || Self::read_interfaces_from_sysfs())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?;
 
-        let stdout = String::from_utf8(output.stdout)?;
         let mut interfaces = HashMap::new();
 
-        // Parse JSON output from ip command
-        if let Ok(json_data) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(links) = json_data.as_array() {
-                for link in links {
-                    if let Some(interface) = self.parse_ip_json_interface(link, namespace).await {
-                        interfaces.insert(interface.index, interface);
-                    }
-                }
-            }
-        } else {
-            warn!(
-                "Failed to parse JSON output from ip command for namespace {}",
-                namespace
+        for (name, index, is_up, iface_type) in interface_data {
+            let has_tc_qdisc = self
+                .check_tc_qdisc_in_namespace(&namespace_owned, &name)
+                .await
+                .unwrap_or(false);
+
+            interfaces.insert(
+                index,
+                NetworkInterface {
+                    name,
+                    index,
+                    namespace: namespace_owned.clone(),
+                    is_up,
+                    has_tc_qdisc,
+                    interface_type: iface_type,
+                },
             );
         }
 
         Ok(interfaces)
     }
 
-    /// Parse interface from ip command JSON output
-    async fn parse_ip_json_interface(
-        &self,
-        json: &serde_json::Value,
-        namespace: &str,
-    ) -> Option<NetworkInterface> {
-        let name = json["ifname"].as_str()?.to_string();
-        let index = json["ifindex"].as_u64()? as u32;
-        let flags = json["flags"].as_array()?;
-        let is_up = flags.iter().any(|f| f.as_str() == Some("UP"));
+    /// Read interface information from /sys/class/net (synchronous, for use within setns)
+    fn read_interfaces_from_sysfs() -> Vec<(String, u32, bool, InterfaceType)> {
+        let mut interfaces = Vec::new();
 
-        // Determine interface type
-        let interface_type = if let Some(link_type) = json["link_type"].as_str() {
-            match link_type {
-                "loopback" => InterfaceType::Loopback,
-                "veth" => InterfaceType::Veth,
-                "bridge" => InterfaceType::Bridge,
-                "tun" => InterfaceType::Tun,
-                "tap" => InterfaceType::Tap,
-                _ => {
-                    if name.starts_with("veth") {
-                        InterfaceType::Veth
-                    } else if name.starts_with("br-") || name == "docker0" {
-                        InterfaceType::Bridge
-                    } else {
-                        InterfaceType::Physical
-                    }
+        let net_dir = std::path::Path::new("/sys/class/net");
+        if let Ok(entries) = std::fs::read_dir(net_dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    let name = name.to_string();
+                    let iface_path = net_dir.join(&name);
+
+                    // Read interface index
+                    let index = std::fs::read_to_string(iface_path.join("ifindex"))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u32>().ok())
+                        .unwrap_or(0);
+
+                    // Read flags to determine if up
+                    let flags = std::fs::read_to_string(iface_path.join("flags"))
+                        .ok()
+                        .and_then(|s| {
+                            let s = s.trim().trim_start_matches("0x");
+                            u32::from_str_radix(s, 16).ok()
+                        })
+                        .unwrap_or(0);
+                    let is_up = flags & 0x1 != 0; // IFF_UP
+
+                    // Read interface type from sysfs
+                    let type_id = std::fs::read_to_string(iface_path.join("type"))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u32>().ok())
+                        .unwrap_or(0);
+
+                    // Determine interface type
+                    let iface_type = Self::determine_interface_type(&name, type_id, &iface_path);
+
+                    interfaces.push((name, index, is_up, iface_type));
                 }
             }
-        } else {
-            // Fallback detection based on name
-            if name == "lo" {
-                InterfaceType::Loopback
-            } else if name.starts_with("veth") {
-                InterfaceType::Veth
-            } else if name.starts_with("br-") || name == "docker0" {
-                InterfaceType::Bridge
-            } else {
-                InterfaceType::Physical
+        }
+
+        interfaces
+    }
+
+    /// Determine interface type from name and sysfs info
+    fn determine_interface_type(
+        name: &str,
+        type_id: u32,
+        iface_path: &std::path::Path,
+    ) -> InterfaceType {
+        // Check for loopback first (ARPHRD_LOOPBACK = 772)
+        if name == "lo" || type_id == 772 {
+            return InterfaceType::Loopback;
+        }
+
+        // Check for bridge
+        if iface_path.join("bridge").exists() || name.starts_with("br-") || name == "docker0" {
+            return InterfaceType::Bridge;
+        }
+
+        // Check for veth (has peer in brport or starts with veth)
+        if name.starts_with("veth") || iface_path.join("brport").exists() {
+            return InterfaceType::Veth;
+        }
+
+        // Check for tun/tap (ARPHRD_NONE = 65534 for tun, check tun_flags)
+        if iface_path.join("tun_flags").exists() {
+            let tun_flags = std::fs::read_to_string(iface_path.join("tun_flags"))
+                .ok()
+                .and_then(|s| {
+                    let s = s.trim().trim_start_matches("0x");
+                    u32::from_str_radix(s, 16).ok()
+                })
+                .unwrap_or(0);
+            // IFF_TUN = 0x0001, IFF_TAP = 0x0002
+            if tun_flags & 0x0002 != 0 {
+                return InterfaceType::Tap;
             }
-        };
+            return InterfaceType::Tun;
+        }
 
-        let has_tc_qdisc = self
-            .check_tc_qdisc_in_namespace(namespace, &name)
-            .await
-            .unwrap_or(false);
+        // Check for wireless (still classified as Physical)
+        if iface_path.join("wireless").exists() || iface_path.join("phy80211").exists() {
+            return InterfaceType::Physical;
+        }
 
-        Some(NetworkInterface {
-            name,
-            index,
-            namespace: namespace.to_string(),
-            is_up,
-            has_tc_qdisc,
-            interface_type,
-        })
+        // Check for virtual interface (no device symlink to physical device)
+        let device_link = iface_path.join("device");
+        if !device_link.exists() {
+            // Could be virtual, but default to physical if unsure
+            if name.starts_with("dummy") || name.starts_with("bond") {
+                return InterfaceType::Virtual;
+            }
+        }
+
+        // Default to physical
+        InterfaceType::Physical
     }
 
     /// Monitor interfaces across all namespaces (future multi-namespace monitoring)
@@ -510,35 +558,34 @@ impl NetworkManager {
     /// ```
     /// Tests if a network namespace is accessible to the current process.
     ///
-    /// This method attempts a simple, non-intrusive operation in the namespace
-    /// to determine if it's accessible without causing permission errors.
+    /// Uses native setns to test accessibility instead of spawning processes.
     async fn is_namespace_accessible(&self, namespace: &str) -> bool {
         if namespace == "default" {
             return true; // Default namespace is always accessible
         }
 
-        // Test accessibility by trying to list interfaces with a timeout
-        let result = Command::new("ip")
-            .args(["netns", "exec", namespace, "ip", "link", "show"])
-            .output()
-            .await;
+        // Test accessibility using native setns
+        let ns_path = NamespacePath::Named(namespace.to_string());
 
-        match result {
-            Ok(output) if output.status.success() => {
-                info!("Namespace '{}' is accessible", namespace);
+        // Try to list interfaces in the namespace
+        match netns::list_interfaces(ns_path).await {
+            Ok(_) => {
+                debug!("Namespace '{}' is accessible", namespace);
                 true
             }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if stderr.contains("Operation not permitted")
-                    || stderr.contains("Permission denied")
-                {
-                    info!(
+            Err(netns::NamespaceError::TraditionalNamespaceNotFound(_)) => {
+                debug!("Namespace '{}' not found", namespace);
+                false
+            }
+            Err(netns::NamespaceError::EnterNamespace { source, .. }) => {
+                let err_str = source.to_string();
+                if err_str.contains("EPERM") || err_str.contains("Operation not permitted") {
+                    debug!(
                         "Namespace '{}' is not accessible due to permissions",
                         namespace
                     );
                 } else {
-                    warn!("Namespace '{}' test failed: {}", namespace, stderr);
+                    warn!("Namespace '{}' test failed: {}", namespace, source);
                 }
                 false
             }
@@ -557,20 +604,10 @@ impl NetworkManager {
 
         let mut accessible_namespaces = vec!["default".to_string()];
 
-        let output = Command::new("ip").args(["netns", "list"]).output().await?;
+        // Use native filesystem read instead of 'ip netns list'
+        let discovered_namespaces = netns::discover_named_namespaces();
 
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut discovered_namespaces = Vec::new();
-
-            for line in stdout.lines() {
-                // Each line is either just the namespace name or "name (id: N)"
-                let namespace = line.split_whitespace().next().unwrap_or("").to_string();
-                if !namespace.is_empty() && !accessible_namespaces.contains(&namespace) {
-                    discovered_namespaces.push(namespace);
-                }
-            }
-
+        if !discovered_namespaces.is_empty() {
             info!(
                 "Found {} potential namespaces, testing accessibility...",
                 discovered_namespaces.len()
@@ -578,12 +615,12 @@ impl NetworkManager {
 
             // Test accessibility for each discovered namespace
             for namespace in discovered_namespaces {
-                if self.is_namespace_accessible(&namespace).await {
+                if !accessible_namespaces.contains(&namespace)
+                    && self.is_namespace_accessible(&namespace).await
+                {
                     accessible_namespaces.push(namespace);
                 }
             }
-        } else {
-            warn!("Failed to list network namespaces, continuing with default only");
         }
 
         info!(
