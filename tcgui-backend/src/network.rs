@@ -16,7 +16,7 @@
 use anyhow::Result;
 use futures_util::stream::TryStreamExt;
 use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
-use rtnetlink::Handle;
+use rtnetlink::{Handle, LinkMessageBuilder, LinkUnspec};
 use std::collections::HashMap;
 use std::process::Command as StdCommand;
 use std::time::Duration;
@@ -1021,9 +1021,8 @@ impl NetworkManager {
 
     /// Enables a network interface by bringing it UP.
     ///
-    /// This method executes the appropriate `ip link set <interface> up` command
-    /// in the specified namespace. It handles both default and named namespaces
-    /// and provides comprehensive feedback to the frontend.
+    /// Uses native rtnetlink for the default namespace and setns + rtnetlink
+    /// for named namespaces, eliminating process spawning.
     ///
     /// # Arguments
     ///
@@ -1032,20 +1031,8 @@ impl NetworkManager {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - Command executed (check frontend messages for actual success)
-    /// * `Err` - On command execution system failures
-    ///
-    /// # Commands Executed
-    ///
-    /// * **Default namespace**: `ip link set <interface> up`
-    /// * **Named namespace**: `ip netns exec <namespace> ip link set <interface> up`
-    ///
-    /// # Behavior
-    ///
-    /// * **Result reporting**: Sends `InterfaceStateResult` message to frontend
-    /// * **Success feedback**: Reports successful interface enablement
-    /// * **Error handling**: Captures and reports command stderr output
-    /// * **Logging**: Comprehensive info/error logging for debugging
+    /// * `Ok(())` - Interface successfully brought up
+    /// * `Err` - On netlink or namespace errors
     #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace, interface))]
     pub async fn enable_interface(&self, namespace: &str, interface: &str) -> Result<()> {
         info!(
@@ -1053,46 +1040,34 @@ impl NetworkManager {
             interface, namespace
         );
 
-        let output = if namespace == "default" {
-            Command::new("ip")
-                .args(["link", "set", interface, "up"])
-                .output()
-                .await?
+        if namespace == "default" {
+            // Use rtnetlink directly for default namespace
+            self.set_interface_state_rtnetlink(interface, true).await?;
         } else {
-            Command::new("ip")
-                .args([
-                    "netns", "exec", namespace, "ip", "link", "set", interface, "up",
-                ])
-                .output()
-                .await?
-        };
+            // For named namespaces, use setns + rtnetlink in a blocking task
+            let ns_path = NamespacePath::Named(namespace.to_string());
+            let iface = interface.to_string();
 
-        if output.status.success() {
-            info!(
-                "Successfully enabled interface {} in namespace {}",
-                interface, namespace
-            );
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!(
-                "Failed to enable interface {} in namespace {}: {}",
-                interface, namespace, stderr
-            );
-            return Err(anyhow::anyhow!(
-                "Failed to bring {} up: {}",
-                interface,
-                stderr
-            ));
+            netns::run_in_namespace(ns_path, move || {
+                Self::set_interface_state_sync(&iface, true)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?
+            .map_err(|e| anyhow::anyhow!("Failed to bring {} up: {}", interface, e))?;
         }
+
+        info!(
+            "Successfully enabled interface {} in namespace {}",
+            interface, namespace
+        );
 
         Ok(())
     }
 
     /// Disables a network interface by bringing it DOWN.
     ///
-    /// This method executes the appropriate `ip link set <interface> down` command
-    /// in the specified namespace. It provides the counterpart to `enable_interface`
-    /// and handles both default and named namespaces with comprehensive feedback.
+    /// Uses native rtnetlink for the default namespace and setns + rtnetlink
+    /// for named namespaces, eliminating process spawning.
     ///
     /// # Arguments
     ///
@@ -1101,20 +1076,8 @@ impl NetworkManager {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - Command executed (check frontend messages for actual success)
-    /// * `Err` - On command execution system failures
-    ///
-    /// # Commands Executed
-    ///
-    /// * **Default namespace**: `ip link set <interface> down`
-    /// * **Named namespace**: `ip netns exec <namespace> ip link set <interface> down`
-    ///
-    /// # Behavior
-    ///
-    /// * **Result reporting**: Sends `InterfaceStateResult` message to frontend
-    /// * **Success feedback**: Reports successful interface disablement
-    /// * **Error handling**: Captures and reports command stderr output
-    /// * **Logging**: Comprehensive info/error logging for debugging
+    /// * `Ok(())` - Interface successfully brought down
+    /// * `Err` - On netlink or namespace errors
     ///
     /// # Warning
     ///
@@ -1127,39 +1090,123 @@ impl NetworkManager {
             interface, namespace
         );
 
-        let output = if namespace == "default" {
-            Command::new("ip")
-                .args(["link", "set", interface, "down"])
-                .output()
-                .await?
+        if namespace == "default" {
+            // Use rtnetlink directly for default namespace
+            self.set_interface_state_rtnetlink(interface, false).await?;
         } else {
-            Command::new("ip")
-                .args([
-                    "netns", "exec", namespace, "ip", "link", "set", interface, "down",
-                ])
-                .output()
-                .await?
-        };
+            // For named namespaces, use setns + rtnetlink in a blocking task
+            let ns_path = NamespacePath::Named(namespace.to_string());
+            let iface = interface.to_string();
 
-        if output.status.success() {
-            info!(
-                "Successfully disabled interface {} in namespace {}",
-                interface, namespace
-            );
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!(
-                "Failed to disable interface {} in namespace {}: {}",
-                interface, namespace, stderr
-            );
-            return Err(anyhow::anyhow!(
-                "Failed to bring {} down: {}",
-                interface,
-                stderr
-            ));
+            netns::run_in_namespace(ns_path, move || {
+                Self::set_interface_state_sync(&iface, false)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?
+            .map_err(|e| anyhow::anyhow!("Failed to bring {} down: {}", interface, e))?;
         }
 
+        info!(
+            "Successfully disabled interface {} in namespace {}",
+            interface, namespace
+        );
+
         Ok(())
+    }
+
+    /// Set interface state using rtnetlink (async, for default namespace)
+    async fn set_interface_state_rtnetlink(&self, interface: &str, up: bool) -> Result<()> {
+        // Find interface index
+        let mut links = self
+            .rt_handle
+            .link()
+            .get()
+            .match_name(interface.to_string())
+            .execute();
+
+        let link = links
+            .try_next()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Interface {} not found", interface))?;
+
+        let index = link.header.index;
+
+        // Build the set request
+        let message = if up {
+            LinkMessageBuilder::<LinkUnspec>::new()
+                .index(index)
+                .up()
+                .build()
+        } else {
+            LinkMessageBuilder::<LinkUnspec>::new()
+                .index(index)
+                .down()
+                .build()
+        };
+
+        self.rt_handle
+            .link()
+            .set(message)
+            .execute()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to set interface state: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Set interface state synchronously (for use within setns context)
+    fn set_interface_state_sync(interface: &str, up: bool) -> std::result::Result<(), String> {
+        // Create a new tokio runtime for this blocking context
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(async {
+            // Create a new rtnetlink connection in this namespace
+            let (connection, handle, _) = rtnetlink::new_connection()
+                .map_err(|e| format!("Failed to create rtnetlink connection: {}", e))?;
+
+            // Spawn the connection handler
+            tokio::spawn(connection);
+
+            // Find interface index
+            let mut links = handle
+                .link()
+                .get()
+                .match_name(interface.to_string())
+                .execute();
+
+            let link = links
+                .try_next()
+                .await
+                .map_err(|e| format!("Failed to get interface: {}", e))?
+                .ok_or_else(|| format!("Interface {} not found", interface))?;
+
+            let index = link.header.index;
+
+            // Build the set request
+            let message = if up {
+                LinkMessageBuilder::<LinkUnspec>::new()
+                    .index(index)
+                    .up()
+                    .build()
+            } else {
+                LinkMessageBuilder::<LinkUnspec>::new()
+                    .index(index)
+                    .down()
+                    .build()
+            };
+
+            handle
+                .link()
+                .set(message)
+                .execute()
+                .await
+                .map_err(|e| format!("Failed to set interface state: {}", e))?;
+
+            Ok(())
+        })
     }
 
     // Interface state results are now handled via query/reply pattern
