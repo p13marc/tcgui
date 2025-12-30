@@ -1,9 +1,8 @@
 //! Network interface management and monitoring for multiple namespaces.
 //!
 //! This module provides comprehensive network interface discovery, monitoring,
-//! and management across multiple Linux network namespaces. It uses both
-//! rtnetlink for efficient default namespace operations and `ip` command
-//! execution for named namespace access.
+//! and management across multiple Linux network namespaces. It uses rtnetlink
+//! for efficient kernel communication combined with setns for namespace switching.
 //!
 //! # Key Features
 //!
@@ -18,9 +17,8 @@ use futures_util::stream::TryStreamExt;
 use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
 use rtnetlink::{Handle, LinkMessageBuilder, LinkUnspec};
 use std::collections::HashMap;
-use std::process::Command as StdCommand;
+use std::process::Command;
 use std::time::Duration;
-use tokio::process::Command;
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
@@ -473,7 +471,7 @@ impl NetworkManager {
 
         // Check if interface has TC qdisc
         let has_tc_qdisc = if namespace == "default" {
-            self.check_tc_qdisc(&name).await.unwrap_or(false)
+            self.check_tc_qdisc(&name).unwrap_or(false)
         } else {
             self.check_tc_qdisc_in_namespace(namespace, &name)
                 .await
@@ -490,8 +488,8 @@ impl NetworkManager {
         }
     }
 
-    async fn check_tc_qdisc(&self, interface: &str) -> Result<bool> {
-        let output = StdCommand::new("tc")
+    fn check_tc_qdisc(&self, interface: &str) -> Result<bool> {
+        let output = Command::new("tc")
             .args(["qdisc", "show", "dev", interface])
             .output()
             .map_err(|e| TcguiError::TcCommandError {
@@ -502,21 +500,30 @@ impl NetworkManager {
         Ok(stdout.contains("netem"))
     }
 
-    /// Check TC qdisc in a specific namespace
+    /// Check TC qdisc in a specific namespace using setns
     async fn check_tc_qdisc_in_namespace(&self, namespace: &str, interface: &str) -> Result<bool> {
-        let output = if namespace == "default" {
-            Command::new("tc")
-                .args(["qdisc", "show", "dev", interface])
-                .output()
-                .await?
-        } else {
-            Command::new("ip")
-                .args([
-                    "netns", "exec", namespace, "tc", "qdisc", "show", "dev", interface,
-                ])
-                .output()
-                .await?
-        };
+        if namespace == "default" {
+            return self.check_tc_qdisc(interface);
+        }
+
+        let ns_path = NamespacePath::Named(namespace.to_string());
+        let iface = interface.to_string();
+
+        match netns::run_in_namespace(ns_path, move || Self::check_tc_qdisc_sync(&iface)).await {
+            Ok(result) => result.map_err(|e| anyhow::anyhow!(e)),
+            Err(e) => {
+                debug!("Failed to check TC qdisc in namespace {}: {}", namespace, e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Check TC qdisc synchronously (for use within setns context)
+    fn check_tc_qdisc_sync(interface: &str) -> std::result::Result<bool, String> {
+        let output = Command::new("tc")
+            .args(["qdisc", "show", "dev", interface])
+            .output()
+            .map_err(|e| format!("Failed to run tc: {}", e))?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
