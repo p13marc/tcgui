@@ -56,6 +56,9 @@ regex = { workspace = true }
 # Container runtime API (Docker/Podman compatible)
 bollard = "0.18"
 
+# Linux system calls (namespace operations)
+nix = { version = "0.30", features = ["sched", "fs"] }
+
 [dev-dependencies]
 rand = "0.8"
 tempfile = "3.0"
