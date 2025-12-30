@@ -817,19 +817,22 @@ impl NetworkManager {
                 })?;
         let mut all_interfaces = HashMap::new();
 
+        let mut namespace_id = 0u32;
         for namespace in namespaces {
             match self.discover_interfaces_in_namespace(&namespace).await {
                 Ok(interfaces) => {
+                    info!(
+                        "Found {} interfaces in namespace '{}'",
+                        interfaces.len(),
+                        namespace
+                    );
                     for (index, interface) in interfaces {
                         // Use a composite key to avoid index conflicts between namespaces
-                        let composite_key = if namespace == "default" {
-                            index
-                        } else {
-                            // Use high bits for namespace differentiation
-                            index + (namespace.len() as u32 * 1000000)
-                        };
+                        // Each namespace gets a unique ID multiplied by a large number
+                        let composite_key = index + (namespace_id * 1000000);
                         all_interfaces.insert(composite_key, interface);
                     }
+                    namespace_id += 1;
                 }
                 Err(e) => {
                     error!(
