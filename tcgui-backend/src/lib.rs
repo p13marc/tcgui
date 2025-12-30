@@ -7,6 +7,7 @@ pub mod commands;
 pub mod config;
 pub mod container;
 pub mod interfaces;
+pub mod namespace_watcher;
 pub mod netns;
 pub mod network;
 pub mod preset_loader;

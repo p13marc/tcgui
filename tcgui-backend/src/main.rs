@@ -2,6 +2,7 @@ mod bandwidth;
 pub mod config;
 mod container;
 mod interfaces;
+mod namespace_watcher;
 mod netlink_events;
 mod netns;
 mod network;
@@ -34,6 +35,7 @@ use tcgui_shared::{
 };
 
 use bandwidth::BandwidthMonitor;
+use namespace_watcher::NamespaceWatcher;
 use netlink_events::NetlinkEventListener;
 use network::NetworkManager;
 use preset_loader::PresetLoader;
@@ -342,9 +344,20 @@ impl TcBackend {
             );
         }
 
+        // Start inotify watcher for /var/run/netns to detect namespace changes immediately
+        let mut namespace_events = if let Some((watcher, rx)) = NamespaceWatcher::new(100) {
+            // Keep the watcher alive by storing it (it's dropped when _watcher goes out of scope)
+            let _watcher = watcher;
+            info!("Namespace watcher started for /var/run/netns");
+            Some(rx)
+        } else {
+            warn!("Namespace watcher not available, using polling fallback");
+            None
+        };
+
         // Create intervals for periodic tasks
-        // Namespace polling interval increased to 30s since netlink handles default namespace
-        let mut namespace_monitor_interval = interval(Duration::from_secs(30));
+        // Namespace polling interval increased to 60s since inotify handles immediate detection
+        let mut namespace_monitor_interval = interval(Duration::from_secs(60));
         let mut bandwidth_monitor_interval = interval(Duration::from_secs(2));
 
         // Skip the first tick to avoid immediate execution
@@ -419,7 +432,48 @@ impl TcBackend {
                     }
                 }
 
-                // Periodic namespace monitoring (fallback for named namespaces not covered by netlink)
+                // Inotify-based namespace change detection (immediate)
+                Some(ns_event) = async {
+                    match &mut namespace_events {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    info!("Namespace change detected: {:?}", ns_event);
+                    // Trigger a full interface refresh on namespace change
+                    match self.network_manager.discover_all_interfaces().await {
+                        Ok(discovered_interfaces) => {
+                            let updated_interfaces = self.filter_interfaces(discovered_interfaces);
+                            if self.interfaces != updated_interfaces {
+                                info!("Namespace event triggered interface update");
+
+                                let new_interfaces: Vec<_> = updated_interfaces.values()
+                                    .filter(|new_iface| !self.interfaces.contains_key(&new_iface.index))
+                                    .map(|i| (i.namespace.clone(), i.name.clone()))
+                                    .collect();
+
+                                self.cleanup_stale_publishers(&updated_interfaces);
+                                self.interfaces = updated_interfaces;
+
+                                if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
+                                    error!("Failed to send updated interface list: {}", e);
+                                }
+
+                                for (namespace, interface_name) in new_interfaces {
+                                    let current_config = self.detect_current_tc_config(&namespace, &interface_name).await;
+                                    if let Err(e) = self.publish_tc_config(&namespace, &interface_name, current_config).await {
+                                        warn!("Failed to publish TC config for new interface {}:{}: {}", namespace, interface_name, e);
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to refresh interfaces after namespace event: {}", e);
+                        }
+                    }
+                }
+
+                // Periodic namespace monitoring (fallback when inotify is not available)
                 _ = namespace_monitor_interval.tick() => {
                     tracing::debug!("[BACKEND] Periodic namespace check");
                     match self.network_manager.discover_all_interfaces().await {
