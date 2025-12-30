@@ -246,10 +246,11 @@ impl NetworkManager {
         Ok(discovered_interfaces)
     }
 
-    /// Discover interfaces via native sysfs reads (for named namespaces)
+    /// Discover interfaces in a named namespace using rtnetlink.
     ///
-    /// Uses setns to enter the namespace and reads interface information
-    /// directly from /sys/class/net instead of spawning 'ip' commands.
+    /// Uses setns to enter the namespace and creates a new rtnetlink connection
+    /// within that namespace. This is necessary because /sys/class/net reflects
+    /// the mount namespace, not the network namespace.
     async fn discover_interfaces_via_ip_command(
         &self,
         namespace: &str,
@@ -257,10 +258,17 @@ impl NetworkManager {
         let ns_path = NamespacePath::Named(namespace.to_string());
         let namespace_owned = namespace.to_string();
 
-        // Read interface info from sysfs within the namespace
-        let interface_data = netns::run_in_namespace(ns_path, Self::read_interfaces_from_sysfs)
+        // Use rtnetlink within the namespace to get accurate interface info
+        let interface_data = netns::run_in_namespace(ns_path, Self::read_interfaces_via_rtnetlink)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to read interfaces in namespace {}: {}",
+                    namespace,
+                    e
+                )
+            })?;
 
         let mut interfaces = HashMap::new();
 
@@ -286,103 +294,99 @@ impl NetworkManager {
         Ok(interfaces)
     }
 
-    /// Read interface information from /sys/class/net (synchronous, for use within setns)
-    fn read_interfaces_from_sysfs() -> Vec<(String, u32, bool, InterfaceType)> {
-        let mut interfaces = Vec::new();
+    /// Read interface information using rtnetlink (synchronous, creates its own runtime).
+    ///
+    /// This function creates a new tokio runtime and rtnetlink connection to query
+    /// interfaces. It must be called from within the target namespace (after setns).
+    fn read_interfaces_via_rtnetlink() -> Result<Vec<(String, u32, bool, InterfaceType)>, String> {
+        // Create a new runtime for this blocking operation
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
 
-        let net_dir = std::path::Path::new("/sys/class/net");
-        if let Ok(entries) = std::fs::read_dir(net_dir) {
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    let name = name.to_string();
-                    let iface_path = net_dir.join(&name);
+        rt.block_on(async {
+            // Create a new rtnetlink connection within this namespace
+            let (connection, handle, _) = rtnetlink::new_connection()
+                .map_err(|e| format!("Failed to create rtnetlink connection: {}", e))?;
 
-                    // Read interface index
-                    let index = std::fs::read_to_string(iface_path.join("ifindex"))
-                        .ok()
-                        .and_then(|s| s.trim().parse::<u32>().ok())
-                        .unwrap_or(0);
+            // Spawn the connection handler
+            tokio::spawn(connection);
 
-                    // Read flags to determine if up
-                    let flags = std::fs::read_to_string(iface_path.join("flags"))
-                        .ok()
-                        .and_then(|s| {
-                            let s = s.trim().trim_start_matches("0x");
-                            u32::from_str_radix(s, 16).ok()
-                        })
-                        .unwrap_or(0);
-                    let is_up = flags & 0x1 != 0; // IFF_UP
+            let mut interfaces = Vec::new();
+            let mut links = handle.link().get().execute();
 
-                    // Read interface type from sysfs
-                    let type_id = std::fs::read_to_string(iface_path.join("type"))
-                        .ok()
-                        .and_then(|s| s.trim().parse::<u32>().ok())
-                        .unwrap_or(0);
+            while let Some(msg) = links
+                .try_next()
+                .await
+                .map_err(|e| format!("Failed to get link: {}", e))?
+            {
+                let header = &msg.header;
+                let index = header.index;
+                let is_up = header.flags & netlink_packet_route::link::LinkFlags::Up
+                    == netlink_packet_route::link::LinkFlags::Up;
 
-                    // Determine interface type
-                    let iface_type = Self::determine_interface_type(&name, type_id, &iface_path);
+                // Extract interface name
+                let name = msg
+                    .attributes
+                    .iter()
+                    .find_map(|attr| {
+                        if let netlink_packet_route::link::LinkAttribute::IfName(name) = attr {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| format!("unknown{}", index));
 
-                    interfaces.push((name, index, is_up, iface_type));
+                // Determine interface type from link info
+                let iface_type = Self::determine_interface_type_from_msg(&name, &msg);
+
+                interfaces.push((name, index, is_up, iface_type));
+            }
+
+            Ok(interfaces)
+        })
+    }
+
+    /// Determine interface type from name and rtnetlink message
+    fn determine_interface_type_from_msg(
+        name: &str,
+        msg: &netlink_packet_route::link::LinkMessage,
+    ) -> InterfaceType {
+        // Check for loopback from flags
+        if msg.header.flags & netlink_packet_route::link::LinkFlags::Loopback
+            == netlink_packet_route::link::LinkFlags::Loopback
+        {
+            return InterfaceType::Loopback;
+        }
+
+        // Check link kind from attributes
+        for attr in &msg.attributes {
+            if let netlink_packet_route::link::LinkAttribute::LinkInfo(info_attrs) = attr {
+                for info_attr in info_attrs {
+                    if let netlink_packet_route::link::LinkInfo::Kind(kind) = info_attr {
+                        return match kind {
+                            netlink_packet_route::link::InfoKind::Bridge => InterfaceType::Bridge,
+                            netlink_packet_route::link::InfoKind::Veth => InterfaceType::Veth,
+                            netlink_packet_route::link::InfoKind::Tun => InterfaceType::Tun,
+                            _ => InterfaceType::Physical,
+                        };
+                    }
                 }
             }
         }
 
-        interfaces
-    }
-
-    /// Determine interface type from name and sysfs info
-    fn determine_interface_type(
-        name: &str,
-        type_id: u32,
-        iface_path: &std::path::Path,
-    ) -> InterfaceType {
-        // Check for loopback first (ARPHRD_LOOPBACK = 772)
-        if name == "lo" || type_id == 772 {
-            return InterfaceType::Loopback;
+        // Fallback to name-based detection
+        if name.starts_with("br-") || name == "docker0" {
+            InterfaceType::Bridge
+        } else if name.starts_with("veth") {
+            InterfaceType::Veth
+        } else if name.starts_with("tun") || name.starts_with("tap") {
+            InterfaceType::Tun
+        } else {
+            InterfaceType::Physical
         }
-
-        // Check for bridge
-        if iface_path.join("bridge").exists() || name.starts_with("br-") || name == "docker0" {
-            return InterfaceType::Bridge;
-        }
-
-        // Check for veth (has peer in brport or starts with veth)
-        if name.starts_with("veth") || iface_path.join("brport").exists() {
-            return InterfaceType::Veth;
-        }
-
-        // Check for tun/tap (ARPHRD_NONE = 65534 for tun, check tun_flags)
-        if iface_path.join("tun_flags").exists() {
-            let tun_flags = std::fs::read_to_string(iface_path.join("tun_flags"))
-                .ok()
-                .and_then(|s| {
-                    let s = s.trim().trim_start_matches("0x");
-                    u32::from_str_radix(s, 16).ok()
-                })
-                .unwrap_or(0);
-            // IFF_TUN = 0x0001, IFF_TAP = 0x0002
-            if tun_flags & 0x0002 != 0 {
-                return InterfaceType::Tap;
-            }
-            return InterfaceType::Tun;
-        }
-
-        // Check for wireless (still classified as Physical)
-        if iface_path.join("wireless").exists() || iface_path.join("phy80211").exists() {
-            return InterfaceType::Physical;
-        }
-
-        // Check for virtual interface (no device symlink to physical device)
-        let device_link = iface_path.join("device");
-        if !device_link.exists() {
-            // Could be virtual, but default to physical if unsure
-            if name.starts_with("dummy") || name.starts_with("bond") {
-                return InterfaceType::Virtual;
-            }
-        }
-
-        // Default to physical
-        InterfaceType::Physical
     }
 
     /// Monitor interfaces across all namespaces (future multi-namespace monitoring)

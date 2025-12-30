@@ -268,17 +268,25 @@ pub async fn read_proc_net_dev(namespace: NamespacePath) -> Result<String, Names
     .map_err(NamespaceError::OperationFailed)
 }
 
-/// Lists network interfaces in a namespace by reading /sys/class/net.
+/// Lists network interfaces in a namespace by parsing /proc/net/dev.
+///
+/// Note: /sys/class/net reflects the initial mount namespace, not the current
+/// network namespace. We must use /proc/net/dev which is namespace-aware.
 ///
 /// Returns a list of interface names.
 #[instrument(skip_all, fields(namespace = ?namespace))]
 pub async fn list_interfaces(namespace: NamespacePath) -> Result<Vec<String>, NamespaceError> {
     run_in_namespace(namespace, || {
         let mut interfaces = Vec::new();
-        if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    interfaces.push(name.to_string());
+        // /proc/net/dev is namespace-aware, unlike /sys/class/net
+        if let Ok(content) = std::fs::read_to_string("/proc/net/dev") {
+            for line in content.lines().skip(2) {
+                // Lines are like: "  eth0: 12345 ..."
+                if let Some(name) = line.split(':').next() {
+                    let name = name.trim().to_string();
+                    if !name.is_empty() {
+                        interfaces.push(name);
+                    }
                 }
             }
         }

@@ -13,7 +13,7 @@ use bollard::container::{InspectContainerOptions, ListContainersOptions};
 use bollard::models::ContainerInspectResponse;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::netns::{self, NamespacePath};
 
@@ -515,41 +515,23 @@ impl ContainerManager {
                     Ok(interfaces.into_iter().filter(|name| name != "lo").collect())
                 }
                 Err(e) => {
-                    warn!(
+                    error!(
                         "Failed to list interfaces in container {} via setns: {}",
                         container.name, e
                     );
-                    // Fall back to exec method
-                    self.discover_container_interfaces_via_exec(container).await
+                    Err(anyhow::anyhow!(
+                        "Failed to list interfaces in container {}: {}",
+                        container.name,
+                        e
+                    ))
                 }
             }
         } else {
-            // No namespace path, use container exec
-            self.discover_container_interfaces_via_exec(container).await
+            Err(anyhow::anyhow!(
+                "Container {} has no namespace path",
+                container.name
+            ))
         }
-    }
-
-    /// Discovers interfaces using container exec (fallback method).
-    async fn discover_container_interfaces_via_exec(
-        &self,
-        container: &Container,
-    ) -> Result<Vec<String>> {
-        let output = self
-            .exec_in_netns(container, &["ip", "-o", "link", "show"])
-            .await?;
-
-        let mut interfaces = Vec::new();
-        for line in output.lines() {
-            // Parse lines like: "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> ..."
-            if let Some(name_part) = line.split(':').nth(1) {
-                let name = name_part.trim().split('@').next().unwrap_or("").to_string();
-                if !name.is_empty() && name != "lo" {
-                    interfaces.push(name);
-                }
-            }
-        }
-
-        Ok(interfaces)
     }
 }
 
