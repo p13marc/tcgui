@@ -439,7 +439,14 @@ impl TcBackend {
                         None => std::future::pending().await,
                     }
                 } => {
-                    info!("Namespace change detected: {:?}", ns_event);
+                    match &ns_event {
+                        namespace_watcher::NamespaceEvent::Created(name) => {
+                            info!("Namespace created: {}", name);
+                        }
+                        namespace_watcher::NamespaceEvent::Deleted(name) => {
+                            info!("Namespace deleted: {}", name);
+                        }
+                    }
                     // Trigger a full interface refresh on namespace change
                     match self.network_manager.discover_all_interfaces().await {
                         Ok(discovered_interfaces) => {
