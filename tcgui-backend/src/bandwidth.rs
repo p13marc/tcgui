@@ -41,15 +41,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::process::Command;
 use tokio::sync::RwLock;
-use tracing::{error, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use crate::container::Container;
+use crate::netns::{self, NamespacePath};
 use tcgui_shared::{
-    errors::TcguiError, topics, BandwidthUpdate, NetworkBandwidthStats, NetworkInterface,
+    BandwidthUpdate, NetworkBandwidthStats, NetworkInterface, errors::TcguiError, topics,
 };
 
 /// Network bandwidth monitoring service.
@@ -283,7 +283,7 @@ impl BandwidthMonitor {
     /// # Behavior
     ///
     /// * **Default namespace**: Direct read from `/proc/net/dev`
-    /// * **Named namespace**: Execute `ip netns exec <ns> cat /proc/net/dev`
+    /// * **Named/Container namespace**: Uses setns to enter namespace and read directly
     /// * **Permission handling**: Returns empty HashMap on access denied errors
     /// * **Parsing**: Extracts RX/TX bytes, packets, errors, and drops from proc format
     #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace))]
@@ -291,78 +291,80 @@ impl BandwidthMonitor {
         &self,
         namespace: &str,
     ) -> Result<HashMap<String, NetworkBandwidthStats>> {
-        let contents = if namespace == "default" {
-            // Read from default namespace directly
-            tokio::fs::read_to_string("/proc/net/dev")
-                .await
-                .map_err(TcguiError::IoError)?
+        // Determine the namespace path
+        let ns_path = if namespace == "default" {
+            NamespacePath::Default
         } else if Self::is_container_namespace(namespace) {
-            // Read from container namespace using nsenter
-            let ns_path = self.get_container_namespace_path(namespace).await;
-
-            if let Some(path) = ns_path {
-                let output = Command::new("nsenter")
-                    .arg(format!("--net={}", path.display()))
-                    .args(["cat", "/proc/net/dev"])
-                    .output()
-                    .await?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-
-                    if stderr.contains("Operation not permitted")
-                        || stderr.contains("Permission denied")
-                    {
-                        warn!(
-                            "Cannot access container namespace {}: insufficient permissions",
-                            namespace
-                        );
-                        return Ok(HashMap::new());
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "Failed to read /proc/net/dev in container namespace {}: {}",
-                            namespace,
-                            stderr
-                        ));
-                    }
+            // Get container namespace path from cache
+            match self.get_container_namespace_path(namespace).await {
+                Some(path) => NamespacePath::Path(path),
+                None => {
+                    warn!(
+                        "Container namespace {} has no path in cache, cannot read bandwidth stats",
+                        namespace
+                    );
+                    return Ok(HashMap::new());
                 }
-
-                String::from_utf8(output.stdout)?
-            } else {
-                warn!(
-                    "Container namespace {} has no path in cache, cannot read bandwidth stats",
-                    namespace
-                );
-                return Ok(HashMap::new());
             }
         } else {
-            // Read from named namespace using ip netns exec
-            let output = Command::new("ip")
-                .args(["netns", "exec", namespace, "cat", "/proc/net/dev"])
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-
-                // Check for permission issues specifically
-                if stderr.contains("Operation not permitted")
-                    || stderr.contains("Permission denied")
-                {
-                    tracing::warn!("Cannot access namespace {}: insufficient permissions. Try running with proper capabilities.", namespace);
-                    // Return empty stats instead of failing completely
-                    return Ok(HashMap::new());
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Failed to read /proc/net/dev in namespace {}: {}",
-                        namespace,
-                        stderr
-                    ));
-                }
-            }
-
-            String::from_utf8(output.stdout)?
+            NamespacePath::Named(namespace.to_string())
         };
+
+        // Read /proc/net/dev using setns (no process spawning)
+        let contents: String = match netns::read_proc_net_dev(ns_path).await {
+            Ok(contents) => contents,
+            Err(netns::NamespaceError::TraditionalNamespaceNotFound(name)) => {
+                warn!("Namespace '{}' not found", name);
+                return Ok(HashMap::new());
+            }
+            Err(netns::NamespaceError::NamespaceNotFound(path)) => {
+                warn!("Namespace path not found: {:?}", path);
+                return Ok(HashMap::new());
+            }
+            Err(netns::NamespaceError::EnterNamespace { path, source }) => {
+                // Check for permission errors
+                let err_str = source.to_string();
+                if err_str.contains("EPERM") || err_str.contains("Operation not permitted") {
+                    warn!(
+                        "Cannot access namespace {:?}: insufficient permissions",
+                        path
+                    );
+                    return Ok(HashMap::new());
+                }
+                return Err(anyhow::anyhow!(
+                    "Failed to enter namespace {:?}: {}",
+                    path,
+                    source
+                ));
+            }
+            Err(netns::NamespaceError::OperationFailed(msg)) => {
+                if msg.contains("Permission denied") || msg.contains("Operation not permitted") {
+                    warn!(
+                        "Cannot read /proc/net/dev in namespace {}: insufficient permissions",
+                        namespace
+                    );
+                    return Ok(HashMap::new());
+                }
+                return Err(anyhow::anyhow!(
+                    "Failed to read /proc/net/dev in namespace {}: {}",
+                    namespace,
+                    msg
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to read /proc/net/dev in namespace {}: {}",
+                    namespace,
+                    e
+                ));
+            }
+        };
+
+        debug!(
+            "Read {} bytes from /proc/net/dev in namespace {}",
+            contents.len(),
+            namespace
+        );
 
         let mut stats = HashMap::new();
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();

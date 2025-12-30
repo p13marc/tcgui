@@ -3,6 +3,7 @@ pub mod config;
 mod container;
 mod interfaces;
 mod netlink_events;
+mod netns;
 mod network;
 pub mod preset_loader;
 pub mod scenario;
@@ -18,17 +19,18 @@ use anyhow::Result;
 use rtnetlink::new_connection;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tracing::{error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::{
+    BackendHealthStatus, BackendMetadata, InterfaceControlOperation, InterfaceControlRequest,
+    InterfaceControlResponse, NetworkInterface, TcConfigUpdate, TcConfiguration, TcNetemConfig,
+    TcOperation, TcRequest, TcResponse, ZenohConfig,
     errors::{BackendError, TcguiError},
     presets::PresetList,
-    topics, BackendHealthStatus, BackendMetadata, InterfaceControlOperation,
-    InterfaceControlRequest, InterfaceControlResponse, NetworkInterface, TcConfigUpdate,
-    TcConfiguration, TcNetemConfig, TcOperation, TcRequest, TcResponse, ZenohConfig,
+    topics,
 };
 
 use bandwidth::BandwidthMonitor;

@@ -8,12 +8,14 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
+use bollard::Docker;
 use bollard::container::{InspectContainerOptions, ListContainersOptions};
 use bollard::models::ContainerInspectResponse;
-use bollard::Docker;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
+
+use crate::netns::{self, NamespacePath};
 
 /// Container runtime type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,13 +354,11 @@ impl ContainerManager {
             .unwrap_or(ContainerState::Unknown);
 
         // Extract PID
-        let pid = info.state.as_ref().and_then(|s| s.pid).and_then(|p| {
-            if p > 0 {
-                Some(p as u32)
-            } else {
-                None
-            }
-        });
+        let pid = info
+            .state
+            .as_ref()
+            .and_then(|s| s.pid)
+            .and_then(|p| if p > 0 { Some(p as u32) } else { None });
 
         // Build namespace path from PID
         let namespace_path = pid.map(|p| PathBuf::from(format!("/proc/{}/ns/net", p)));
@@ -500,7 +500,37 @@ impl ContainerManager {
     }
 
     /// Discovers network interfaces inside a container's namespace.
+    ///
+    /// Uses native setns + filesystem reads instead of spawning processes.
     pub async fn discover_container_interfaces(
+        &self,
+        container: &Container,
+    ) -> Result<Vec<String>> {
+        if let Some(ns_path) = &container.namespace_path {
+            // Use native setns to list interfaces via /sys/class/net
+            let ns = NamespacePath::Path(ns_path.clone());
+            match netns::list_interfaces(ns).await {
+                Ok(interfaces) => {
+                    // Filter out loopback
+                    Ok(interfaces.into_iter().filter(|name| name != "lo").collect())
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to list interfaces in container {} via setns: {}",
+                        container.name, e
+                    );
+                    // Fall back to exec method
+                    self.discover_container_interfaces_via_exec(container).await
+                }
+            }
+        } else {
+            // No namespace path, use container exec
+            self.discover_container_interfaces_via_exec(container).await
+        }
+    }
+
+    /// Discovers interfaces using container exec (fallback method).
+    async fn discover_container_interfaces_via_exec(
         &self,
         container: &Container,
     ) -> Result<Vec<String>> {
