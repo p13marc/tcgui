@@ -8,7 +8,11 @@
 //!
 //! The module uses `nix::sched::setns` to switch the calling thread's network
 //! namespace. Since namespace changes affect the entire thread, operations
-//! are executed in a dedicated blocking thread via `tokio::task::spawn_blocking`.
+//! are executed in a dedicated spawned thread via `std::thread::spawn`.
+//!
+//! Using a dedicated thread (rather than a thread pool like `spawn_blocking`)
+//! ensures that even if restoring the original namespace fails, the thread
+//! simply terminates rather than returning to a pool in the wrong namespace.
 //!
 //! # Example
 //!
@@ -56,13 +60,6 @@ pub enum NamespaceError {
         source: nix::Error,
     },
 
-    /// Failed to return to original namespace
-    #[error("Failed to return to original namespace: {source}")]
-    ReturnNamespace {
-        #[source]
-        source: nix::Error,
-    },
-
     /// Namespace path not found
     #[error("Namespace path does not exist: {0}")]
     NamespaceNotFound(PathBuf),
@@ -87,9 +84,6 @@ pub enum NamespacePath {
 
     /// A direct path to a namespace file (e.g., /proc/<pid>/ns/net)
     Path(PathBuf),
-
-    /// A container namespace with name (for lookup in cache)
-    Container(String),
 }
 
 impl NamespacePath {
@@ -116,37 +110,7 @@ impl NamespacePath {
                     Err(NamespaceError::NamespaceNotFound(path.clone()))
                 }
             }
-
-            NamespacePath::Container(name) => {
-                // Container namespaces need external resolution (PID lookup)
-                // This is a placeholder - actual resolution happens in the caller
-                Err(NamespaceError::NamespaceNotFound(PathBuf::from(format!(
-                    "container:{}",
-                    name
-                ))))
-            }
         }
-    }
-
-    /// Creates a NamespacePath from a namespace string.
-    ///
-    /// Handles the following formats:
-    /// - "default" -> Default namespace
-    /// - "container:<name>" -> Container namespace
-    /// - Any other string -> Traditional named namespace
-    pub fn from_namespace_str(namespace: &str) -> Self {
-        if namespace == "default" {
-            NamespacePath::Default
-        } else if let Some(container_name) = namespace.strip_prefix("container:") {
-            NamespacePath::Container(container_name.to_string())
-        } else {
-            NamespacePath::Named(namespace.to_string())
-        }
-    }
-
-    /// Creates a NamespacePath for a container given its PID.
-    pub fn from_container_pid(pid: u32) -> Self {
-        NamespacePath::Path(PathBuf::from(format!("/proc/{}/ns/net", pid)))
     }
 }
 
@@ -211,10 +175,22 @@ where
 
     debug!("Switching to namespace: {:?}", ns_path);
 
-    // Run in a blocking thread since setns affects the whole thread
-    tokio::task::spawn_blocking(move || run_in_namespace_sync(&ns_path, f))
-        .await
-        .expect("Blocking task panicked")
+    // Spawn a dedicated thread for namespace operations.
+    // We use std::thread::spawn instead of spawn_blocking to ensure:
+    // 1. A fresh thread is created (not reused from a pool)
+    // 2. The thread is destroyed after the operation completes
+    // 3. If setns fails to restore the original namespace, the thread
+    //    simply terminates rather than returning to a pool in the wrong namespace
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    std::thread::spawn(move || {
+        let result = run_in_namespace_sync(&ns_path, f);
+        // Thread terminates after sending result, ensuring namespace isolation
+        let _ = tx.send(result);
+    });
+
+    rx.await
+        .expect("Namespace thread panicked or was cancelled")
 }
 
 /// Synchronous version of namespace execution (runs on current thread).
@@ -279,24 +255,6 @@ where
     }
 }
 
-/// Runs a closure that returns a Result in a namespace.
-///
-/// Convenience wrapper that flattens the error handling for closures
-/// that return `Result<T, E>`.
-#[instrument(skip(f), fields(namespace = ?namespace))]
-pub async fn run_in_namespace_result<F, T, E>(
-    namespace: NamespacePath,
-    f: F,
-) -> Result<T, NamespaceError>
-where
-    F: FnOnce() -> Result<T, E> + Send + 'static,
-    T: Send + 'static,
-    E: std::error::Error + Send + 'static,
-{
-    let result = run_in_namespace(namespace, f).await?;
-    result.map_err(|e| NamespaceError::OperationFailed(e.to_string()))
-}
-
 /// Reads /proc/net/dev in a specified namespace.
 ///
 /// This is a common operation that reads network interface statistics.
@@ -329,65 +287,6 @@ pub async fn list_interfaces(namespace: NamespacePath) -> Result<Vec<String>, Na
     .await
 }
 
-/// Checks if an interface exists in a namespace.
-#[instrument(skip_all, fields(namespace = ?namespace, interface = %interface))]
-pub async fn interface_exists(
-    namespace: NamespacePath,
-    interface: &str,
-) -> Result<bool, NamespaceError> {
-    let iface = interface.to_string();
-    run_in_namespace(namespace, move || {
-        Path::new(&format!("/sys/class/net/{}", iface)).exists()
-    })
-    .await
-}
-
-/// Gets the operational state of an interface (up/down/unknown).
-#[instrument(skip_all, fields(namespace = ?namespace, interface = %interface))]
-pub async fn get_interface_operstate(
-    namespace: NamespacePath,
-    interface: &str,
-) -> Result<String, NamespaceError> {
-    let iface = interface.to_string();
-    run_in_namespace(namespace, move || {
-        let path = format!("/sys/class/net/{}/operstate", iface);
-        std::fs::read_to_string(&path)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "unknown".to_string())
-    })
-    .await
-}
-
-/// Gets interface flags from /sys/class/net/<iface>/flags.
-#[instrument(skip_all, fields(namespace = ?namespace, interface = %interface))]
-pub async fn get_interface_flags(
-    namespace: NamespacePath,
-    interface: &str,
-) -> Result<u32, NamespaceError> {
-    let iface = interface.to_string();
-    run_in_namespace(namespace, move || {
-        let path = format!("/sys/class/net/{}/flags", iface);
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| {
-                let s = s.trim().trim_start_matches("0x");
-                u32::from_str_radix(s, 16).ok()
-            })
-            .unwrap_or(0)
-    })
-    .await
-}
-
-/// Checks if an interface has IFF_UP flag set.
-pub async fn is_interface_up(
-    namespace: NamespacePath,
-    interface: &str,
-) -> Result<bool, NamespaceError> {
-    const IFF_UP: u32 = 0x1;
-    let flags = get_interface_flags(namespace, interface).await?;
-    Ok(flags & IFF_UP != 0)
-}
-
 /// Discovers all named network namespaces from /var/run/netns/.
 ///
 /// This replaces `ip netns list` with a direct filesystem read.
@@ -409,62 +308,9 @@ pub fn discover_named_namespaces() -> Vec<String> {
     namespaces
 }
 
-/// Tests if a namespace is accessible by attempting to open it.
-///
-/// This is faster than spawning `ip netns exec` just to test access.
-pub fn is_namespace_accessible(namespace: &NamespacePath) -> bool {
-    match namespace {
-        NamespacePath::Default => true,
-        NamespacePath::Named(name) => {
-            let path = format!("/var/run/netns/{}", name);
-            File::open(&path).is_ok()
-        }
-        NamespacePath::Path(path) => File::open(path).is_ok(),
-        NamespacePath::Container(_) => {
-            // Container namespaces need PID resolution first
-            false
-        }
-    }
-}
-
-/// Resolves a container namespace to its path using cached container info.
-///
-/// This is a helper for integrating with the container module.
-pub fn container_namespace_path(pid: u32) -> PathBuf {
-    PathBuf::from(format!("/proc/{}/ns/net", pid))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_namespace_path_from_str() {
-        assert!(matches!(
-            NamespacePath::from_namespace_str("default"),
-            NamespacePath::Default
-        ));
-
-        assert!(matches!(
-            NamespacePath::from_namespace_str("container:my-app"),
-            NamespacePath::Container(name) if name == "my-app"
-        ));
-
-        assert!(matches!(
-            NamespacePath::from_namespace_str("my-namespace"),
-            NamespacePath::Named(name) if name == "my-namespace"
-        ));
-    }
-
-    #[test]
-    fn test_container_pid_path() {
-        let path = NamespacePath::from_container_pid(12345);
-        if let NamespacePath::Path(p) = path {
-            assert_eq!(p, PathBuf::from("/proc/12345/ns/net"));
-        } else {
-            panic!("Expected Path variant");
-        }
-    }
 
     #[test]
     fn test_discover_named_namespaces() {
@@ -473,11 +319,6 @@ mod tests {
         let _namespaces = discover_named_namespaces();
         // Should return empty or actual namespaces, never panic
         // (test just verifies no panic occurs)
-    }
-
-    #[test]
-    fn test_default_namespace_accessible() {
-        assert!(is_namespace_accessible(&NamespacePath::Default));
     }
 
     #[tokio::test]
@@ -509,28 +350,6 @@ mod tests {
         // Should contain header and at least lo interface
         assert!(content.contains("Inter-"));
         assert!(content.contains("lo:"));
-    }
-
-    #[tokio::test]
-    async fn test_interface_exists_default() {
-        // Loopback should always exist
-        let result = interface_exists(NamespacePath::Default, "lo").await;
-        assert!(result.is_ok());
-        assert!(result.unwrap());
-
-        // Non-existent interface
-        let result = interface_exists(NamespacePath::Default, "nonexistent999").await;
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_get_interface_operstate() {
-        let result = get_interface_operstate(NamespacePath::Default, "lo").await;
-        assert!(result.is_ok());
-        // Loopback is typically "unknown" or "up"
-        let state = result.unwrap();
-        assert!(!state.is_empty());
     }
 
     #[tokio::test]
