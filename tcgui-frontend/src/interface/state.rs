@@ -122,6 +122,7 @@ impl InterfaceState {
 
     /// Set interface up/down state from backend update.
     /// Also triggers the TC active intensity animation when TC state changes.
+    /// The interface_enabled checkbox is synchronized with the actual is_up state.
     pub fn set_interface_state(&mut self, is_up: bool, has_tc_qdisc: bool) {
         // Trigger animation if TC state changed
         if self.has_tc_qdisc != has_tc_qdisc {
@@ -131,6 +132,8 @@ impl InterfaceState {
 
         self.is_up = is_up;
         self.has_tc_qdisc = has_tc_qdisc;
+        // Keep checkbox in sync with actual interface state
+        self.interface_enabled = is_up;
     }
 
     // Methods removed as they were unused in current implementation:

@@ -43,10 +43,10 @@ impl NamespaceWatcher {
         let watcher =
             notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                 Ok(event) => {
-                    if let Some(ns_event) = Self::process_event(&event) {
-                        if tx_clone.blocking_send(ns_event).is_err() {
-                            debug!("Namespace event receiver dropped");
-                        }
+                    if let Some(ns_event) = Self::process_event(&event)
+                        && tx_clone.blocking_send(ns_event).is_err()
+                    {
+                        debug!("Namespace event receiver dropped");
                     }
                 }
                 Err(e) => {
