@@ -8,7 +8,6 @@
 //! * **Native netlink communication**: Direct kernel communication via netlink sockets
 //! * **Namespace support**: Works with both traditional and container namespaces
 //! * **netem qdisc**: Full support for network emulation (delay, loss, jitter, etc.)
-//! * **TBF qdisc**: Token Bucket Filter for rate limiting
 //!
 //! # Example
 //!
@@ -42,10 +41,6 @@ use crate::netns::{NamespacePath, run_in_namespace};
 /// Errors specific to TC netlink operations.
 #[derive(Error, Debug)]
 pub enum TcNetlinkError {
-    /// Failed to create netlink connection
-    #[error("Failed to create netlink connection: {0}")]
-    ConnectionFailed(String),
-
     /// Interface not found
     #[error("Interface '{0}' not found")]
     InterfaceNotFound(String),
@@ -100,83 +95,7 @@ pub struct NetemConfig {
     pub limit: Option<u32>,
 }
 
-impl NetemConfig {
-    /// Check if any effect is configured.
-    pub fn has_any_effect(&self) -> bool {
-        self.delay_ms.is_some_and(|v| v > 0.0)
-            || self.loss_percent.is_some_and(|v| v > 0.0)
-            || self.duplicate_percent.is_some_and(|v| v > 0.0)
-            || self.reorder_percent.is_some_and(|v| v > 0.0)
-            || self.corrupt_percent.is_some_and(|v| v > 0.0)
-            || self.rate_limit_kbps.is_some_and(|v| v > 0)
-    }
-
-    /// Create from legacy parameters (for compatibility with TcCommandManager).
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_legacy(
-        loss: f32,
-        correlation: Option<f32>,
-        delay_ms: Option<f32>,
-        delay_jitter_ms: Option<f32>,
-        delay_correlation: Option<f32>,
-        duplicate_percent: Option<f32>,
-        duplicate_correlation: Option<f32>,
-        reorder_percent: Option<f32>,
-        reorder_correlation: Option<f32>,
-        reorder_gap: Option<u32>,
-        corrupt_percent: Option<f32>,
-        corrupt_correlation: Option<f32>,
-        rate_limit_kbps: Option<u32>,
-    ) -> Self {
-        Self {
-            delay_ms,
-            jitter_ms: delay_jitter_ms,
-            delay_correlation,
-            loss_percent: if loss > 0.0 { Some(loss) } else { None },
-            loss_correlation: correlation,
-            duplicate_percent,
-            duplicate_correlation,
-            reorder_percent,
-            reorder_correlation,
-            reorder_gap,
-            corrupt_percent,
-            corrupt_correlation,
-            rate_limit_kbps,
-            limit: None,
-        }
-    }
-}
-
-/// Configuration for TBF (Token Bucket Filter) qdisc.
-#[derive(Debug, Clone)]
-pub struct TbfConfig {
-    /// Rate in kbps
-    pub rate_kbps: u32,
-    /// Burst size in bytes
-    pub burst: u32,
-    /// Queue limit in bytes
-    pub limit: u32,
-    /// MTU (default 1514)
-    pub mtu: Option<u32>,
-    /// Peak rate in kbps (optional)
-    pub peakrate_kbps: Option<u32>,
-}
-
-impl Default for TbfConfig {
-    fn default() -> Self {
-        Self {
-            rate_kbps: 1000, // 1 Mbps
-            burst: 15000,    // 15KB burst
-            limit: 30000,    // 30KB limit
-            mtu: None,
-            peakrate_kbps: None,
-        }
-    }
-}
-
 /// Native netlink-based TC manager.
-///
-/// This replaces process spawning with direct netlink communication.
 #[derive(Clone, Default)]
 pub struct TcNetlink;
 
@@ -206,8 +125,6 @@ impl TcNetlink {
     }
 
     /// Apply netem qdisc configuration to an interface.
-    ///
-    /// This creates or replaces a netem qdisc on the specified interface.
     #[instrument(skip(self, config), fields(namespace = ?namespace, interface = %interface))]
     pub async fn apply_netem(
         &self,
@@ -223,11 +140,7 @@ impl TcNetlink {
             interface, config.delay_ms, config.loss_percent
         );
 
-        // We need to run the netlink operations inside the target namespace
-        // because the netlink socket is bound to the current network namespace
         run_in_namespace(namespace, move || {
-            // Create a new tokio runtime for this thread
-            // (we're in a dedicated namespace thread)
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -244,25 +157,21 @@ impl TcNetlink {
         let (connection, handle, _) =
             rtnetlink::new_connection().map_err(|e| format!("Netlink connection failed: {}", e))?;
 
-        // Spawn the connection handler
         tokio::spawn(connection);
 
-        // Get interface index
         let if_index = Self::get_interface_index(&handle, interface)
             .await
             .map_err(|e| e.to_string())?;
 
         debug!("Interface {} has index {}", interface, if_index);
 
-        // First, try to delete any existing root qdisc
-        // This ensures clean state before adding new qdisc
+        // Delete any existing root qdisc first
         let mut del_req = handle.qdisc().del(if_index);
         del_req.message_mut().header.parent = TcHandle::ROOT;
 
         match del_req.execute().await {
             Ok(_) => debug!("Deleted existing root qdisc on {}", interface),
             Err(e) => {
-                // ENOENT (No such file or directory) is expected if no qdisc exists
                 let err_str = e.to_string();
                 if !err_str.contains("No such file") && !err_str.contains("ENOENT") {
                     debug!("No existing qdisc to delete (or error): {}", e);
@@ -278,14 +187,12 @@ impl TcNetlink {
             if delay > 0.0 {
                 builder = builder.delay_ms(delay as u32);
 
-                // Apply jitter if specified
                 if let Some(jitter) = config.jitter_ms {
                     if jitter > 0.0 {
                         builder = builder.jitter_ms(jitter as u32);
                     }
                 }
 
-                // Apply delay correlation if specified
                 if let Some(corr) = config.delay_correlation {
                     if corr > 0.0 {
                         builder = builder.delay_correlation(corr);
@@ -299,7 +206,6 @@ impl TcNetlink {
             if loss > 0.0 {
                 builder = builder.loss_percent(loss);
 
-                // Apply loss correlation if specified
                 if let Some(corr) = config.loss_correlation {
                     if corr > 0.0 {
                         builder = builder.loss_correlation(corr);
@@ -365,7 +271,6 @@ impl TcNetlink {
             builder = builder.limit(limit);
         }
 
-        // Execute the qdisc creation
         builder
             .build()
             .execute()
@@ -374,77 +279,6 @@ impl TcNetlink {
 
         info!("Successfully applied netem qdisc to {}", interface);
         Ok(format!("netem qdisc applied to {}", interface))
-    }
-
-    /// Apply TBF (Token Bucket Filter) qdisc for rate limiting.
-    #[instrument(skip(self, config), fields(namespace = ?namespace, interface = %interface))]
-    pub async fn apply_tbf(
-        &self,
-        namespace: NamespacePath,
-        interface: &str,
-        config: &TbfConfig,
-    ) -> Result<String, TcNetlinkError> {
-        let interface = interface.to_string();
-        let config = config.clone();
-
-        info!(
-            "Applying TBF via netlink: interface={}, rate={}kbps",
-            interface, config.rate_kbps
-        );
-
-        run_in_namespace(namespace, move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-
-            rt.block_on(async { Self::apply_tbf_inner(&interface, &config).await })
-        })
-        .await?
-        .map_err(|e: String| TcNetlinkError::QdiscApplyFailed(e))
-    }
-
-    /// Inner async implementation of apply_tbf.
-    async fn apply_tbf_inner(interface: &str, config: &TbfConfig) -> Result<String, String> {
-        let (connection, handle, _) =
-            rtnetlink::new_connection().map_err(|e| format!("Netlink connection failed: {}", e))?;
-
-        tokio::spawn(connection);
-
-        let if_index = Self::get_interface_index(&handle, interface)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Delete existing qdisc
-        let mut del_req = handle.qdisc().del(if_index);
-        del_req.message_mut().header.parent = TcHandle::ROOT;
-        let _ = del_req.execute().await;
-
-        // Build TBF qdisc
-        let mut builder = handle
-            .qdisc()
-            .add(if_index)
-            .tbf()
-            .rate_kbit(config.rate_kbps)
-            .burst(config.burst)
-            .limit(config.limit);
-
-        if let Some(mtu) = config.mtu {
-            builder = builder.mtu(mtu);
-        }
-
-        if let Some(peakrate) = config.peakrate_kbps {
-            builder = builder.peakrate_kbit(peakrate);
-        }
-
-        builder
-            .build()
-            .execute()
-            .await
-            .map_err(|e| format!("Failed to add TBF qdisc: {}", e))?;
-
-        info!("Successfully applied TBF qdisc to {}", interface);
-        Ok(format!("TBF qdisc applied to {}", interface))
     }
 
     /// Remove qdisc from an interface.
@@ -491,7 +325,6 @@ impl TcNetlink {
             }
             Err(e) => {
                 let err_str = e.to_string();
-                // "No such file or directory" means no qdisc was configured
                 if err_str.contains("No such file") || err_str.contains("ENOENT") {
                     Ok("No qdisc to remove".to_string())
                 } else {
@@ -536,9 +369,7 @@ impl TcNetlink {
         let mut qdiscs = handle.qdisc().get().index(if_index).execute();
 
         while let Some(qdisc) = qdiscs.try_next().await.map_err(|e| e.to_string())? {
-            // Check if this is a root qdisc
             if qdisc.header.parent == rtnetlink::packet_route::tc::TcHandle::ROOT {
-                // Find the Kind attribute
                 for attr in &qdisc.attributes {
                     if let rtnetlink::packet_route::tc::TcAttribute::Kind(kind) = attr {
                         return Ok(Some(kind.clone()));
@@ -551,8 +382,6 @@ impl TcNetlink {
     }
 
     /// Apply netem configuration with namespace path support (for containers).
-    ///
-    /// This is the main entry point for container-aware TC operations.
     #[instrument(skip(self, config), fields(namespace = %namespace, interface = %interface))]
     pub async fn apply_netem_with_path(
         &self,
@@ -600,7 +429,6 @@ impl TcNetlink {
             if let Some(path) = namespace_path {
                 NamespacePath::Path(path.to_path_buf())
             } else {
-                // Fallback: try as named namespace (will likely fail for containers)
                 warn!(
                     "Container namespace {} without path, falling back to named",
                     namespace
@@ -621,7 +449,8 @@ mod tests {
     #[test]
     fn test_netem_config_default() {
         let config = NetemConfig::default();
-        assert!(!config.has_any_effect());
+        assert!(config.delay_ms.is_none());
+        assert!(config.loss_percent.is_none());
     }
 
     #[test]
@@ -631,32 +460,8 @@ mod tests {
             loss_percent: Some(5.0),
             ..Default::default()
         };
-        assert!(config.has_any_effect());
-    }
-
-    #[test]
-    fn test_netem_config_from_legacy() {
-        let config = NetemConfig::from_legacy(
-            5.0,         // loss
-            Some(10.0),  // correlation
-            Some(100.0), // delay_ms
-            Some(10.0),  // jitter_ms
-            Some(25.0),  // delay_correlation
-            None,        // duplicate
-            None,        // dup_corr
-            None,        // reorder
-            None,        // reorder_corr
-            None,        // reorder_gap
-            None,        // corrupt
-            None,        // corrupt_corr
-            None,        // rate_limit
-        );
-
-        assert!(config.has_any_effect());
-        assert_eq!(config.loss_percent, Some(5.0));
-        assert_eq!(config.loss_correlation, Some(10.0));
         assert_eq!(config.delay_ms, Some(100.0));
-        assert_eq!(config.jitter_ms, Some(10.0));
+        assert_eq!(config.loss_percent, Some(5.0));
     }
 
     #[test]
@@ -680,17 +485,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_qdisc_default_namespace() {
-        // This test requires root privileges to run
-        // Skip if not root (check by trying to read a root-only file)
+        // Skip if not root
         if std::fs::metadata("/proc/1/root").is_err() {
             eprintln!("Skipping test_check_qdisc_default_namespace: requires root");
             return;
         }
 
         let tc = TcNetlink::new();
-        // lo interface should always exist
         let result = tc.check_qdisc(NamespacePath::Default, "lo").await;
-        // Should not error, but may or may not have a qdisc
         assert!(result.is_ok());
     }
 }
