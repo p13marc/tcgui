@@ -610,19 +610,24 @@ impl NetworkManager {
         // Use native filesystem read instead of 'ip netns list'
         let discovered_namespaces = netns::discover_named_namespaces();
 
-        if !discovered_namespaces.is_empty() {
-            info!(
-                "Found {} potential namespaces, testing accessibility...",
-                discovered_namespaces.len()
-            );
+        info!(
+            "Found {} namespaces in /var/run/netns: {:?}",
+            discovered_namespaces.len(),
+            discovered_namespaces
+        );
 
-            // Test accessibility for each discovered namespace
-            for namespace in discovered_namespaces {
-                if !accessible_namespaces.contains(&namespace)
-                    && self.is_namespace_accessible(&namespace).await
-                {
-                    accessible_namespaces.push(namespace);
-                }
+        // Test accessibility for each discovered namespace
+        for namespace in discovered_namespaces {
+            if accessible_namespaces.contains(&namespace) {
+                continue;
+            }
+
+            info!("Testing accessibility of namespace '{}'", namespace);
+            if self.is_namespace_accessible(&namespace).await {
+                info!("Namespace '{}' is accessible", namespace);
+                accessible_namespaces.push(namespace);
+            } else {
+                warn!("Namespace '{}' is not accessible", namespace);
             }
         }
 
