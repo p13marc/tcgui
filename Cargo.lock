@@ -2987,9 +2987,8 @@ dependencies = [
 
 [[package]]
 name = "netlink-packet-route"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ec2f5b6839be2a19d7fa5aab5bc444380f6311c2b693551cb80f45caaa7b5ef"
+version = "0.27.0"
+source = "git+https://github.com/p13marc/netlink-packet-route.git?branch=main#86fde7e45f0f05dd0fee3d1dcbc38df5af81deef"
 dependencies = [
  "bitflags 2.10.0",
  "libc",
@@ -4357,17 +4356,17 @@ dependencies = [
 
 [[package]]
 name = "rtnetlink"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08fd15aa4c64c34d0b3178e45ec6dad313a9f02b193376d501668a7950264bb7"
+version = "0.19.0"
+source = "git+https://github.com/p13marc/rtnetlink.git?branch=main#7c340de4a826fb1f8a36370f867e1db490e63850"
 dependencies = [
- "futures",
+ "futures-channel",
+ "futures-util",
  "log",
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-proto",
  "netlink-sys",
- "nix 0.29.0",
+ "nix 0.30.1",
  "thiserror 1.0.69",
  "tokio",
 ]

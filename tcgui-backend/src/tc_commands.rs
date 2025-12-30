@@ -40,6 +40,8 @@ use tracing::{error, info, instrument, warn};
 
 use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
 
+use crate::tc_netlink::{NetemConfig, TcNetlink};
+
 /// Traffic Control command manager for network emulation.
 ///
 /// This struct manages the execution of Linux `tc` (traffic control) commands
@@ -48,8 +50,10 @@ use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
 ///
 /// # Architecture
 ///
-/// * **Default namespace**: Direct `sudo tc` command execution
-/// * **Named namespaces**: Uses `sudo ip netns exec <namespace> tc` for isolation
+/// * **Native netlink**: Uses rtnetlink for direct kernel communication (preferred)
+/// * **Process fallback**: Falls back to `tc` command if native fails
+/// * **Default namespace**: Direct command execution
+/// * **Named namespaces**: Uses `ip netns exec <namespace> tc` or netlink with setns
 /// * **Smart retry logic**: Automatically tries "replace" if "add" fails
 /// * **Result reporting**: Sends comprehensive feedback via Zenoh messaging
 ///
@@ -61,7 +65,10 @@ use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
 /// * **Namespace isolation**: Full support for network namespace operations
 #[derive(Clone)]
 pub struct TcCommandManager {
-    // All functionality handled via query servers and publishers now
+    /// Native netlink-based TC manager (no process spawning)
+    tc_netlink: TcNetlink,
+    /// Whether to use native netlink (true) or process spawning (false)
+    use_native: bool,
 }
 
 impl Default for TcCommandManager {
@@ -71,15 +78,38 @@ impl Default for TcCommandManager {
 }
 
 impl TcCommandManager {
-    /// Creates a new TcCommandManager instance.
+    /// Creates a new TcCommandManager instance with native netlink enabled.
     ///
     /// # Returns
     ///
     /// A new `TcCommandManager` ready to execute traffic control commands
-    /// across multiple network namespaces. Communication is handled via
-    /// the query server infrastructure.
+    /// across multiple network namespaces. By default, uses native netlink
+    /// for better performance and no external dependencies.
     pub fn new() -> Self {
-        Self {}
+        Self {
+            tc_netlink: TcNetlink::new(),
+            use_native: true, // Default to native netlink
+        }
+    }
+
+    /// Creates a new TcCommandManager that uses process spawning (legacy mode).
+    ///
+    /// Use this if native netlink is not working in your environment.
+    pub fn new_legacy() -> Self {
+        Self {
+            tc_netlink: TcNetlink::new(),
+            use_native: false,
+        }
+    }
+
+    /// Set whether to use native netlink or process spawning.
+    pub fn set_use_native(&mut self, use_native: bool) {
+        self.use_native = use_native;
+    }
+
+    /// Check if native netlink mode is enabled.
+    pub fn is_native(&self) -> bool {
+        self.use_native
     }
 
     /// Check if a namespace is a container namespace (starts with "container:")
@@ -157,6 +187,30 @@ impl TcCommandManager {
         namespace_path: Option<&Path>,
         interface: &str,
     ) -> Result<String> {
+        // Try native netlink first if enabled
+        if self.use_native {
+            match self
+                .tc_netlink
+                .check_qdisc_with_path(namespace, namespace_path, interface)
+                .await
+            {
+                Ok(Some(kind)) => {
+                    // Return a formatted string similar to tc output
+                    return Ok(format!("qdisc {} root", kind));
+                }
+                Ok(None) => {
+                    return Ok(String::new()); // No root qdisc found
+                }
+                Err(e) => {
+                    warn!(
+                        "Native netlink qdisc check failed, falling back to process: {}",
+                        e
+                    );
+                    // Fall through to legacy implementation
+                }
+            }
+        }
+
         let mut cmd = Self::build_namespaced_command(
             namespace,
             namespace_path,
@@ -213,11 +267,34 @@ impl TcCommandManager {
         })?;
 
         info!(
-            "Applying structured TC config: namespace={}, interface={}, config={:?}",
-            namespace, interface, config
+            "Applying structured TC config: namespace={}, interface={}, config={:?}, native={}",
+            namespace, interface, config, self.use_native
         );
 
-        // Convert to legacy parameters for now (will be replaced with direct command building later)
+        // Try native netlink first if enabled
+        if self.use_native {
+            let netem_config = Self::tc_netem_to_netlink_config(config);
+
+            match self
+                .tc_netlink
+                .apply_netem_with_path(namespace, namespace_path, interface, &netem_config)
+                .await
+            {
+                Ok(result) => {
+                    info!("Native netlink TC apply succeeded: {}", result);
+                    return Ok(result);
+                }
+                Err(e) => {
+                    warn!(
+                        "Native netlink TC apply failed, falling back to process: {}",
+                        e
+                    );
+                    // Fall through to legacy implementation
+                }
+            }
+        }
+
+        // Convert to legacy parameters for process-based fallback
         let (
             loss,
             correlation,
@@ -254,6 +331,79 @@ impl TcCommandManager {
             rate_limit_kbps,
         )
         .await
+    }
+
+    /// Convert TcNetemConfig to NetemConfig for native netlink
+    fn tc_netem_to_netlink_config(config: &TcNetemConfig) -> NetemConfig {
+        NetemConfig {
+            delay_ms: if config.delay.enabled && config.delay.base_ms > 0.0 {
+                Some(config.delay.base_ms)
+            } else {
+                None
+            },
+            jitter_ms: if config.delay.enabled && config.delay.jitter_ms > 0.0 {
+                Some(config.delay.jitter_ms)
+            } else {
+                None
+            },
+            delay_correlation: if config.delay.enabled && config.delay.correlation > 0.0 {
+                Some(config.delay.correlation)
+            } else {
+                None
+            },
+            loss_percent: if config.loss.enabled && config.loss.percentage > 0.0 {
+                Some(config.loss.percentage)
+            } else {
+                None
+            },
+            loss_correlation: if config.loss.enabled && config.loss.correlation > 0.0 {
+                Some(config.loss.correlation)
+            } else {
+                None
+            },
+            duplicate_percent: if config.duplicate.enabled && config.duplicate.percentage > 0.0 {
+                Some(config.duplicate.percentage)
+            } else {
+                None
+            },
+            duplicate_correlation: if config.duplicate.enabled && config.duplicate.correlation > 0.0
+            {
+                Some(config.duplicate.correlation)
+            } else {
+                None
+            },
+            reorder_percent: if config.reorder.enabled && config.reorder.percentage > 0.0 {
+                Some(config.reorder.percentage)
+            } else {
+                None
+            },
+            reorder_correlation: if config.reorder.enabled && config.reorder.correlation > 0.0 {
+                Some(config.reorder.correlation)
+            } else {
+                None
+            },
+            reorder_gap: if config.reorder.enabled && config.reorder.gap > 0 {
+                Some(config.reorder.gap)
+            } else {
+                None
+            },
+            corrupt_percent: if config.corrupt.enabled && config.corrupt.percentage > 0.0 {
+                Some(config.corrupt.percentage)
+            } else {
+                None
+            },
+            corrupt_correlation: if config.corrupt.enabled && config.corrupt.correlation > 0.0 {
+                Some(config.corrupt.correlation)
+            } else {
+                None
+            },
+            rate_limit_kbps: if config.rate_limit.enabled && config.rate_limit.rate_kbps > 0 {
+                Some(config.rate_limit.rate_kbps)
+            } else {
+                None
+            },
+            limit: None,
+        }
     }
 
     /// Apply TC config in default namespace (legacy method)
@@ -1229,9 +1379,30 @@ impl TcCommandManager {
         interface: &str,
     ) -> Result<String> {
         info!(
-            "Removing TC config for interface: {} in namespace: {}",
-            interface, namespace
+            "Removing TC config for interface: {} in namespace: {}, native={}",
+            interface, namespace, self.use_native
         );
+
+        // Try native netlink first if enabled
+        if self.use_native {
+            match self
+                .tc_netlink
+                .remove_qdisc_with_path(namespace, namespace_path, interface)
+                .await
+            {
+                Ok(result) => {
+                    info!("Native netlink TC remove succeeded: {}", result);
+                    return Ok(result);
+                }
+                Err(e) => {
+                    warn!(
+                        "Native netlink TC remove failed, falling back to process: {}",
+                        e
+                    );
+                    // Fall through to legacy implementation
+                }
+            }
+        }
 
         let mut cmd = if namespace == "default" {
             let mut cmd = Command::new("tc");

@@ -14,4 +14,5 @@ pub mod preset_loader;
 pub mod scenario;
 pub mod services;
 pub mod tc_commands;
+pub mod tc_netlink;
 pub mod utils;

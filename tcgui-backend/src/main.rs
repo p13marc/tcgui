@@ -11,6 +11,7 @@ pub mod scenario;
 pub mod services;
 mod tc_commands;
 mod tc_config;
+mod tc_netlink;
 mod utils;
 
 #[cfg(test)]

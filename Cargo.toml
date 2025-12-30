@@ -22,8 +22,8 @@ regex = "1.10"
 
 # Backend-specific dependencies
 futures-util = "0.3"
-netlink-packet-route = "0.25.1"
-rtnetlink = "0.18.1"
+netlink-packet-route = { git = "https://github.com/p13marc/netlink-packet-route.git", branch = "main" }
+rtnetlink = { git = "https://github.com/p13marc/rtnetlink.git", branch = "main" }
 
 # Frontend-specific dependencies
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }
