@@ -41,8 +41,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zenoh::config::WhatAmI;
 use zenoh::key_expr::{
-    format::{kedefine, keformat},
     KeyExpr, OwnedKeyExpr,
+    format::{kedefine, keformat},
 };
 
 pub mod errors;
@@ -1700,9 +1700,10 @@ mod tests {
         let result = config.validate();
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e
-                .to_string()
-                .contains("Multicast addresses are not supported for TCP"));
+            assert!(
+                e.to_string()
+                    .contains("Multicast addresses are not supported for TCP")
+            );
         }
     }
 
@@ -1742,9 +1743,10 @@ mod tests {
         let result = config.validate();
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e
-                .to_string()
-                .contains("Boolean property must be 'true' or 'false'"));
+            assert!(
+                e.to_string()
+                    .contains("Boolean property must be 'true' or 'false'")
+            );
         }
     }
 

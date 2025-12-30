@@ -10,14 +10,14 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tracing::{error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::{
-    errors::TcguiError, topics, InterfaceListUpdate, NamespaceType, NetworkInterface,
-    NetworkNamespace,
+    InterfaceListUpdate, NamespaceType, NetworkInterface, NetworkNamespace, errors::TcguiError,
+    topics,
 };
 
 use super::ServiceHealth;
@@ -124,10 +124,11 @@ impl NetworkService {
         // Check if we have a cached version that's still fresh
         if let Some(last_scan) = self.last_scan_times.get(namespace)
             && last_scan.elapsed() < self.cache_duration
-                && let Some(cached_interfaces) = self.interface_cache.get(namespace) {
-                    info!("Returning cached interfaces for namespace: {}", namespace);
-                    return Ok(cached_interfaces.clone());
-                }
+            && let Some(cached_interfaces) = self.interface_cache.get(namespace)
+        {
+            info!("Returning cached interfaces for namespace: {}", namespace);
+            return Ok(cached_interfaces.clone());
+        }
 
         // Cache miss or stale data - perform fresh scan
         info!("Scanning interfaces for namespace: {}", namespace);

@@ -258,10 +258,9 @@ impl NetworkManager {
         let namespace_owned = namespace.to_string();
 
         // Read interface info from sysfs within the namespace
-        let interface_data =
-            netns::run_in_namespace(ns_path, move || Self::read_interfaces_from_sysfs())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?;
+        let interface_data = netns::run_in_namespace(ns_path, Self::read_interfaces_from_sysfs)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?;
 
         let mut interfaces = HashMap::new();
 

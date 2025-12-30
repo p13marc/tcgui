@@ -202,13 +202,14 @@ impl ScenarioLoader {
     pub fn has_scenarios(&self) -> bool {
         for dir in &self.directories {
             if dir.exists()
-                && let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().extension().and_then(|e| e.to_str()) == Some("json5") {
-                            return true;
-                        }
+                && let Ok(entries) = std::fs::read_dir(dir)
+            {
+                for entry in entries.flatten() {
+                    if entry.path().extension().and_then(|e| e.to_str()) == Some("json5") {
+                        return true;
                     }
                 }
+            }
         }
         false
     }

@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use iced::Task;
-use tcgui_shared::{presets::CustomPreset, NetworkBandwidthStats};
+use tcgui_shared::{NetworkBandwidthStats, presets::CustomPreset};
 
 /// Main interface message type that routes to specific components
 /// Currently unused - prepared for future modular architecture

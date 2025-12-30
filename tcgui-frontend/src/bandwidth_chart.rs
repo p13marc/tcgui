@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::bandwidth_history::BandwidthHistory;
 

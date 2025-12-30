@@ -14,7 +14,7 @@ use tracing::{error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
-use tcgui_shared::{errors::TcguiError, topics, TcConfigUpdate, TcConfiguration};
+use tcgui_shared::{TcConfigUpdate, TcConfiguration, errors::TcguiError, topics};
 
 use super::ServiceHealth;
 use crate::tc_commands::TcCommandManager;
@@ -528,62 +528,73 @@ impl TcService {
         }
 
         if let Some(delay) = delay_ms
-            && delay > 0.0 {
-                let mut delay_part = format!("delay {}ms", delay);
-                if let Some(jitter) = delay_jitter_ms
-                    && jitter > 0.0 {
-                        delay_part.push_str(&format!(" {}ms", jitter));
-                        if let Some(delay_corr) = delay_correlation
-                            && delay_corr > 0.0 {
-                                delay_part.push_str(&format!(" {}%", delay_corr));
-                            }
-                    }
-                cmd_parts.push(delay_part);
+            && delay > 0.0
+        {
+            let mut delay_part = format!("delay {}ms", delay);
+            if let Some(jitter) = delay_jitter_ms
+                && jitter > 0.0
+            {
+                delay_part.push_str(&format!(" {}ms", jitter));
+                if let Some(delay_corr) = delay_correlation
+                    && delay_corr > 0.0
+                {
+                    delay_part.push_str(&format!(" {}%", delay_corr));
+                }
             }
+            cmd_parts.push(delay_part);
+        }
 
         if let Some(duplicate) = duplicate_percent
-            && duplicate > 0.0 {
-                let mut duplicate_part = format!("duplicate {}%", duplicate);
-                if let Some(dup_corr) = duplicate_correlation
-                    && dup_corr > 0.0 {
-                        duplicate_part.push_str(&format!(" {}%", dup_corr));
-                    }
-                cmd_parts.push(duplicate_part);
+            && duplicate > 0.0
+        {
+            let mut duplicate_part = format!("duplicate {}%", duplicate);
+            if let Some(dup_corr) = duplicate_correlation
+                && dup_corr > 0.0
+            {
+                duplicate_part.push_str(&format!(" {}%", dup_corr));
             }
+            cmd_parts.push(duplicate_part);
+        }
 
         if let Some(reorder) = reorder_percent
-            && reorder > 0.0 {
-                let mut reorder_part = format!("reorder {}%", reorder);
-                if let Some(reorder_corr) = reorder_correlation
-                    && reorder_corr > 0.0 {
-                        reorder_part.push_str(&format!(" {}%", reorder_corr));
-                    }
-                if let Some(gap) = reorder_gap
-                    && gap > 0 {
-                        reorder_part.push_str(&format!(" gap {}", gap));
-                    }
-                cmd_parts.push(reorder_part);
+            && reorder > 0.0
+        {
+            let mut reorder_part = format!("reorder {}%", reorder);
+            if let Some(reorder_corr) = reorder_correlation
+                && reorder_corr > 0.0
+            {
+                reorder_part.push_str(&format!(" {}%", reorder_corr));
             }
+            if let Some(gap) = reorder_gap
+                && gap > 0
+            {
+                reorder_part.push_str(&format!(" gap {}", gap));
+            }
+            cmd_parts.push(reorder_part);
+        }
 
         if let Some(corrupt) = corrupt_percent
-            && corrupt > 0.0 {
-                let mut corrupt_part = format!("corrupt {}%", corrupt);
-                if let Some(corrupt_corr) = corrupt_correlation
-                    && corrupt_corr > 0.0 {
-                        corrupt_part.push_str(&format!(" {}%", corrupt_corr));
-                    }
-                cmd_parts.push(corrupt_part);
+            && corrupt > 0.0
+        {
+            let mut corrupt_part = format!("corrupt {}%", corrupt);
+            if let Some(corrupt_corr) = corrupt_correlation
+                && corrupt_corr > 0.0
+            {
+                corrupt_part.push_str(&format!(" {}%", corrupt_corr));
             }
+            cmd_parts.push(corrupt_part);
+        }
 
         if let Some(rate) = rate_limit_kbps
-            && rate > 0 {
-                let rate_part = if rate >= 1000 {
-                    format!("rate {}mbit", rate / 1000)
-                } else {
-                    format!("rate {}kbit", rate)
-                };
-                cmd_parts.push(rate_part);
-            }
+            && rate > 0
+        {
+            let rate_part = if rate >= 1000 {
+                format!("rate {}mbit", rate / 1000)
+            } else {
+                format!("rate {}kbit", rate)
+            };
+            cmd_parts.push(rate_part);
+        }
 
         TcConfiguration {
             loss,
@@ -667,9 +678,11 @@ mod tests {
         assert_eq!(config.correlation, Some(25.0));
         assert_eq!(config.delay_ms, Some(100.0));
         assert_eq!(config.rate_limit_kbps, Some(1000));
-        assert!(config
-            .command
-            .contains("tc qdisc replace dev eth0 root netem"));
+        assert!(
+            config
+                .command
+                .contains("tc qdisc replace dev eth0 root netem")
+        );
         assert!(config.command.contains("loss 5% correlation 25%"));
         assert!(config.command.contains("delay 100ms 10ms 30%"));
     }

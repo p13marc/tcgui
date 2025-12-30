@@ -234,8 +234,8 @@ pub struct ScenarioStorageStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::scenario::ScenarioStep;
     use tcgui_shared::TcNetemConfig;
+    use tcgui_shared::scenario::ScenarioStep;
 
     // Helper function to create a test scenario
     fn create_test_scenario(id: &str, name: &str) -> NetworkScenario {

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument, warn};
-use zenoh::{query::Query, Session};
+use zenoh::{Session, query::Query};
 
 use tcgui_shared::scenario::{
     ScenarioError, ScenarioExecutionRequest, ScenarioExecutionResponse, ScenarioExecutionUpdate,

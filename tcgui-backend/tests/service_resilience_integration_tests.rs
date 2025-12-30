@@ -9,8 +9,8 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use tcgui_backend::utils::service_resilience::{
-    execute_network_discovery, execute_system_command, execute_zenoh_communication,
-    ServiceResilienceManager,
+    ServiceResilienceManager, execute_network_discovery, execute_system_command,
+    execute_zenoh_communication,
 };
 
 /// Test retry behavior across different services
@@ -46,8 +46,8 @@ async fn test_retry_integration() -> Result<()> {
 /// Test retry behavior with exponential backoff
 #[tokio::test]
 async fn test_retry_with_backoff_integration() -> Result<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     // Test that successful operations work
     let result = execute_system_command(

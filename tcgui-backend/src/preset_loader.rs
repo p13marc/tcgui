@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use tcgui_shared::preset_json::{parse_preset_file, CustomPreset};
+use tcgui_shared::TcNetemConfig;
+use tcgui_shared::preset_json::{CustomPreset, parse_preset_file};
 use tcgui_shared::presets::PresetList;
 use tcgui_shared::scenario_json::PresetResolver;
-use tcgui_shared::TcNetemConfig;
 
 /// Default system preset directory (installed via package)
 pub const SYSTEM_PRESET_DIR: &str = "/usr/share/tcgui/presets";
@@ -221,13 +221,14 @@ impl PresetLoader {
     pub fn has_presets(&self) -> bool {
         for dir in &self.directories {
             if dir.exists()
-                && let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().extension().and_then(|e| e.to_str()) == Some("json5") {
-                            return true;
-                        }
+                && let Ok(entries) = std::fs::read_dir(dir)
+            {
+                for entry in entries.flatten() {
+                    if entry.path().extension().and_then(|e| e.to_str()) == Some("json5") {
+                        return true;
                     }
                 }
+            }
         }
         false
     }

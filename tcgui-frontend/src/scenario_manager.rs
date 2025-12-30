@@ -512,9 +512,10 @@ impl ScenarioManager {
     pub fn remove_execution(&mut self, backend_name: &str, namespace: &str, interface: &str) {
         let execution_key = format!("{}/{}", namespace, interface);
         if let Some(executions) = self.active_executions.get_mut(backend_name)
-            && executions.remove(&execution_key).is_some() {
-                info!("Removed execution for {}", execution_key);
-            }
+            && executions.remove(&execution_key).is_some()
+        {
+            info!("Removed execution for {}", execution_key);
+        }
     }
 
     /// Clean up backend state when backend disconnects
@@ -571,8 +572,8 @@ impl std::fmt::Display for ScenarioManagerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::scenario::{ExecutionState, ExecutionStats, ScenarioMetadata, ScenarioStep};
     use tcgui_shared::TcNetemConfig;
+    use tcgui_shared::scenario::{ExecutionState, ExecutionStats, ScenarioMetadata, ScenarioStep};
 
     fn create_test_scenario(id: &str, name: &str, steps: usize) -> NetworkScenario {
         NetworkScenario {
@@ -941,9 +942,11 @@ mod tests {
 
         // Without channels set up, requests should fail gracefully
         assert!(manager.request_scenarios("backend1").is_err());
-        assert!(manager
-            .start_execution("backend1", "scenario1", "ns1", "eth0", false)
-            .is_err());
+        assert!(
+            manager
+                .start_execution("backend1", "scenario1", "ns1", "eth0", false)
+                .is_err()
+        );
         assert!(manager.stop_execution("backend1", "ns1", "eth0").is_err());
         assert!(manager.pause_execution("backend1", "ns1", "eth0").is_err());
         assert!(manager.resume_execution("backend1", "ns1", "eth0").is_err());

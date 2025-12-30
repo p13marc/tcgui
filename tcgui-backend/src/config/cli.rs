@@ -218,7 +218,7 @@ impl CliConfig {
                 return Err(anyhow::anyhow!(
                     "Invalid zenoh mode '{}'. Must be 'peer' or 'client'",
                     self.zenoh_mode
-                ))
+                ));
             }
         }
 

@@ -4,8 +4,8 @@
 //! allowing users to quickly apply common traffic control configurations.
 //! Presets are loaded from JSON5 files by the backend.
 
-use iced::widget::{button, row, text};
 use iced::Element;
+use iced::widget::{button, row, text};
 use tcgui_shared::presets::{CustomPreset, PresetList};
 
 use crate::theme::Theme;

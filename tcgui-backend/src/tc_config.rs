@@ -37,10 +37,11 @@ pub fn parse_tc_parameters(qdisc_info: &str) -> TcConfiguration {
     if let Some(loss_start) = qdisc_info.find("loss ") {
         let loss_part = &qdisc_info[loss_start + 5..];
         if let Some(percent_pos) = loss_part.find('%')
-            && let Ok(loss_val) = loss_part[..percent_pos].trim().parse::<f32>() {
-                config.loss = loss_val;
-                info!("Parsed loss: {}%", loss_val);
-            }
+            && let Ok(loss_val) = loss_part[..percent_pos].trim().parse::<f32>()
+        {
+            config.loss = loss_val;
+            info!("Parsed loss: {}%", loss_val);
+        }
     }
 
     // Parse delay (format: "delay 100ms 10ms 25%" for delay, jitter, correlation)
@@ -95,20 +96,22 @@ pub fn parse_tc_parameters(qdisc_info: &str) -> TcConfiguration {
     if let Some(dup_start) = qdisc_info.find("duplicate ") {
         let dup_part = &qdisc_info[dup_start + 10..];
         if let Some(percent_pos) = dup_part.find('%')
-            && let Ok(dup_val) = dup_part[..percent_pos].trim().parse::<f32>() {
-                config.duplicate_percent = Some(dup_val);
-                info!("Parsed duplicate: {}%", dup_val);
-            }
+            && let Ok(dup_val) = dup_part[..percent_pos].trim().parse::<f32>()
+        {
+            config.duplicate_percent = Some(dup_val);
+            info!("Parsed duplicate: {}%", dup_val);
+        }
     }
 
     // Parse reorder percentage
     if let Some(reorder_start) = qdisc_info.find("reorder ") {
         let reorder_part = &qdisc_info[reorder_start + 8..];
         if let Some(percent_pos) = reorder_part.find('%')
-            && let Ok(reorder_val) = reorder_part[..percent_pos].trim().parse::<f32>() {
-                config.reorder_percent = Some(reorder_val);
-                info!("Parsed reorder: {}%", reorder_val);
-            }
+            && let Ok(reorder_val) = reorder_part[..percent_pos].trim().parse::<f32>()
+        {
+            config.reorder_percent = Some(reorder_val);
+            info!("Parsed reorder: {}%", reorder_val);
+        }
 
         // Parse reorder gap
         if let Some(gap_start) = qdisc_info.find("gap ") {
@@ -125,10 +128,11 @@ pub fn parse_tc_parameters(qdisc_info: &str) -> TcConfiguration {
     if let Some(corrupt_start) = qdisc_info.find("corrupt ") {
         let corrupt_part = &qdisc_info[corrupt_start + 8..];
         if let Some(percent_pos) = corrupt_part.find('%')
-            && let Ok(corrupt_val) = corrupt_part[..percent_pos].trim().parse::<f32>() {
-                config.corrupt_percent = Some(corrupt_val);
-                info!("Parsed corrupt: {}%", corrupt_val);
-            }
+            && let Ok(corrupt_val) = corrupt_part[..percent_pos].trim().parse::<f32>()
+        {
+            config.corrupt_percent = Some(corrupt_val);
+            info!("Parsed corrupt: {}%", corrupt_val);
+        }
     }
 
     // Parse rate limiting (can be in kbit, Kbit, mbit, Mbit)
@@ -142,14 +146,15 @@ pub fn parse_tc_parameters(qdisc_info: &str) -> TcConfiguration {
                 info!("Parsed rate limit: {}kbps", rate_val);
             }
         } else if let Some(mbit_pos) = rate_part_lower.find("mbit")
-            && let Ok(rate_val) = rate_part[..mbit_pos].trim().parse::<u32>() {
-                config.rate_limit_kbps = Some(rate_val * 1000);
-                info!(
-                    "Parsed rate limit: {}mbit ({}kbps)",
-                    rate_val,
-                    rate_val * 1000
-                );
-            }
+            && let Ok(rate_val) = rate_part[..mbit_pos].trim().parse::<u32>()
+        {
+            config.rate_limit_kbps = Some(rate_val * 1000);
+            info!(
+                "Parsed rate limit: {}mbit ({}kbps)",
+                rate_val,
+                rate_val * 1000
+            );
+        }
     }
 
     config
@@ -192,62 +197,73 @@ pub fn build_tc_command_string(
     }
 
     if let Some(delay) = delay_ms
-        && delay > 0.0 {
-            let mut delay_part = format!("delay {}ms", delay);
-            if let Some(jitter) = delay_jitter_ms
-                && jitter > 0.0 {
-                    delay_part.push_str(&format!(" {}ms", jitter));
-                    if let Some(delay_corr) = delay_correlation
-                        && delay_corr > 0.0 {
-                            delay_part.push_str(&format!(" {}%", delay_corr));
-                        }
-                }
-            cmd_parts.push(delay_part);
+        && delay > 0.0
+    {
+        let mut delay_part = format!("delay {}ms", delay);
+        if let Some(jitter) = delay_jitter_ms
+            && jitter > 0.0
+        {
+            delay_part.push_str(&format!(" {}ms", jitter));
+            if let Some(delay_corr) = delay_correlation
+                && delay_corr > 0.0
+            {
+                delay_part.push_str(&format!(" {}%", delay_corr));
+            }
         }
+        cmd_parts.push(delay_part);
+    }
 
     if let Some(duplicate) = duplicate_percent
-        && duplicate > 0.0 {
-            let mut duplicate_part = format!("duplicate {}%", duplicate);
-            if let Some(dup_corr) = duplicate_correlation
-                && dup_corr > 0.0 {
-                    duplicate_part.push_str(&format!(" {}%", dup_corr));
-                }
-            cmd_parts.push(duplicate_part);
+        && duplicate > 0.0
+    {
+        let mut duplicate_part = format!("duplicate {}%", duplicate);
+        if let Some(dup_corr) = duplicate_correlation
+            && dup_corr > 0.0
+        {
+            duplicate_part.push_str(&format!(" {}%", dup_corr));
         }
+        cmd_parts.push(duplicate_part);
+    }
 
     if let Some(reorder) = reorder_percent
-        && reorder > 0.0 {
-            let mut reorder_part = format!("reorder {}%", reorder);
-            if let Some(reorder_corr) = reorder_correlation
-                && reorder_corr > 0.0 {
-                    reorder_part.push_str(&format!(" {}%", reorder_corr));
-                }
-            if let Some(gap) = reorder_gap
-                && gap > 0 {
-                    reorder_part.push_str(&format!(" gap {}", gap));
-                }
-            cmd_parts.push(reorder_part);
+        && reorder > 0.0
+    {
+        let mut reorder_part = format!("reorder {}%", reorder);
+        if let Some(reorder_corr) = reorder_correlation
+            && reorder_corr > 0.0
+        {
+            reorder_part.push_str(&format!(" {}%", reorder_corr));
         }
+        if let Some(gap) = reorder_gap
+            && gap > 0
+        {
+            reorder_part.push_str(&format!(" gap {}", gap));
+        }
+        cmd_parts.push(reorder_part);
+    }
 
     if let Some(corrupt) = corrupt_percent
-        && corrupt > 0.0 {
-            let mut corrupt_part = format!("corrupt {}%", corrupt);
-            if let Some(corrupt_corr) = corrupt_correlation
-                && corrupt_corr > 0.0 {
-                    corrupt_part.push_str(&format!(" {}%", corrupt_corr));
-                }
-            cmd_parts.push(corrupt_part);
+        && corrupt > 0.0
+    {
+        let mut corrupt_part = format!("corrupt {}%", corrupt);
+        if let Some(corrupt_corr) = corrupt_correlation
+            && corrupt_corr > 0.0
+        {
+            corrupt_part.push_str(&format!(" {}%", corrupt_corr));
         }
+        cmd_parts.push(corrupt_part);
+    }
 
     if let Some(rate) = rate_limit_kbps
-        && rate > 0 {
-            let rate_part = if rate >= 1000 {
-                format!("rate {}mbit", rate / 1000)
-            } else {
-                format!("rate {}kbit", rate)
-            };
-            cmd_parts.push(rate_part);
-        }
+        && rate > 0
+    {
+        let rate_part = if rate >= 1000 {
+            format!("rate {}mbit", rate / 1000)
+        } else {
+            format!("rate {}kbit", rate)
+        };
+        cmd_parts.push(rate_part);
+    }
 
     cmd_parts.join(" ")
 }

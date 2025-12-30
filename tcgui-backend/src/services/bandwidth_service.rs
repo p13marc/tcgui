@@ -10,12 +10,12 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tracing::{info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
-use tcgui_shared::{errors::TcguiError, topics, BandwidthUpdate, NetworkBandwidthStats};
+use tcgui_shared::{BandwidthUpdate, NetworkBandwidthStats, errors::TcguiError, topics};
 
 use super::ServiceHealth;
 use crate::interfaces::NamespaceInterfaces;

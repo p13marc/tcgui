@@ -7,8 +7,8 @@
 use crate::interface::TcInterface;
 use std::collections::{HashMap, HashSet};
 use tcgui_shared::{
-    presets::PresetList, BackendHealthStatus, InterfaceEventType, InterfaceListUpdate,
-    InterfaceStateEvent, NamespaceType, NetworkNamespace,
+    BackendHealthStatus, InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent,
+    NamespaceType, NetworkNamespace, presets::PresetList,
 };
 use tracing::info;
 
@@ -742,9 +742,11 @@ mod tests {
         manager.handle_interface_list_update(update);
 
         // Verify interface exists
-        assert!(manager.backends()["backend1"].namespaces["default"]
-            .tc_interfaces
-            .contains_key("eth0"));
+        assert!(
+            manager.backends()["backend1"].namespaces["default"]
+                .tc_interfaces
+                .contains_key("eth0")
+        );
 
         // Send another update (same interface, different backend state)
         let mut new_iface = create_test_interface("eth0", "default");
@@ -765,8 +767,10 @@ mod tests {
 
         // TC interface should still exist after update
         let backends = manager.backends();
-        assert!(backends["backend1"].namespaces["default"]
-            .tc_interfaces
-            .contains_key("eth0"));
+        assert!(
+            backends["backend1"].namespaces["default"]
+                .tc_interfaces
+                .contains_key("eth0")
+        );
     }
 }

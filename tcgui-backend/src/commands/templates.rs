@@ -4,7 +4,7 @@
 //! common traffic control command patterns, allowing users to define
 //! reusable templates with parameters that can be customized per use case.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -960,59 +960,64 @@ impl TemplateManager {
                         }
                     }
                     if let Some(ref allowed) = constraints.allowed_values
-                        && !allowed.contains(s) {
-                            return Err(anyhow!(
-                                "Parameter '{}' value '{}' is not in allowed values: {:?}",
-                                param.name,
-                                s,
-                                allowed
-                            ));
-                        }
+                        && !allowed.contains(s)
+                    {
+                        return Err(anyhow!(
+                            "Parameter '{}' value '{}' is not in allowed values: {:?}",
+                            param.name,
+                            s,
+                            allowed
+                        ));
+                    }
                 }
             }
             (ParameterType::Integer, ParameterValue::Integer(i)) => {
                 if let Some(ref constraints) = param.constraints {
                     let value_f64 = *i as f64;
                     if let Some(min) = constraints.min
-                        && value_f64 < min {
-                            return Err(anyhow!(
-                                "Parameter '{}' value {} is less than minimum {}",
-                                param.name,
-                                i,
-                                min
-                            ));
-                        }
+                        && value_f64 < min
+                    {
+                        return Err(anyhow!(
+                            "Parameter '{}' value {} is less than minimum {}",
+                            param.name,
+                            i,
+                            min
+                        ));
+                    }
                     if let Some(max) = constraints.max
-                        && value_f64 > max {
-                            return Err(anyhow!(
-                                "Parameter '{}' value {} is greater than maximum {}",
-                                param.name,
-                                i,
-                                max
-                            ));
-                        }
+                        && value_f64 > max
+                    {
+                        return Err(anyhow!(
+                            "Parameter '{}' value {} is greater than maximum {}",
+                            param.name,
+                            i,
+                            max
+                        ));
+                    }
                 }
             }
             (ParameterType::Float, ParameterValue::Float(f)) => {
                 if let Some(ref constraints) = param.constraints {
                     if let Some(min) = constraints.min
-                        && *f < min {
-                            return Err(anyhow!(
-                                "Parameter '{}' value {} is less than minimum {}",
-                                param.name,
-                                f,
-                                min
-                            ));
-                        }
+                        && *f < min
+                    {
+                        return Err(anyhow!(
+                            "Parameter '{}' value {} is less than minimum {}",
+                            param.name,
+                            f,
+                            min
+                        ));
+                    }
                     if let Some(max) = constraints.max
-                        && *f > max {
-                            return Err(anyhow!(
-                                "Parameter '{}' value {} is greater than maximum {}",
-                                param.name,
-                                f,
-                                max
-                            ));
-                        }
+                        && *f > max
+                    {
+                        return Err(anyhow!(
+                            "Parameter '{}' value {} is greater than maximum {}",
+                            param.name,
+                            f,
+                            max
+                        ));
+                    }
                 }
             }
             (ParameterType::Boolean, ParameterValue::Boolean(_)) => {

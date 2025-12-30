@@ -4,7 +4,7 @@
 //! Linux traffic control (tc) commands with strong validation, extensibility,
 //! and support for multiple qdisc types beyond just netem.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -331,9 +331,10 @@ impl TcCommandBuilder {
 
         // Validate namespace
         if let Some(ref namespace) = self.namespace
-            && namespace.is_empty() {
-                return Err(anyhow!("Namespace cannot be empty"));
-            }
+            && namespace.is_empty()
+        {
+            return Err(anyhow!("Namespace cannot be empty"));
+        }
 
         Ok(())
     }
@@ -364,9 +365,10 @@ impl TcCommandBuilder {
     fn validate_netem_params(&self, params: &NetemParams) -> Result<()> {
         // Validate loss percentage
         if let Some(loss) = params.loss_percent
-            && !(0.0..=100.0).contains(&loss) {
-                return Err(anyhow!("Loss percentage must be between 0.0 and 100.0"));
-            }
+            && !(0.0..=100.0).contains(&loss)
+        {
+            return Err(anyhow!("Loss percentage must be between 0.0 and 100.0"));
+        }
 
         // Validate correlation values
         for (name, value) in [
@@ -377,21 +379,24 @@ impl TcCommandBuilder {
             ("corrupt_correlation", params.corrupt_correlation),
         ] {
             if let Some(corr) = value
-                && !(0.0..=100.0).contains(&corr) {
-                    return Err(anyhow!("{} must be between 0.0 and 100.0", name));
-                }
+                && !(0.0..=100.0).contains(&corr)
+            {
+                return Err(anyhow!("{} must be between 0.0 and 100.0", name));
+            }
         }
 
         // Validate delay values
         if let Some(delay) = params.delay_ms
-            && delay < 0.0 {
-                return Err(anyhow!("Delay cannot be negative"));
-            }
+            && delay < 0.0
+        {
+            return Err(anyhow!("Delay cannot be negative"));
+        }
 
         if let Some(jitter) = params.delay_jitter_ms
-            && jitter < 0.0 {
-                return Err(anyhow!("Delay jitter cannot be negative"));
-            }
+            && jitter < 0.0
+        {
+            return Err(anyhow!("Delay jitter cannot be negative"));
+        }
 
         // Validate percentage values
         for (name, value) in [
@@ -400,22 +405,25 @@ impl TcCommandBuilder {
             ("corrupt_percent", params.corrupt_percent),
         ] {
             if let Some(percent) = value
-                && !(0.0..=100.0).contains(&percent) {
-                    return Err(anyhow!("{} must be between 0.0 and 100.0", name));
-                }
+                && !(0.0..=100.0).contains(&percent)
+            {
+                return Err(anyhow!("{} must be between 0.0 and 100.0", name));
+            }
         }
 
         // Validate reorder gap
         if let Some(gap) = params.reorder_gap
-            && gap == 0 {
-                return Err(anyhow!("Reorder gap must be greater than 0"));
-            }
+            && gap == 0
+        {
+            return Err(anyhow!("Reorder gap must be greater than 0"));
+        }
 
         // Validate rate limit
         if let Some(rate) = params.rate_limit_kbps
-            && rate == 0 {
-                return Err(anyhow!("Rate limit must be greater than 0"));
-            }
+            && rate == 0
+        {
+            return Err(anyhow!("Rate limit must be greater than 0"));
+        }
 
         Ok(())
     }
@@ -529,65 +537,77 @@ impl TcCommand {
     /// Add netem parameters
     fn add_netem_params(&self, cmd: &mut Command, params: &NetemParams) {
         if let Some(loss) = params.loss_percent
-            && loss > 0.0 {
-                cmd.args(["loss", &format!("{}%", loss)]);
-                if let Some(corr) = params.loss_correlation
-                    && corr > 0.0 {
-                        cmd.arg(format!("{}%", corr));
-                    }
+            && loss > 0.0
+        {
+            cmd.args(["loss", &format!("{}%", loss)]);
+            if let Some(corr) = params.loss_correlation
+                && corr > 0.0
+            {
+                cmd.arg(format!("{}%", corr));
             }
+        }
 
         if let Some(delay) = params.delay_ms
-            && delay > 0.0 {
-                cmd.args(["delay", &format!("{}ms", delay)]);
-                if let Some(jitter) = params.delay_jitter_ms
-                    && jitter > 0.0 {
-                        cmd.arg(format!("{}ms", jitter));
-                        if let Some(corr) = params.delay_correlation
-                            && corr > 0.0 {
-                                cmd.arg(format!("{}%", corr));
-                            }
-                    }
+            && delay > 0.0
+        {
+            cmd.args(["delay", &format!("{}ms", delay)]);
+            if let Some(jitter) = params.delay_jitter_ms
+                && jitter > 0.0
+            {
+                cmd.arg(format!("{}ms", jitter));
+                if let Some(corr) = params.delay_correlation
+                    && corr > 0.0
+                {
+                    cmd.arg(format!("{}%", corr));
+                }
             }
+        }
 
         if let Some(duplicate) = params.duplicate_percent
-            && duplicate > 0.0 {
-                cmd.args(["duplicate", &format!("{}%", duplicate)]);
-                if let Some(corr) = params.duplicate_correlation
-                    && corr > 0.0 {
-                        cmd.arg(format!("{}%", corr));
-                    }
+            && duplicate > 0.0
+        {
+            cmd.args(["duplicate", &format!("{}%", duplicate)]);
+            if let Some(corr) = params.duplicate_correlation
+                && corr > 0.0
+            {
+                cmd.arg(format!("{}%", corr));
             }
+        }
 
         if let Some(reorder) = params.reorder_percent
-            && reorder > 0.0 {
-                cmd.args(["reorder", &format!("{}%", reorder)]);
-                if let Some(corr) = params.reorder_correlation
-                    && corr > 0.0 {
-                        cmd.arg(format!("{}%", corr));
-                    }
-                if let Some(gap) = params.reorder_gap {
-                    cmd.args(["gap", &format!("{}", gap)]);
-                }
+            && reorder > 0.0
+        {
+            cmd.args(["reorder", &format!("{}%", reorder)]);
+            if let Some(corr) = params.reorder_correlation
+                && corr > 0.0
+            {
+                cmd.arg(format!("{}%", corr));
             }
+            if let Some(gap) = params.reorder_gap {
+                cmd.args(["gap", &format!("{}", gap)]);
+            }
+        }
 
         if let Some(corrupt) = params.corrupt_percent
-            && corrupt > 0.0 {
-                cmd.args(["corrupt", &format!("{}%", corrupt)]);
-                if let Some(corr) = params.corrupt_correlation
-                    && corr > 0.0 {
-                        cmd.arg(format!("{}%", corr));
-                    }
+            && corrupt > 0.0
+        {
+            cmd.args(["corrupt", &format!("{}%", corrupt)]);
+            if let Some(corr) = params.corrupt_correlation
+                && corr > 0.0
+            {
+                cmd.arg(format!("{}%", corr));
             }
+        }
 
         if let Some(rate) = params.rate_limit_kbps
-            && rate > 0 {
-                if rate >= 1000 {
-                    cmd.args(["rate", &format!("{}mbit", rate / 1000)]);
-                } else {
-                    cmd.args(["rate", &format!("{}kbit", rate)]);
-                }
+            && rate > 0
+        {
+            if rate >= 1000 {
+                cmd.args(["rate", &format!("{}mbit", rate / 1000)]);
+            } else {
+                cmd.args(["rate", &format!("{}kbit", rate)]);
             }
+        }
     }
 
     /// Add TBF parameters

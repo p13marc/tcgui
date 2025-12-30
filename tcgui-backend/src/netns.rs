@@ -470,7 +470,7 @@ mod tests {
     fn test_discover_named_namespaces() {
         // This test just verifies the function doesn't panic
         // Actual namespaces depend on system state
-        let namespaces = discover_named_namespaces();
+        let _namespaces = discover_named_namespaces();
         // Should return empty or actual namespaces, never panic
         // (test just verifies no panic occurs)
     }

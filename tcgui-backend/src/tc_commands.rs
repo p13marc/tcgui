@@ -38,7 +38,7 @@ use std::path::Path;
 use tokio::process::Command;
 use tracing::{error, info, instrument, warn};
 
-use tcgui_shared::{errors::TcguiError, TcNetemConfig, TcValidate};
+use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
 
 /// Traffic Control command manager for network emulation.
 ///
@@ -469,11 +469,20 @@ impl TcCommandManager {
     ) -> Result<String> {
         info!(
             "Applying TC config: namespace={}, interface={}, loss={}%, correlation={:?}, delay={}ms, jitter={}ms, delay_corr={:?}, duplicate={}%, dup_corr={:?}, reorder={}%, reorder_corr={:?}, gap={:?}, corrupt={}%, corrupt_corr={:?}, rate={}kbps",
-            namespace, interface, loss, correlation,
-            delay_ms.unwrap_or(0.0), delay_jitter_ms.unwrap_or(0.0), delay_correlation,
-            duplicate_percent.unwrap_or(0.0), duplicate_correlation,
-            reorder_percent.unwrap_or(0.0), reorder_correlation, reorder_gap,
-            corrupt_percent.unwrap_or(0.0), corrupt_correlation,
+            namespace,
+            interface,
+            loss,
+            correlation,
+            delay_ms.unwrap_or(0.0),
+            delay_jitter_ms.unwrap_or(0.0),
+            delay_correlation,
+            duplicate_percent.unwrap_or(0.0),
+            duplicate_correlation,
+            reorder_percent.unwrap_or(0.0),
+            reorder_correlation,
+            reorder_gap,
+            corrupt_percent.unwrap_or(0.0),
+            corrupt_correlation,
             rate_limit_kbps.unwrap_or(0)
         );
 
@@ -512,7 +521,10 @@ impl TcCommandManager {
                 } else {
                     // Existing qdisc found, check if it's netem or something else
                     if qdisc_info.contains("netem") {
-                        info!("Existing netem qdisc found on {}/{}, need to determine if we can replace or need fresh recreation", namespace, interface);
+                        info!(
+                            "Existing netem qdisc found on {}/{}, need to determine if we can replace or need fresh recreation",
+                            namespace, interface
+                        );
                         // Check if we need to remove parameters by comparing current vs requested
                         let current_config = self.parse_current_tc_config(&qdisc_info);
                         let needs_recreation = self.needs_qdisc_recreation(
@@ -533,7 +545,9 @@ impl TcCommandManager {
                         );
 
                         if needs_recreation {
-                            info!("Parameters need to be removed, deleting and recreating netem qdisc");
+                            info!(
+                                "Parameters need to be removed, deleting and recreating netem qdisc"
+                            );
                             match self
                                 .remove_tc_config_in_namespace_with_path(
                                     namespace,
@@ -565,7 +579,10 @@ impl TcCommandManager {
                                     .await
                                 }
                                 Err(e) => {
-                                    warn!("Failed to delete existing qdisc: {}, trying replace anyway", e);
+                                    warn!(
+                                        "Failed to delete existing qdisc: {}, trying replace anyway",
+                                        e
+                                    );
                                     self.execute_tc_command_with_path(
                                         namespace,
                                         namespace_path,
@@ -613,7 +630,10 @@ impl TcCommandManager {
                         }
                     } else if qdisc_info.contains("noqueue") {
                         // noqueue qdisc can be directly replaced with add command
-                        info!("Existing noqueue qdisc found on {}/{}, adding netem qdisc (will replace noqueue)", namespace, interface);
+                        info!(
+                            "Existing noqueue qdisc found on {}/{}, adding netem qdisc (will replace noqueue)",
+                            namespace, interface
+                        );
                         self.execute_tc_command_with_path(
                             namespace,
                             namespace_path,
@@ -636,7 +656,12 @@ impl TcCommandManager {
                         .await
                     } else {
                         // Other types of qdiscs that might need removal
-                        info!("Existing qdisc found on {}/{} ({}), attempting to remove and add netem", namespace, interface, qdisc_info.trim());
+                        info!(
+                            "Existing qdisc found on {}/{} ({}), attempting to remove and add netem",
+                            namespace,
+                            interface,
+                            qdisc_info.trim()
+                        );
 
                         match self
                             .remove_tc_config_in_namespace_with_path(
@@ -671,7 +696,10 @@ impl TcCommandManager {
                             }
                             Err(remove_error) => {
                                 // If removal failed, try add anyway (might work for some qdiscs)
-                                warn!("Failed to remove existing qdisc from {}/{}: {}, trying add anyway", namespace, interface, remove_error);
+                                warn!(
+                                    "Failed to remove existing qdisc from {}/{}: {}, trying add anyway",
+                                    namespace, interface, remove_error
+                                );
                                 info!("Attempting to add netem qdisc despite removal failure");
                                 self.execute_tc_command_with_path(
                                     namespace,
@@ -699,7 +727,10 @@ impl TcCommandManager {
                 }
             }
             Err(check_error) => {
-                warn!("Could not check existing qdisc on {}/{}: {}, falling back to add/replace logic", namespace, interface, check_error);
+                warn!(
+                    "Could not check existing qdisc on {}/{}: {}, falling back to add/replace logic",
+                    namespace, interface, check_error
+                );
 
                 // Fallback to the old try-add-then-replace logic
                 let result = self
@@ -867,59 +898,71 @@ impl TcCommandManager {
         if loss > 0.0 {
             active_params.push(format!("loss={}%", loss));
             if let Some(corr) = correlation
-                && corr > 0.0 {
-                    active_params.push(format!("loss_correlation={}%", corr));
-                }
+                && corr > 0.0
+            {
+                active_params.push(format!("loss_correlation={}%", corr));
+            }
         }
         if let Some(delay) = delay_ms
-            && delay > 0.0 {
-                active_params.push(format!("delay={}ms", delay));
-                if let Some(jitter) = delay_jitter_ms
-                    && jitter > 0.0 {
-                        active_params.push(format!("jitter={}ms", jitter));
-                        if let Some(delay_corr) = delay_correlation
-                            && delay_corr > 0.0 {
-                                active_params.push(format!("delay_correlation={}%", delay_corr));
-                            }
-                    }
+            && delay > 0.0
+        {
+            active_params.push(format!("delay={}ms", delay));
+            if let Some(jitter) = delay_jitter_ms
+                && jitter > 0.0
+            {
+                active_params.push(format!("jitter={}ms", jitter));
+                if let Some(delay_corr) = delay_correlation
+                    && delay_corr > 0.0
+                {
+                    active_params.push(format!("delay_correlation={}%", delay_corr));
+                }
             }
+        }
         if let Some(duplicate) = duplicate_percent
-            && duplicate > 0.0 {
-                active_params.push(format!("duplicate={}%", duplicate));
-                if let Some(dup_corr) = duplicate_correlation
-                    && dup_corr > 0.0 {
-                        active_params.push(format!("duplicate_correlation={}%", dup_corr));
-                    }
+            && duplicate > 0.0
+        {
+            active_params.push(format!("duplicate={}%", duplicate));
+            if let Some(dup_corr) = duplicate_correlation
+                && dup_corr > 0.0
+            {
+                active_params.push(format!("duplicate_correlation={}%", dup_corr));
             }
+        }
         if let Some(reorder) = reorder_percent
-            && reorder > 0.0 {
-                active_params.push(format!("reorder={}%", reorder));
-                if let Some(reorder_corr) = reorder_correlation
-                    && reorder_corr > 0.0 {
-                        active_params.push(format!("reorder_correlation={}%", reorder_corr));
-                    }
-                if let Some(gap) = reorder_gap
-                    && gap > 0 {
-                        active_params.push(format!("gap={}", gap));
-                    }
+            && reorder > 0.0
+        {
+            active_params.push(format!("reorder={}%", reorder));
+            if let Some(reorder_corr) = reorder_correlation
+                && reorder_corr > 0.0
+            {
+                active_params.push(format!("reorder_correlation={}%", reorder_corr));
             }
+            if let Some(gap) = reorder_gap
+                && gap > 0
+            {
+                active_params.push(format!("gap={}", gap));
+            }
+        }
         if let Some(corrupt) = corrupt_percent
-            && corrupt > 0.0 {
-                active_params.push(format!("corrupt={}%", corrupt));
-                if let Some(corrupt_corr) = corrupt_correlation
-                    && corrupt_corr > 0.0 {
-                        active_params.push(format!("corrupt_correlation={}%", corrupt_corr));
-                    }
+            && corrupt > 0.0
+        {
+            active_params.push(format!("corrupt={}%", corrupt));
+            if let Some(corrupt_corr) = corrupt_correlation
+                && corrupt_corr > 0.0
+            {
+                active_params.push(format!("corrupt_correlation={}%", corrupt_corr));
             }
+        }
         if let Some(rate) = rate_limit_kbps
-            && rate > 0 {
-                let rate_display = if rate >= 1000 {
-                    format!("{}mbit", rate / 1000)
-                } else {
-                    format!("{}kbit", rate)
-                };
-                active_params.push(format!("rate={}", rate_display));
-            }
+            && rate > 0
+        {
+            let rate_display = if rate >= 1000 {
+                format!("{}mbit", rate / 1000)
+            } else {
+                format!("{}kbit", rate)
+            };
+            active_params.push(format!("rate={}", rate_display));
+        }
 
         // If reordering is requested but no delay specified, netem requires a delay. Add a small automatic delay.
         let reorder_requested = reorder_percent.unwrap_or(0.0) > 0.0;
@@ -977,9 +1020,10 @@ impl TcCommandManager {
 
             // Add loss correlation if specified (directly after the percentage)
             if let Some(corr) = correlation
-                && corr > 0.0 {
-                    cmd.args([&format!("{}%", corr)]);
-                }
+                && corr > 0.0
+            {
+                cmd.args([&format!("{}%", corr)]);
+            }
         }
 
         // Track whether we've already added a delay (required for reordering)
@@ -987,22 +1031,25 @@ impl TcCommandManager {
 
         // Add delay parameters if delay is specified
         if let Some(delay) = delay_ms
-            && delay > 0.0 {
-                cmd.args(["delay", &format!("{}ms", delay)]);
-                has_delay = true;
+            && delay > 0.0
+        {
+            cmd.args(["delay", &format!("{}ms", delay)]);
+            has_delay = true;
 
-                // Add delay jitter if specified
-                if let Some(jitter) = delay_jitter_ms
-                    && jitter > 0.0 {
-                        cmd.args([&format!("{}ms", jitter)]);
+            // Add delay jitter if specified
+            if let Some(jitter) = delay_jitter_ms
+                && jitter > 0.0
+            {
+                cmd.args([&format!("{}ms", jitter)]);
 
-                        // Add delay correlation if specified (only valid with jitter)
-                        if let Some(delay_corr) = delay_correlation
-                            && delay_corr > 0.0 {
-                                cmd.args([&format!("{}%", delay_corr)]);
-                            }
-                    }
+                // Add delay correlation if specified (only valid with jitter)
+                if let Some(delay_corr) = delay_correlation
+                    && delay_corr > 0.0
+                {
+                    cmd.args([&format!("{}%", delay_corr)]);
+                }
             }
+        }
 
         // If we need reordering but no delay was provided, add a minimal delay automatically
         if auto_add_delay && !has_delay {
@@ -1012,60 +1059,68 @@ impl TcCommandManager {
 
         // Add duplication parameters if duplication is specified
         if let Some(duplicate) = duplicate_percent
-            && duplicate > 0.0 {
-                cmd.args(["duplicate", &format!("{}%", duplicate)]);
+            && duplicate > 0.0
+        {
+            cmd.args(["duplicate", &format!("{}%", duplicate)]);
 
-                // Add duplication correlation if specified
-                if let Some(dup_corr) = duplicate_correlation
-                    && dup_corr > 0.0 {
-                        cmd.args([&format!("{}%", dup_corr)]);
-                    }
+            // Add duplication correlation if specified
+            if let Some(dup_corr) = duplicate_correlation
+                && dup_corr > 0.0
+            {
+                cmd.args([&format!("{}%", dup_corr)]);
             }
+        }
 
         // Add reordering parameters if reordering is specified
         if let Some(reorder) = reorder_percent
-            && reorder > 0.0 {
-                // Ensure delay is present (netem requires some delay for reorder)
-                if !has_delay {
-                    cmd.args(["delay", "1ms"]);
-                }
-                cmd.args(["reorder", &format!("{}%", reorder)]);
-
-                // Add reordering correlation if specified
-                if let Some(reorder_corr) = reorder_correlation
-                    && reorder_corr > 0.0 {
-                        cmd.args([&format!("{}%", reorder_corr)]);
-                    }
-
-                // Add reordering gap if specified
-                if let Some(gap) = reorder_gap
-                    && gap > 0 {
-                        cmd.args(["gap", &format!("{}", gap)]);
-                    }
+            && reorder > 0.0
+        {
+            // Ensure delay is present (netem requires some delay for reorder)
+            if !has_delay {
+                cmd.args(["delay", "1ms"]);
             }
+            cmd.args(["reorder", &format!("{}%", reorder)]);
+
+            // Add reordering correlation if specified
+            if let Some(reorder_corr) = reorder_correlation
+                && reorder_corr > 0.0
+            {
+                cmd.args([&format!("{}%", reorder_corr)]);
+            }
+
+            // Add reordering gap if specified
+            if let Some(gap) = reorder_gap
+                && gap > 0
+            {
+                cmd.args(["gap", &format!("{}", gap)]);
+            }
+        }
 
         // Add corruption parameters if corruption is specified
         if let Some(corrupt) = corrupt_percent
-            && corrupt > 0.0 {
-                cmd.args(["corrupt", &format!("{}%", corrupt)]);
+            && corrupt > 0.0
+        {
+            cmd.args(["corrupt", &format!("{}%", corrupt)]);
 
-                // Add corruption correlation if specified
-                if let Some(corrupt_corr) = corrupt_correlation
-                    && corrupt_corr > 0.0 {
-                        cmd.args([&format!("{}%", corrupt_corr)]);
-                    }
+            // Add corruption correlation if specified
+            if let Some(corrupt_corr) = corrupt_correlation
+                && corrupt_corr > 0.0
+            {
+                cmd.args([&format!("{}%", corrupt_corr)]);
             }
+        }
 
         // Add rate limiting parameters if rate limiting is specified
         if let Some(rate) = rate_limit_kbps
-            && rate > 0 {
-                // Convert kbps to appropriate unit for tc netem rate parameter
-                if rate >= 1000 {
-                    cmd.args(["rate", &format!("{}mbit", rate / 1000)]);
-                } else {
-                    cmd.args(["rate", &format!("{}kbit", rate)]);
-                }
+            && rate > 0
+        {
+            // Convert kbps to appropriate unit for tc netem rate parameter
+            if rate >= 1000 {
+                cmd.args(["rate", &format!("{}mbit", rate / 1000)]);
+            } else {
+                cmd.args(["rate", &format!("{}kbit", rate)]);
             }
+        }
 
         info!("Executing TC {} command: {:?}", action, cmd);
 
@@ -1281,8 +1336,15 @@ impl TcCommandManager {
             || will_remove_rate;
 
         if needs_recreation {
-            info!("Qdisc recreation needed: loss_removal={}, delay_removal={}, duplicate_removal={}, reorder_removal={}, corrupt_removal={}, rate_removal={}",
-                will_remove_loss, will_remove_delay, will_remove_duplicate, will_remove_reorder, will_remove_corrupt, will_remove_rate);
+            info!(
+                "Qdisc recreation needed: loss_removal={}, delay_removal={}, duplicate_removal={}, reorder_removal={}, corrupt_removal={}, rate_removal={}",
+                will_remove_loss,
+                will_remove_delay,
+                will_remove_duplicate,
+                will_remove_reorder,
+                will_remove_corrupt,
+                will_remove_rate
+            );
         }
 
         needs_recreation

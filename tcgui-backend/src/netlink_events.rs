@@ -6,8 +6,8 @@
 
 use futures_util::stream::StreamExt;
 use rtnetlink::packet_core::NetlinkPayload;
-use rtnetlink::packet_route::link::LinkMessage;
 use rtnetlink::packet_route::RouteNetlinkMessage;
+use rtnetlink::packet_route::link::LinkMessage;
 use rtnetlink::sys::{AsyncSocket, SocketAddr};
 use rtnetlink::{constants::RTMGRP_LINK, new_connection};
 use tokio::sync::mpsc;

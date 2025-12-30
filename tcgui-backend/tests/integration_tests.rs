@@ -60,7 +60,14 @@ impl MockTcCommandManager {
         let mut commands = self.executed_commands.lock().unwrap();
         let command_desc = format!(
             "tc apply {}/{}: loss={:.1}% delay={:?}ms dup={:?}% reorder={:?}% corrupt={:?}% rate={:?}kbps",
-            namespace, interface, loss, delay_ms, duplicate_percent, reorder_percent, corrupt_percent, rate_limit_kbps
+            namespace,
+            interface,
+            loss,
+            delay_ms,
+            duplicate_percent,
+            reorder_percent,
+            corrupt_percent,
+            rate_limit_kbps
         );
         commands.push(command_desc.clone());
 

@@ -128,14 +128,18 @@ mod tests {
     #[test]
     fn test_service_health_is_healthy() {
         assert!(ServiceHealth::Healthy.is_healthy());
-        assert!(!ServiceHealth::Degraded {
-            reason: "test".to_string()
-        }
-        .is_healthy());
-        assert!(!ServiceHealth::Unhealthy {
-            reason: "test".to_string()
-        }
-        .is_healthy());
+        assert!(
+            !ServiceHealth::Degraded {
+                reason: "test".to_string()
+            }
+            .is_healthy()
+        );
+        assert!(
+            !ServiceHealth::Unhealthy {
+                reason: "test".to_string()
+            }
+            .is_healthy()
+        );
     }
 
     #[test]

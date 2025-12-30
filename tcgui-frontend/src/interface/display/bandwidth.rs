@@ -3,8 +3,8 @@
 //! This component handles the display of network bandwidth statistics with
 //! automatic unit formatting and visual indicators.
 
-use iced::widget::{row, text};
 use iced::Element;
+use iced::widget::{row, text};
 use tcgui_shared::NetworkBandwidthStats;
 
 use crate::icons::Icon;
