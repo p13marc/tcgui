@@ -345,14 +345,16 @@ impl TcBackend {
         }
 
         // Start inotify watcher for /var/run/netns to detect namespace changes immediately
-        let mut namespace_events = if let Some((watcher, rx)) = NamespaceWatcher::new(100) {
-            // Keep the watcher alive by storing it (it's dropped when _watcher goes out of scope)
-            let _watcher = watcher;
-            info!("Namespace watcher started for /var/run/netns");
-            Some(rx)
-        } else {
-            warn!("Namespace watcher not available, using polling fallback");
-            None
+        // The watcher must be kept alive for the entire duration of the event loop
+        let (_namespace_watcher, mut namespace_events) = match NamespaceWatcher::new(100) {
+            Some((watcher, rx)) => {
+                info!("Namespace watcher started for /var/run/netns");
+                (Some(watcher), Some(rx))
+            }
+            None => {
+                warn!("Namespace watcher not available, using polling fallback");
+                (None, None)
+            }
         };
 
         // Create intervals for periodic tasks
@@ -442,6 +444,9 @@ impl TcBackend {
                     match &ns_event {
                         namespace_watcher::NamespaceEvent::Created(name) => {
                             info!("Namespace created: {}", name);
+                            // Small delay to let the namespace setup complete
+                            // The inotify event fires before the bind mount is fully ready
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
                         namespace_watcher::NamespaceEvent::Deleted(name) => {
                             info!("Namespace deleted: {}", name);
