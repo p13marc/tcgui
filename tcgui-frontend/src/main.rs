@@ -75,120 +75,103 @@ pub fn main() -> iced::Result {
         )
         .init();
 
-    // Check if any zenoh-specific options are provided
-    let has_zenoh_config = matches.contains_id("zenoh-connect")
-        || matches.contains_id("zenoh-listen")
-        || matches.get_flag("no-multicast")
-        || (matches
-            .get_one::<String>("zenoh-mode")
-            .is_some_and(|mode| mode != "peer"));
-
-    if has_zenoh_config {
-        // Parse zenoh configuration only if options are provided
-        let zenoh_mode_str = matches
-            .get_one::<String>("zenoh-mode")
-            .expect("zenoh-mode has a default value and should always be present");
-        let zenoh_mode = match zenoh_mode_str.to_lowercase().as_str() {
-            "peer" => ZenohMode::Peer,
-            "client" => ZenohMode::Client,
-            _ => {
-                tracing::error!("Invalid zenoh mode: {}, using peer", zenoh_mode_str);
-                ZenohMode::Peer
-            }
-        };
-
-        let mut zenoh_config = ZenohConfig {
-            mode: zenoh_mode,
-            endpoints: vec![],
-            properties: std::collections::HashMap::new(),
-        };
-
-        // Add default endpoints for local communication (peer mode only)
-        // Frontend connects to backend on fixed port and listens on ephemeral port
-        // This ensures communication works even without multicast
-        // Client mode cannot have listen endpoints
-        if matches!(zenoh_config.mode, ZenohMode::Peer) {
-            zenoh_config = zenoh_config
-                .add_connect_endpoint("tcp/127.0.0.1:7447")
-                .add_listen_endpoint("tcp/127.0.0.1:0");
+    // Always build zenoh config to ensure default localhost endpoints are set
+    let zenoh_mode_str = matches
+        .get_one::<String>("zenoh-mode")
+        .expect("zenoh-mode has a default value and should always be present");
+    let zenoh_mode = match zenoh_mode_str.to_lowercase().as_str() {
+        "peer" => ZenohMode::Peer,
+        "client" => ZenohMode::Client,
+        _ => {
+            tracing::error!("Invalid zenoh mode: {}, using peer", zenoh_mode_str);
+            ZenohMode::Peer
         }
+    };
 
-        // Add connect endpoints if specified
-        if let Some(connect_endpoints) = matches.get_one::<String>("zenoh-connect") {
-            for endpoint in connect_endpoints.split(',') {
-                zenoh_config = zenoh_config.add_connect_endpoint(endpoint.trim());
-            }
-        }
+    let mut zenoh_config = ZenohConfig {
+        mode: zenoh_mode,
+        endpoints: vec![],
+        properties: std::collections::HashMap::new(),
+    };
 
-        // Add listen endpoints if specified
-        if let Some(listen_endpoints) = matches.get_one::<String>("zenoh-listen") {
-            for endpoint in listen_endpoints.split(',') {
-                zenoh_config = zenoh_config.add_listen_endpoint(endpoint.trim());
-            }
-        }
-
-        // Disable multicast scouting if requested
-        if matches.get_flag("no-multicast") {
-            zenoh_config = zenoh_config.disable_multicast_scouting();
-        }
-
-        // Validate zenoh configuration
-        if let Err(e) = zenoh_config.validate() {
-            match e {
-                ZenohConfigError::InvalidMode { mode } => {
-                    eprintln!(
-                        "Error: Invalid zenoh mode '{}'. Use 'peer' or 'client'.",
-                        mode
-                    );
-                }
-                ZenohConfigError::InvalidEndpoint { endpoint, reason } => {
-                    eprintln!("Error: Invalid endpoint '{}' - {}", endpoint, reason);
-                }
-                ZenohConfigError::InvalidProtocol { protocol, endpoint } => {
-                    eprintln!(
-                        "Error: Unsupported protocol '{}' in endpoint '{}'. Supported: tcp, udp, tls, quic",
-                        protocol, endpoint
-                    );
-                }
-                ZenohConfigError::ModeEndpointMismatch { mode, reason } => {
-                    eprintln!("Error: {:?} mode {}", mode, reason);
-                }
-                ZenohConfigError::InvalidAddress {
-                    address,
-                    protocol,
-                    reason,
-                } => {
-                    eprintln!(
-                        "Error: Invalid {} address '{}' - {}",
-                        protocol, address, reason
-                    );
-                }
-                _ => {
-                    eprintln!("Error: Invalid zenoh configuration: {}", e);
-                }
-            }
-            std::process::exit(1);
-        }
-
-        info!("[FRONTEND] Starting tcgui-frontend with custom zenoh config");
-        info!(
-            "Zenoh configuration - Mode: {:?}, Endpoints: {:?}",
-            zenoh_config.mode, zenoh_config.endpoints
-        );
-
-        iced::application(
-            move || TcGui::new_with_config(zenoh_config.clone()),
-            TcGui::update,
-            TcGui::view,
-        )
-        .subscription(TcGui::subscription)
-        .run()
-    } else {
-        // Use default peer mode without specific configuration
-        info!("[FRONTEND] Starting tcgui-frontend with default peer mode");
-
-        iced::application(TcGui::new, TcGui::update, TcGui::view)
-            .subscription(TcGui::subscription)
-            .run()
+    // Add default endpoints for local communication (peer mode only)
+    // Frontend connects to backend on fixed port and listens on ephemeral port
+    // This ensures communication works even without multicast
+    // Client mode cannot have listen endpoints
+    if matches!(zenoh_config.mode, ZenohMode::Peer) {
+        zenoh_config = zenoh_config
+            .add_connect_endpoint("tcp/127.0.0.1:7447")
+            .add_listen_endpoint("tcp/127.0.0.1:0");
     }
+
+    // Add connect endpoints if specified
+    if let Some(connect_endpoints) = matches.get_one::<String>("zenoh-connect") {
+        for endpoint in connect_endpoints.split(',') {
+            zenoh_config = zenoh_config.add_connect_endpoint(endpoint.trim());
+        }
+    }
+
+    // Add listen endpoints if specified
+    if let Some(listen_endpoints) = matches.get_one::<String>("zenoh-listen") {
+        for endpoint in listen_endpoints.split(',') {
+            zenoh_config = zenoh_config.add_listen_endpoint(endpoint.trim());
+        }
+    }
+
+    // Disable multicast scouting if requested
+    if matches.get_flag("no-multicast") {
+        zenoh_config = zenoh_config.disable_multicast_scouting();
+    }
+
+    // Validate zenoh configuration
+    if let Err(e) = zenoh_config.validate() {
+        match e {
+            ZenohConfigError::InvalidMode { mode } => {
+                eprintln!(
+                    "Error: Invalid zenoh mode '{}'. Use 'peer' or 'client'.",
+                    mode
+                );
+            }
+            ZenohConfigError::InvalidEndpoint { endpoint, reason } => {
+                eprintln!("Error: Invalid endpoint '{}' - {}", endpoint, reason);
+            }
+            ZenohConfigError::InvalidProtocol { protocol, endpoint } => {
+                eprintln!(
+                    "Error: Unsupported protocol '{}' in endpoint '{}'. Supported: tcp, udp, tls, quic",
+                    protocol, endpoint
+                );
+            }
+            ZenohConfigError::ModeEndpointMismatch { mode, reason } => {
+                eprintln!("Error: {:?} mode {}", mode, reason);
+            }
+            ZenohConfigError::InvalidAddress {
+                address,
+                protocol,
+                reason,
+            } => {
+                eprintln!(
+                    "Error: Invalid {} address '{}' - {}",
+                    protocol, address, reason
+                );
+            }
+            _ => {
+                eprintln!("Error: Invalid zenoh configuration: {}", e);
+            }
+        }
+        std::process::exit(1);
+    }
+
+    info!("[FRONTEND] Starting tcgui-frontend");
+    info!(
+        "Zenoh configuration - Mode: {:?}, Endpoints: {:?}",
+        zenoh_config.mode, zenoh_config.endpoints
+    );
+
+    iced::application(
+        move || TcGui::new_with_config(zenoh_config.clone()),
+        TcGui::update,
+        TcGui::view,
+    )
+    .subscription(TcGui::subscription)
+    .run()
 }
