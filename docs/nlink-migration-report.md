@@ -223,35 +223,110 @@ Moving from string-based `tc` commands to typed `NetemConfig`:
 - Made the code self-documenting
 - Enabled compile-time validation
 
-## Future Improvements
+## Implemented Improvements
 
-### 1. Statistics Migration
-Replace `/proc/net/dev` parsing with nlink's `StatsSnapshot`:
-- Use `Connection::new_in_namespace_path()` per namespace
-- Use `StatsTracker` for automatic rate calculation
-- Gain access to extended statistics
+All three future improvements from the initial migration have now been implemented:
 
-### 2. Enhanced Event Monitoring
-Subscribe to TC events for immediate qdisc change detection:
+### 1. Statistics Migration ✅
+
+**Status:** Completed
+
+Replaced `/proc/net/dev` parsing with nlink's `StatsSnapshot` in `bandwidth.rs`:
+
 ```rust
+// bandwidth.rs - now uses nlink for statistics
+async fn get_netlink_stats(&mut self, namespace: &str) 
+    -> Result<(StatsSnapshot, HashMap<i32, LinkStats>)> 
+{
+    let conn = Connection::new_in_namespace_path(Protocol::Route, ns_path)?;
+    let links = conn.get_links().await?;
+    let snapshot = StatsSnapshot::from_links(&links);
+    // ...
+}
+```
+
+**Benefits achieved:**
+- Eliminated `/proc/net/dev` text file parsing
+- Unified all netlink operations under one API
+- Uses built-in `StatsTracker` for rate calculation
+- Per-namespace connections for container support
+
+### 2. Enhanced TC Event Monitoring ✅
+
+**Status:** Completed
+
+Subscribe to TC events for immediate qdisc change detection in `netlink_events.rs`:
+
+```rust
+// netlink_events.rs - TC event subscription
 let mut stream = EventStream::builder()
     .links(true)
     .tc(true)  // Subscribe to qdisc/class/filter changes
-    .namespace("my-namespace")
     .build()?;
-```
 
-### 3. Multiple Namespace Event Streams
-For container monitoring, create EventStreams per container namespace:
-```rust
-for container in containers {
-    let stream = EventStream::builder()
-        .links(true)
-        .namespace_path(&container.namespace_path)
-        .build()?;
-    // Spawn task to handle events
+// Handle TC events
+match event {
+    NetworkEvent::NewQdisc(tc_msg) => { /* Qdisc added */ }
+    NetworkEvent::DelQdisc(tc_msg) => { /* Qdisc removed */ }
+    // ...
 }
 ```
+
+**New types added:**
+- `TcInfo` - TC qdisc information with `is_netem()` helper
+- `NetlinkEvent::QdiscAdded` / `QdiscRemoved` variants
+
+**Benefits achieved:**
+- Real-time detection of TC configuration changes
+- No polling needed for qdisc state
+- Targeted interface updates (not full refresh)
+
+### 3. Multiple Namespace Event Streams ✅
+
+**Status:** Completed
+
+For container monitoring, `NamespaceEventManager` creates EventStreams per container namespace:
+
+```rust
+// netlink_events.rs - NamespaceEventManager
+pub struct NamespaceEventManager {
+    event_tx: mpsc::Sender<NamespacedEvent>,
+    active_namespaces: HashMap<String, JoinHandle<()>>,
+}
+
+impl NamespaceEventManager {
+    pub fn add_namespace(&mut self, target: NamespaceTarget) -> Result<(), String> {
+        let stream = EventStream::builder()
+            .links(true)
+            .tc(true)
+            .namespace_path(&path)
+            .build()?;
+        // Spawn background task
+    }
+}
+```
+
+**New types added:**
+- `NamespacedEvent` - Event with originating namespace
+- `NamespaceTarget` - Enum for Default/Named/Path namespace targets
+- `NamespaceEventManager` - Manages multiple EventStreams
+
+**Integration in main.rs:**
+```rust
+// Set up event streams for discovered containers
+self.setup_container_event_streams(&mut namespace_event_manager).await;
+
+// Handle events from container namespaces in select! loop
+Some(ns_event) = namespace_netlink_events.recv() => {
+    self.handle_namespaced_event(ns_event).await;
+}
+```
+
+**Benefits achieved:**
+- Real-time monitoring of container network namespaces
+- Automatic setup when containers are discovered
+- Refreshed when namespace topology changes
+- Per-namespace event isolation
 
 ## Test Results
 
