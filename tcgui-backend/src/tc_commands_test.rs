@@ -68,10 +68,10 @@ impl TcCommandManager {
             args.push("random".to_string());
             args.push(format!("{}%", loss));
 
-            if let Some(corr) = correlation {
-                if corr > 0.0 {
-                    args.push(format!("{}%", corr));
-                }
+            if let Some(corr) = correlation
+                && corr > 0.0
+            {
+                args.push(format!("{}%", corr));
             }
         }
 
@@ -79,89 +79,89 @@ impl TcCommandManager {
         let mut has_delay = false;
 
         // Add delay parameters
-        if let Some(delay) = delay_ms {
-            if delay > 0.0 {
-                args.push("delay".to_string());
-                args.push(format!("{}ms", delay));
-                has_delay = true;
+        if let Some(delay) = delay_ms
+            && delay > 0.0
+        {
+            args.push("delay".to_string());
+            args.push(format!("{}ms", delay));
+            has_delay = true;
 
-                if let Some(jitter) = delay_jitter_ms {
-                    if jitter > 0.0 {
-                        args.push(format!("{}ms", jitter));
+            if let Some(jitter) = delay_jitter_ms
+                && jitter > 0.0
+            {
+                args.push(format!("{}ms", jitter));
 
-                        if let Some(delay_corr) = delay_correlation {
-                            if delay_corr > 0.0 {
-                                args.push(format!("{}%", delay_corr));
-                            }
-                        }
-                    }
+                if let Some(delay_corr) = delay_correlation
+                    && delay_corr > 0.0
+                {
+                    args.push(format!("{}%", delay_corr));
                 }
             }
         }
 
         // Add duplication parameters
-        if let Some(duplicate) = duplicate_percent {
-            if duplicate > 0.0 {
-                args.push("duplicate".to_string());
-                args.push(format!("{}%", duplicate));
+        if let Some(duplicate) = duplicate_percent
+            && duplicate > 0.0
+        {
+            args.push("duplicate".to_string());
+            args.push(format!("{}%", duplicate));
 
-                if let Some(dup_corr) = duplicate_correlation {
-                    if dup_corr > 0.0 {
-                        args.push(format!("{}%", dup_corr));
-                    }
-                }
+            if let Some(dup_corr) = duplicate_correlation
+                && dup_corr > 0.0
+            {
+                args.push(format!("{}%", dup_corr));
             }
         }
 
         // Add reordering parameters
-        if let Some(reorder) = reorder_percent {
-            if reorder > 0.0 {
-                // Ensure delay is present (netem requires some delay for reorder)
-                if !has_delay {
-                    args.push("delay".to_string());
-                    args.push("1ms".to_string());
-                }
-                args.push("reorder".to_string());
-                args.push(format!("{}%", reorder));
+        if let Some(reorder) = reorder_percent
+            && reorder > 0.0
+        {
+            // Ensure delay is present (netem requires some delay for reorder)
+            if !has_delay {
+                args.push("delay".to_string());
+                args.push("1ms".to_string());
+            }
+            args.push("reorder".to_string());
+            args.push(format!("{}%", reorder));
 
-                if let Some(reorder_corr) = reorder_correlation {
-                    if reorder_corr > 0.0 {
-                        args.push(format!("{}%", reorder_corr));
-                    }
-                }
+            if let Some(reorder_corr) = reorder_correlation
+                && reorder_corr > 0.0
+            {
+                args.push(format!("{}%", reorder_corr));
+            }
 
-                if let Some(gap) = reorder_gap {
-                    if gap > 0 {
-                        args.push("gap".to_string());
-                        args.push(format!("{}", gap));
-                    }
-                }
+            if let Some(gap) = reorder_gap
+                && gap > 0
+            {
+                args.push("gap".to_string());
+                args.push(format!("{}", gap));
             }
         }
 
         // Add corruption parameters
-        if let Some(corrupt) = corrupt_percent {
-            if corrupt > 0.0 {
-                args.push("corrupt".to_string());
-                args.push(format!("{}%", corrupt));
+        if let Some(corrupt) = corrupt_percent
+            && corrupt > 0.0
+        {
+            args.push("corrupt".to_string());
+            args.push(format!("{}%", corrupt));
 
-                if let Some(corrupt_corr) = corrupt_correlation {
-                    if corrupt_corr > 0.0 {
-                        args.push(format!("{}%", corrupt_corr));
-                    }
-                }
+            if let Some(corrupt_corr) = corrupt_correlation
+                && corrupt_corr > 0.0
+            {
+                args.push(format!("{}%", corrupt_corr));
             }
         }
 
         // Add rate limiting parameters
-        if let Some(rate) = rate_limit_kbps {
-            if rate > 0 {
-                args.push("rate".to_string());
-                if rate >= 1000 {
-                    args.push(format!("{}mbit", rate / 1000));
-                } else {
-                    args.push(format!("{}kbit", rate));
-                }
+        if let Some(rate) = rate_limit_kbps
+            && rate > 0
+        {
+            args.push("rate".to_string());
+            if rate >= 1000 {
+                args.push(format!("{}mbit", rate / 1000));
+            } else {
+                args.push(format!("{}kbit", rate));
             }
         }
 

@@ -7,7 +7,7 @@ use tcgui_shared::{
     presets::PresetList, scenario::ScenarioExecutionUpdate, topics,
 };
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 use zenoh_ext::{AdvancedSubscriberBuilderExt, HistoryConfig, RecoveryConfig};
 
 use crate::messages::{
@@ -87,7 +87,7 @@ fn handle_bandwidth_update_sample(sample: zenoh::sample::Sample) -> Option<Zenoh
         BandwidthUpdate,
         "bandwidth update",
         |backend_name: &str, update: &BandwidthUpdate| {
-            info!(
+            trace!(
                 "Frontend received bandwidth update from '{}' for {}/{}: RX {:.2} B/s, TX {:.2} B/s",
                 backend_name,
                 update.namespace,

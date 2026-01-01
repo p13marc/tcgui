@@ -34,10 +34,10 @@ mod tc_parsing_regression_tests {
         // Parse loss percentage
         if let Some(loss_start) = qdisc_info.find("loss ") {
             let loss_part = &qdisc_info[loss_start + 5..];
-            if let Some(percent_pos) = loss_part.find('%') {
-                if let Ok(loss_val) = loss_part[..percent_pos].trim().parse::<f32>() {
-                    config.loss = loss_val;
-                }
+            if let Some(percent_pos) = loss_part.find('%')
+                && let Ok(loss_val) = loss_part[..percent_pos].trim().parse::<f32>()
+            {
+                config.loss = loss_val;
             }
         }
 
@@ -88,20 +88,20 @@ mod tc_parsing_regression_tests {
         // Parse duplicate percentage
         if let Some(dup_start) = qdisc_info.find("duplicate ") {
             let dup_part = &qdisc_info[dup_start + 10..];
-            if let Some(percent_pos) = dup_part.find('%') {
-                if let Ok(dup_val) = dup_part[..percent_pos].trim().parse::<f32>() {
-                    config.duplicate_percent = Some(dup_val);
-                }
+            if let Some(percent_pos) = dup_part.find('%')
+                && let Ok(dup_val) = dup_part[..percent_pos].trim().parse::<f32>()
+            {
+                config.duplicate_percent = Some(dup_val);
             }
         }
 
         // Parse reorder percentage
         if let Some(reorder_start) = qdisc_info.find("reorder ") {
             let reorder_part = &qdisc_info[reorder_start + 8..];
-            if let Some(percent_pos) = reorder_part.find('%') {
-                if let Ok(reorder_val) = reorder_part[..percent_pos].trim().parse::<f32>() {
-                    config.reorder_percent = Some(reorder_val);
-                }
+            if let Some(percent_pos) = reorder_part.find('%')
+                && let Ok(reorder_val) = reorder_part[..percent_pos].trim().parse::<f32>()
+            {
+                config.reorder_percent = Some(reorder_val);
             }
 
             // Parse reorder gap
@@ -117,10 +117,10 @@ mod tc_parsing_regression_tests {
         // Parse corrupt percentage
         if let Some(corrupt_start) = qdisc_info.find("corrupt ") {
             let corrupt_part = &qdisc_info[corrupt_start + 8..];
-            if let Some(percent_pos) = corrupt_part.find('%') {
-                if let Ok(corrupt_val) = corrupt_part[..percent_pos].trim().parse::<f32>() {
-                    config.corrupt_percent = Some(corrupt_val);
-                }
+            if let Some(percent_pos) = corrupt_part.find('%')
+                && let Ok(corrupt_val) = corrupt_part[..percent_pos].trim().parse::<f32>()
+            {
+                config.corrupt_percent = Some(corrupt_val);
             }
         }
 
@@ -133,10 +133,10 @@ mod tc_parsing_regression_tests {
                 if let Ok(rate_val) = rate_part[..kbit_pos].trim().parse::<u32>() {
                     config.rate_limit_kbps = Some(rate_val);
                 }
-            } else if let Some(mbit_pos) = rate_part_lower.find("mbit") {
-                if let Ok(rate_val) = rate_part[..mbit_pos].trim().parse::<u32>() {
-                    config.rate_limit_kbps = Some(rate_val * 1000); // Convert mbit to kbit
-                }
+            } else if let Some(mbit_pos) = rate_part_lower.find("mbit")
+                && let Ok(rate_val) = rate_part[..mbit_pos].trim().parse::<u32>()
+            {
+                config.rate_limit_kbps = Some(rate_val * 1000); // Convert mbit to kbit
             }
         }
 
