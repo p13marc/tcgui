@@ -15,6 +15,7 @@
 
 use anyhow::Result;
 use nlink::netlink::tc::NetemConfig;
+use nlink::netlink::tc_options::NetemOptions;
 use nlink::netlink::{Connection, Protocol, namespace};
 use std::path::Path;
 use std::time::Duration;
@@ -115,6 +116,110 @@ impl TcCommandManager {
         }
 
         Ok(String::new()) // No root qdisc found
+    }
+
+    /// Get netem options for an interface if it has a netem qdisc configured.
+    /// Returns None if no netem qdisc is found.
+    #[instrument(skip(self), fields(namespace, interface))]
+    pub async fn get_netem_options(
+        &self,
+        namespace: &str,
+        interface: &str,
+    ) -> Result<Option<NetemOptions>> {
+        self.get_netem_options_with_path(namespace, None, interface)
+            .await
+    }
+
+    /// Get netem options for an interface, with optional namespace path for containers.
+    #[instrument(skip(self, namespace_path), fields(namespace, interface))]
+    pub async fn get_netem_options_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+    ) -> Result<Option<NetemOptions>> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+
+        let qdiscs =
+            conn.get_qdiscs_for(interface)
+                .await
+                .map_err(|e| TcguiError::TcCommandError {
+                    message: format!("Failed to get qdiscs for {}: {}", interface, e),
+                })?;
+
+        // Look for a root netem qdisc
+        for qdisc in qdiscs {
+            // Check if this is the root qdisc by examining the parent
+            if qdisc.parent() == 0xFFFFFFFF {
+                // TC_H_ROOT
+                if let Some(netem_opts) = qdisc.netem_options() {
+                    info!(
+                        "Found netem qdisc on {}:{} with loss={}%, delay={:.2}ms",
+                        namespace,
+                        interface,
+                        netem_opts.loss_percent,
+                        netem_opts.delay_ms()
+                    );
+                    return Ok(Some(netem_opts));
+                }
+            }
+        }
+
+        Ok(None) // No netem qdisc found
+    }
+
+    /// Get TC statistics for an interface if it has a netem qdisc configured.
+    /// Returns basic stats (bytes/packets) and queue stats (drops/overlimits).
+    #[instrument(skip(self), fields(namespace, interface))]
+    pub async fn get_tc_statistics(
+        &self,
+        namespace: &str,
+        interface: &str,
+    ) -> Result<Option<(tcgui_shared::TcStatsBasic, tcgui_shared::TcStatsQueue)>> {
+        self.get_tc_statistics_with_path(namespace, None, interface)
+            .await
+    }
+
+    /// Get TC statistics for an interface, with optional namespace path for containers.
+    #[instrument(skip(self, namespace_path), fields(namespace, interface))]
+    pub async fn get_tc_statistics_with_path(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+    ) -> Result<Option<(tcgui_shared::TcStatsBasic, tcgui_shared::TcStatsQueue)>> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+
+        let qdiscs =
+            conn.get_qdiscs_for(interface)
+                .await
+                .map_err(|e| TcguiError::TcCommandError {
+                    message: format!("Failed to get qdiscs for {}: {}", interface, e),
+                })?;
+
+        // Look for the root qdisc and extract statistics
+        for qdisc in qdiscs {
+            if qdisc.parent() == 0xFFFFFFFF {
+                // TC_H_ROOT
+                // Only return stats if this is a netem qdisc
+                if qdisc.kind() == Some("netem") {
+                    let basic = tcgui_shared::TcStatsBasic {
+                        bytes: qdisc.bytes(),
+                        packets: qdisc.packets(),
+                    };
+                    let queue = tcgui_shared::TcStatsQueue {
+                        qlen: qdisc.qlen(),
+                        backlog: qdisc.backlog(),
+                        drops: qdisc.drops(),
+                        requeues: qdisc.requeues(),
+                        overlimits: qdisc.overlimits(),
+                    };
+                    return Ok(Some((basic, queue)));
+                }
+            }
+        }
+
+        Ok(None) // No netem qdisc found
     }
 
     /// Apply TC config using structured configuration (recommended)

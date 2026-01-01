@@ -148,6 +148,9 @@ impl TcGui {
             TcGuiMessage::TcConfigUpdate(tc_config_update) => {
                 handle_tc_config_update(&mut self.backend_manager, tc_config_update)
             }
+            TcGuiMessage::TcStatisticsUpdate(tc_stats_update) => {
+                handle_tc_statistics_update(&mut self.backend_manager, tc_stats_update)
+            }
             TcGuiMessage::BackendConnectionStatus {
                 backend_name,
                 connected,
@@ -613,6 +616,9 @@ impl TcGui {
                 },
                 ZenohEvent::TcConfigUpdate(tc_config_update) => {
                     TcGuiMessage::TcConfigUpdate(tc_config_update)
+                }
+                ZenohEvent::TcStatisticsUpdate(tc_stats_update) => {
+                    TcGuiMessage::TcStatisticsUpdate(tc_stats_update)
                 }
                 ZenohEvent::ScenarioExecutionUpdate(execution_update) => {
                     TcGuiMessage::ScenarioExecutionUpdate(execution_update)

@@ -11,7 +11,7 @@ use crate::query_manager::QueryManager;
 use crate::scenario_manager::ScenarioManager;
 use crate::ui_state::UiStateManager;
 use iced::Task;
-use tcgui_shared::TcConfigUpdate;
+use tcgui_shared::{TcConfigUpdate, TcStatisticsUpdate};
 use tracing::{info, warn};
 
 /// Handles bandwidth update messages.
@@ -30,7 +30,7 @@ pub fn handle_bandwidth_update(
                 .tc_interfaces
                 .get_mut(&bandwidth_update.interface)
             {
-                tracing::info!(
+                tracing::trace!(
                     "Updating bandwidth stats for interface '{}' in namespace '{}' of backend '{}'",
                     bandwidth_update.interface,
                     bandwidth_update.namespace,
@@ -324,6 +324,30 @@ pub fn handle_tc_config_update(
             "Could not find backend '{}' for TC config update on interface '{}/{}'",
             tc_config_update.backend_name, tc_config_update.namespace, tc_config_update.interface
         );
+    }
+
+    Task::none()
+}
+
+/// Handles TC statistics update messages from backend.
+pub fn handle_tc_statistics_update(
+    backend_manager: &mut BackendManager,
+    tc_stats_update: TcStatisticsUpdate,
+) -> Task<TcGuiMessage> {
+    let backend_name = &tc_stats_update.backend_name;
+
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(backend_name) {
+        if let Some(namespace_group) = backend_group.namespaces.get_mut(&tc_stats_update.namespace)
+        {
+            if let Some(tc_interface) = namespace_group
+                .tc_interfaces
+                .get_mut(&tc_stats_update.interface)
+            {
+                // Update the TC interface with the received statistics
+                tc_interface
+                    .update_tc_statistics(tc_stats_update.stats_basic, tc_stats_update.stats_queue);
+            }
+        }
     }
 
     Task::none()

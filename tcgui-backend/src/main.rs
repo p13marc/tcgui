@@ -21,13 +21,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, interval};
 use tracing::{error, info, instrument, warn};
 use zenoh::Session;
+use zenoh::pubsub::Publisher;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::{
     BackendHealthStatus, BackendMetadata, InterfaceControlOperation, InterfaceControlRequest,
     InterfaceControlResponse, NetworkInterface, TcConfigUpdate, TcConfiguration, TcNetemConfig,
-    TcOperation, TcRequest, TcResponse, ZenohConfig, errors::TcguiError, presets::PresetList,
-    topics,
+    TcOperation, TcRequest, TcResponse, TcStatisticsUpdate, ZenohConfig, errors::TcguiError,
+    presets::PresetList, topics,
 };
 
 use bandwidth::BandwidthMonitor;
@@ -54,6 +55,7 @@ struct TcBackend {
     exclude_loopback: bool,
     backend_name: String,
     tc_config_publishers: HashMap<String, AdvancedPublisher<'static>>, // namespace/interface -> publisher
+    tc_stats_publishers: HashMap<String, Publisher<'static>>, // namespace/interface -> publisher (best-effort)
 }
 
 impl TcBackend {
@@ -191,6 +193,7 @@ impl TcBackend {
             exclude_loopback,
             backend_name,
             tc_config_publishers: HashMap::new(),
+            tc_stats_publishers: HashMap::new(),
         })
     }
 
@@ -446,11 +449,12 @@ impl TcBackend {
                                         error!("Failed to send updated interface list: {}", e);
                                     }
 
-                                    // Publish updated TC config
-                                    let current_config = self.detect_current_tc_config(&namespace, &name).await;
-                                    if let Err(e) = self.publish_tc_config(&namespace, &name, current_config).await {
-                                        warn!("Failed to publish TC config for {}: {}", name, e);
-                                    }
+                                    // NOTE: We intentionally don't publish TC config here.
+                                    // TC config updates are published by the TC query handler
+                                    // when the user makes changes. Publishing from netlink events
+                                    // causes race conditions during delete+add operations where
+                                    // an intermediate "None" config would be published between
+                                    // the delete and add, causing the frontend checkbox to flicker.
                                 }
                             }
                         }
@@ -574,9 +578,102 @@ impl TcBackend {
                     if let Err(e) = self.bandwidth_monitor.monitor_and_send(&self.interfaces).await {
                         error!("Failed to monitor bandwidth: {}", e);
                     }
+
+                    // Also monitor TC statistics for interfaces with active TC config
+                    if let Err(e) = self.monitor_and_send_tc_stats().await {
+                        error!("Failed to monitor TC statistics: {}", e);
+                    }
                 }
             }
         }
+    }
+
+    /// Monitor and publish TC statistics for all interfaces with active netem qdiscs
+    async fn monitor_and_send_tc_stats(&mut self) -> Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let backend_name = self.backend_name.clone();
+
+        // Collect interface info first to avoid borrow issues
+        let interfaces: Vec<(String, String)> = self
+            .interfaces
+            .values()
+            .map(|i| (i.namespace.clone(), i.name.clone()))
+            .collect();
+
+        for (namespace, interface_name) in interfaces {
+            // Try to get TC statistics for this interface
+            match self
+                .tc_manager
+                .get_tc_statistics(&namespace, &interface_name)
+                .await
+            {
+                Ok(Some((stats_basic, stats_queue))) => {
+                    // Get or create publisher for this interface
+                    let publisher = self
+                        .get_tc_stats_publisher(&namespace, &interface_name)
+                        .await?;
+
+                    let update = TcStatisticsUpdate {
+                        namespace: namespace.clone(),
+                        interface: interface_name.clone(),
+                        backend_name: backend_name.clone(),
+                        timestamp,
+                        stats_basic: Some(stats_basic),
+                        stats_queue: Some(stats_queue),
+                    };
+
+                    let payload =
+                        serde_json::to_vec(&update).map_err(|e| TcguiError::ZenohError {
+                            message: format!("Failed to serialize TC stats: {}", e),
+                        })?;
+
+                    publisher
+                        .put(payload)
+                        .await
+                        .map_err(|e| TcguiError::ZenohError {
+                            message: format!("Failed to publish TC stats: {}", e),
+                        })?;
+                }
+                Ok(None) => {
+                    // No netem qdisc on this interface, skip
+                }
+                Err(e) => {
+                    // Log but don't fail the whole loop
+                    tracing::trace!(
+                        "Failed to get TC stats for {}:{}: {}",
+                        namespace,
+                        interface_name,
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get or create a TC statistics publisher for an interface
+    async fn get_tc_stats_publisher(
+        &mut self,
+        namespace: &str,
+        interface: &str,
+    ) -> Result<&Publisher<'static>> {
+        let key = format!("{}/{}", namespace, interface);
+
+        if !self.tc_stats_publishers.contains_key(&key) {
+            let topic = topics::tc_statistics(&self.backend_name, namespace, interface);
+            tracing::debug!("Creating TC stats publisher for {}: {}", key, topic);
+
+            let publisher = self.session.declare_publisher(topic).await.map_err(|e| {
+                TcguiError::ZenohError {
+                    message: format!("Failed to declare TC stats publisher: {}", e),
+                }
+            })?;
+
+            self.tc_stats_publishers.insert(key.clone(), publisher);
+        }
+
+        Ok(self.tc_stats_publishers.get(&key).unwrap())
     }
 
     /// Handle link add/remove/state change events by refreshing the interface list
@@ -745,17 +842,10 @@ impl TcBackend {
                             error!("Failed to send updated interface list: {}", e);
                         }
 
-                        // Publish updated TC config
-                        let current_config = self.detect_current_tc_config(namespace, &name).await;
-                        if let Err(e) = self
-                            .publish_tc_config(namespace, &name, current_config)
-                            .await
-                        {
-                            warn!(
-                                "Failed to publish TC config for {}:{}: {}",
-                                namespace, name, e
-                            );
-                        }
+                        // NOTE: We intentionally don't publish TC config here.
+                        // TC config updates are published by the TC query handler
+                        // when the user makes changes. Publishing from netlink events
+                        // causes race conditions during delete+add operations.
                     }
                 }
             }
@@ -1254,44 +1344,129 @@ impl TcBackend {
         }
     }
 
-    /// Parse TC parameters from qdisc info string
-    fn parse_tc_parameters(&self, qdisc_info: &str) -> TcConfiguration {
-        tc_config::parse_tc_parameters(qdisc_info)
-    }
-
-    /// Detect current TC configuration on an interface
+    /// Detect current TC configuration on an interface using nlink's netem options parsing.
     #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace, interface))]
     async fn detect_current_tc_config(
         &self,
         namespace: &str,
         interface: &str,
     ) -> Option<TcConfiguration> {
-        // Use tc_manager to check if there's an existing qdisc on the interface
+        // Use tc_manager to get netem options directly from the kernel via netlink
         match self
             .tc_manager
-            .check_existing_qdisc(namespace, interface)
+            .get_netem_options(namespace, interface)
             .await
         {
-            Ok(qdisc_info) if !qdisc_info.is_empty() => {
-                // Check if it's a netem qdisc (which is what we're interested in)
-                if qdisc_info.contains("netem") {
-                    info!(
-                        "Detected existing netem qdisc on {}:{}: {}",
-                        namespace,
-                        interface,
-                        qdisc_info.trim()
-                    );
+            Ok(Some(netem_opts)) => {
+                info!(
+                    "Detected existing netem qdisc on {}:{}: loss={}%, delay={:.2}ms, duplicate={}%, reorder={}%, corrupt={}%, ecn={}",
+                    namespace,
+                    interface,
+                    netem_opts.loss_percent,
+                    netem_opts.delay_ms(),
+                    netem_opts.duplicate_percent,
+                    netem_opts.reorder_percent,
+                    netem_opts.corrupt_percent,
+                    netem_opts.ecn,
+                );
 
-                    // Parse the actual TC parameters from the qdisc output
-                    let config = self.parse_tc_parameters(&qdisc_info);
-                    Some(config)
+                // Convert NetemOptions to TcConfiguration using convenience methods
+                let delay_ms = if netem_opts.delay_ns > 0 {
+                    Some(netem_opts.delay_ms() as f32)
                 } else {
-                    // Non-netem qdisc (e.g., noqueue, mq, etc.) - not a TC configuration
                     None
-                }
+                };
+
+                let jitter_ms = if netem_opts.jitter_ns > 0 {
+                    Some(netem_opts.jitter_ms() as f32)
+                } else {
+                    None
+                };
+
+                let delay_correlation = if netem_opts.delay_corr > 0.0 {
+                    Some(netem_opts.delay_corr as f32)
+                } else {
+                    None
+                };
+
+                let correlation = if netem_opts.loss_corr > 0.0 {
+                    Some(netem_opts.loss_corr as f32)
+                } else {
+                    None
+                };
+
+                let duplicate_percent = if netem_opts.duplicate_percent > 0.0 {
+                    Some(netem_opts.duplicate_percent as f32)
+                } else {
+                    None
+                };
+
+                let duplicate_correlation = if netem_opts.duplicate_corr > 0.0 {
+                    Some(netem_opts.duplicate_corr as f32)
+                } else {
+                    None
+                };
+
+                let reorder_percent = if netem_opts.reorder_percent > 0.0 {
+                    Some(netem_opts.reorder_percent as f32)
+                } else {
+                    None
+                };
+
+                let reorder_correlation = if netem_opts.reorder_corr > 0.0 {
+                    Some(netem_opts.reorder_corr as f32)
+                } else {
+                    None
+                };
+
+                let reorder_gap = if netem_opts.gap > 0 {
+                    Some(netem_opts.gap)
+                } else {
+                    None
+                };
+
+                let corrupt_percent = if netem_opts.corrupt_percent > 0.0 {
+                    Some(netem_opts.corrupt_percent as f32)
+                } else {
+                    None
+                };
+
+                let corrupt_correlation = if netem_opts.corrupt_corr > 0.0 {
+                    Some(netem_opts.corrupt_corr as f32)
+                } else {
+                    None
+                };
+
+                // Convert rate from bytes/sec to kbps (rate is 0 if not set)
+                let rate_limit_kbps = if netem_opts.rate > 0 {
+                    Some((netem_opts.rate * 8 / 1000) as u32) // bytes/sec to kbps
+                } else {
+                    None
+                };
+
+                Some(TcConfiguration {
+                    loss: netem_opts.loss_percent as f32,
+                    correlation,
+                    delay_ms,
+                    delay_jitter_ms: jitter_ms,
+                    delay_correlation,
+                    duplicate_percent,
+                    duplicate_correlation,
+                    reorder_percent,
+                    reorder_correlation,
+                    reorder_gap,
+                    corrupt_percent,
+                    corrupt_correlation,
+                    rate_limit_kbps,
+                    command: format!(
+                        "# Detected via netlink: loss={:.1}% delay={:.2}ms",
+                        netem_opts.loss_percent,
+                        netem_opts.delay_ms()
+                    ),
+                })
             }
-            Ok(_) => {
-                // Empty qdisc info - no qdisc found
+            Ok(None) => {
+                // No netem qdisc found
                 None
             }
             Err(e) => {

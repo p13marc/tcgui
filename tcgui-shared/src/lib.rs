@@ -64,6 +64,7 @@ pub mod topics {
         pub tc_query_keys: "tcgui/${backend:*}/query/tc",
         pub interface_query_keys: "tcgui/${backend:*}/query/interface",
         pub tc_config_keys: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}",
+        pub tc_stats_keys: "tcgui/${backend:*}/tc/stats/${namespace:*}/${interface:*}",
         pub scenario_query_keys: "tcgui/${backend:*}/query/scenario",
         pub scenario_execution_query_keys: "tcgui/${backend:*}/query/scenario/execution",
         pub scenario_execution_updates_keys: "tcgui/${backend:*}/scenario/execution/${namespace:*}/${interface:*}",
@@ -76,7 +77,8 @@ pub mod topics {
         pub all_bandwidth: "tcgui/${backend:*}/bandwidth/${namespace:*}/${interface:*}",
         pub all_health: "tcgui/${backend:*}/health",
         pub backend_bandwidth_keys: "tcgui/${backend:*}/bandwidth/${ns:*}/${iface:*}",
-        pub all_tc_configs: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}"
+        pub all_tc_configs: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}",
+        pub all_tc_stats: "tcgui/${backend:*}/tc/stats/${namespace:*}/${interface:*}"
     );
 
     /// Get interface list topic key expression for a specific backend
@@ -142,6 +144,17 @@ pub mod topics {
             interface = interface
         )
         .expect("Failed to format TC config topic - this should never happen with valid parameters")
+    }
+
+    /// Get TC statistics topic key expression for a specific interface
+    pub fn tc_statistics(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
+        keformat!(
+            tc_stats_keys::formatter(),
+            backend = backend_name,
+            namespace = namespace,
+            interface = interface
+        )
+        .expect("Failed to format TC stats topic - this should never happen with valid parameters")
     }
 
     /// Get scenario management query service key expression
@@ -286,6 +299,49 @@ pub struct TcConfigUpdate {
     pub configuration: Option<TcConfiguration>,
     /// Whether the interface has any TC qdisc configured
     pub has_tc: bool,
+}
+
+/// Basic TC statistics (bytes and packets transmitted)
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TcStatsBasic {
+    /// Total bytes transmitted through the qdisc
+    pub bytes: u64,
+    /// Total packets transmitted through the qdisc
+    pub packets: u64,
+}
+
+/// Queue statistics from the TC qdisc
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TcStatsQueue {
+    /// Current queue length in packets
+    pub qlen: u32,
+    /// Current backlog in bytes
+    pub backlog: u32,
+    /// Total packets dropped
+    pub drops: u32,
+    /// Total packets requeued
+    pub requeues: u32,
+    /// Total overlimit events (rate limiting triggered)
+    pub overlimits: u32,
+}
+
+/// TC Statistics update message (pub/sub)
+/// Topic: tcgui/{backend_name}/tc/stats/{namespace}/{interface}
+/// QoS: Best effort, no history (high frequency updates)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TcStatisticsUpdate {
+    /// Network namespace name
+    pub namespace: String,
+    /// Interface name
+    pub interface: String,
+    /// Backend name that manages this interface
+    pub backend_name: String,
+    /// Unix timestamp of this statistics sample
+    pub timestamp: u64,
+    /// Basic statistics (bytes/packets)
+    pub stats_basic: Option<TcStatsBasic>,
+    /// Queue statistics (drops/overlimits)
+    pub stats_queue: Option<TcStatsQueue>,
 }
 
 /// Traffic control configuration request (Query)

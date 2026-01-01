@@ -413,6 +413,9 @@ impl TcInterface {
         // Bandwidth display
         let bandwidth_display = self.render_bandwidth_display(theme, zoom);
 
+        // TC stats display (drops/packets when TC is active)
+        let tc_stats_display = self.render_tc_stats_display(theme, zoom);
+
         // Status display
         let status_display = self.render_status_display(theme, zoom);
 
@@ -438,7 +441,10 @@ impl TcInterface {
                 .width(Length::Fixed(280.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(bandwidth_display)
-                .width(Length::Fixed(180.0 * zoom))
+                .width(Length::Fixed(140.0 * zoom))
+                .align_y(iced::alignment::Vertical::Center),
+            container(tc_stats_display)
+                .width(Length::Fixed(120.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(status_display)
                 .width(Length::Fill)
@@ -592,6 +598,80 @@ impl TcInterface {
             .spacing(scaled_spacing(4, zoom))
             .align_y(iced::Alignment::Center)
             .into()
+    }
+
+    /// Render TC qdisc statistics (drops/packets) when TC is active
+    fn render_tc_stats_display<'a>(
+        &'a self,
+        theme: &'a Theme,
+        zoom: f32,
+    ) -> Element<'a, TcInterfaceMessage> {
+        // Only show stats when TC is configured
+        if !self.state.has_tc_qdisc() {
+            return row![].into();
+        }
+
+        let text_muted = theme.colors.text_muted;
+        let error_color = theme.colors.error;
+
+        // Get queue stats (drops, packets)
+        if let Some(queue_stats) = &self.state.tc_stats_queue {
+            let drops = queue_stats.drops;
+            let overlimits = queue_stats.overlimits;
+
+            // Show drops in error color if > 0, otherwise muted
+            let drops_color = if drops > 0 { error_color } else { text_muted };
+
+            // Format with compact display
+            let drops_text = if drops >= 1_000_000 {
+                format!("{}M", drops / 1_000_000)
+            } else if drops >= 1_000 {
+                format!("{}K", drops / 1_000)
+            } else {
+                format!("{}", drops)
+            };
+
+            let overlimits_text = if overlimits >= 1_000_000 {
+                format!("{}M", overlimits / 1_000_000)
+            } else if overlimits >= 1_000 {
+                format!("{}K", overlimits / 1_000)
+            } else {
+                format!("{}", overlimits)
+            };
+
+            row![
+                Icon::XCircle.svg_sized_colored(scaled(10, zoom), drops_color),
+                text(drops_text)
+                    .size(scaled(10, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(drops_color)
+                    }),
+                text("/")
+                    .size(scaled(10, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_muted)
+                    }),
+                Icon::AlertTriangle.svg_sized_colored(scaled(10, zoom), text_muted),
+                text(overlimits_text)
+                    .size(scaled(10, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_muted)
+                    }),
+            ]
+            .spacing(scaled_spacing(2, zoom))
+            .align_y(iced::Alignment::Center)
+            .into()
+        } else {
+            // TC active but no stats yet - show waiting indicator
+            row![
+                text("--")
+                    .size(scaled(10, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(text_muted)
+                    }),
+            ]
+            .into()
+        }
     }
 
     /// Render status indicator
@@ -1124,6 +1204,15 @@ impl TcInterface {
     pub fn update_bandwidth_stats(&mut self, stats: NetworkBandwidthStats) {
         self.state.update_bandwidth_stats(stats.clone());
         self.bandwidth_display.update_stats(stats);
+    }
+
+    /// Update TC qdisc statistics
+    pub fn update_tc_statistics(
+        &mut self,
+        stats_basic: Option<tcgui_shared::TcStatsBasic>,
+        stats_queue: Option<tcgui_shared::TcStatsQueue>,
+    ) {
+        self.state.update_tc_statistics(stats_basic, stats_queue);
     }
 
     // Removed unused methods that are not called:

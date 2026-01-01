@@ -3,8 +3,8 @@ use iced::task::{Never, Sipper, sipper};
 use std::sync::Arc;
 use tcgui_shared::{
     BackendHealthStatus, BandwidthUpdate, InterfaceControlResponse, InterfaceListUpdate,
-    InterfaceStateEvent, TcConfigUpdate, TcResponse, ZenohConfig, presets::PresetList,
-    scenario::ScenarioExecutionUpdate, topics,
+    InterfaceStateEvent, TcConfigUpdate, TcResponse, TcStatisticsUpdate, ZenohConfig,
+    presets::PresetList, scenario::ScenarioExecutionUpdate, topics,
 };
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -145,6 +145,25 @@ fn handle_tc_config_update_sample(sample: zenoh::sample::Sample) -> Option<Zenoh
             );
         },
         ZenohEvent::TcConfigUpdate
+    )
+}
+
+/// Handles zenoh sample processing for TC statistics updates
+fn handle_tc_stats_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
+    process_zenoh_sample!(
+        sample,
+        TcStatisticsUpdate,
+        "TC stats update",
+        |_backend_name: &str, update: &TcStatisticsUpdate| {
+            tracing::trace!(
+                "Frontend received TC stats for {}/{}: drops={}, packets={}",
+                update.namespace,
+                update.interface,
+                update.stats_queue.map(|q| q.drops).unwrap_or(0),
+                update.stats_basic.map(|b| b.packets).unwrap_or(0)
+            );
+        },
+        ZenohEvent::TcStatisticsUpdate
     )
 }
 
@@ -454,6 +473,22 @@ impl ZenohManager {
                             }
                         };
 
+                        // Declare subscriber for TC statistics updates (best-effort, no history)
+                        let tc_stats_topic = "tcgui/*/tc/stats/*/*";
+                        let tc_stats_subscriber = match session
+                            .declare_subscriber(tc_stats_topic)
+                            .await
+                        {
+                            Ok(subscriber) => {
+                                info!("Subscribed to TC statistics updates: {}", tc_stats_topic);
+                                subscriber
+                            }
+                            Err(e) => {
+                                error!("Failed to subscribe to TC statistics updates: {}", e);
+                                continue; // Retry connection
+                            }
+                        };
+
                         // Declare subscriber for scenario execution updates with history
                         let scenario_execution_topic = "tcgui/*/scenario/execution/*/*";
                         let scenario_execution_subscriber = match session
@@ -592,6 +627,21 @@ impl ZenohManager {
                                         }
                                         Err(e) => {
                                             error!("Error receiving TC config update: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Handle TC statistics updates
+                                sample_result = tc_stats_subscriber.recv_async() => {
+                                    match sample_result {
+                                        Ok(sample) => {
+                                            if let Some(event) = handle_tc_stats_update_sample(sample) {
+                                                let _ = output.send(event).await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Error receiving TC stats update: {}", e);
                                             break;
                                         }
                                     }

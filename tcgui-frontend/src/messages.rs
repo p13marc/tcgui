@@ -2,6 +2,7 @@ use iced_anim::Event as AnimEvent;
 use tcgui_shared::{
     BackendHealthStatus, BandwidthUpdate, InterfaceControlRequest, InterfaceControlResponse,
     InterfaceListUpdate, InterfaceStateEvent, TcConfigUpdate, TcRequest, TcResponse,
+    TcStatisticsUpdate,
     presets::{CustomPreset, PresetList},
     scenario::{
         NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionResponse,
@@ -58,6 +59,7 @@ pub enum TcGuiMessage {
         alive: bool,
     },
     TcConfigUpdate(TcConfigUpdate),
+    TcStatisticsUpdate(TcStatisticsUpdate),
     // Preset list update from backend
     PresetListUpdate {
         backend_name: String,
@@ -195,6 +197,7 @@ pub enum ZenohEvent {
         alive: bool,
     },
     TcConfigUpdate(TcConfigUpdate),
+    TcStatisticsUpdate(TcStatisticsUpdate),
     // Preset list update from backend
     PresetListUpdate {
         backend_name: String,

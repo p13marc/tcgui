@@ -5,7 +5,7 @@
 
 use iced_anim::{Animated, transition::Easing};
 use std::time::Duration;
-use tcgui_shared::{InterfaceFeatureStates, NetworkBandwidthStats};
+use tcgui_shared::{InterfaceFeatureStates, NetworkBandwidthStats, TcStatsBasic, TcStatsQueue};
 
 /// Centralized state for a network interface and all its components
 #[derive(Debug, Clone)]
@@ -27,6 +27,12 @@ pub struct InterfaceState {
 
     /// Current bandwidth statistics (updated from backend)
     pub bandwidth_stats: Option<NetworkBandwidthStats>,
+
+    /// TC qdisc basic statistics (bytes/packets transmitted)
+    pub tc_stats_basic: Option<TcStatsBasic>,
+
+    /// TC qdisc queue statistics (drops/overlimits)
+    pub tc_stats_queue: Option<TcStatsQueue>,
 
     /// Status message history (bounded to prevent memory growth)
     pub status_messages: Vec<String>,
@@ -62,6 +68,8 @@ impl InterfaceState {
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,
+            tc_stats_basic: None,
+            tc_stats_queue: None,
             status_messages: vec!["Ready.".to_string()],
             current_preset_id: None, // None means custom/manual settings
             applying: false,
@@ -108,6 +116,16 @@ impl InterfaceState {
     /// Update bandwidth statistics
     pub fn update_bandwidth_stats(&mut self, stats: NetworkBandwidthStats) {
         self.bandwidth_stats = Some(stats);
+    }
+
+    /// Update TC qdisc statistics
+    pub fn update_tc_statistics(
+        &mut self,
+        stats_basic: Option<TcStatsBasic>,
+        stats_queue: Option<TcStatsQueue>,
+    ) {
+        self.tc_stats_basic = stats_basic;
+        self.tc_stats_queue = stats_queue;
     }
 
     /// Check if the interface is currently up
