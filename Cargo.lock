@@ -3015,7 +3015,7 @@ dependencies = [
 [[package]]
 name = "nlink"
 version = "0.1.0"
-source = "git+https://github.com/p13marc/nlink#13b2b0cc754b572f00f76a8d0d49b000354466be"
+source = "git+https://github.com/p13marc/nlink#2cdda4905244bc406743741030b5ed5b9c1bca96"
 dependencies = [
  "bytes",
  "libc",

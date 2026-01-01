@@ -18,10 +18,20 @@ use nlink::netlink::tc::NetemConfig;
 use nlink::netlink::tc_options::NetemOptions;
 use nlink::netlink::{Connection, Protocol, namespace};
 use std::path::Path;
-use std::time::Duration;
 use tracing::{info, instrument, warn};
 
 use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
+
+/// TC statistics result containing basic, queue, and rate estimator stats.
+#[derive(Debug, Clone)]
+pub struct TcStatisticsResult {
+    /// Basic statistics (bytes/packets transmitted)
+    pub basic: tcgui_shared::TcStatsBasic,
+    /// Queue statistics (drops/overlimits)
+    pub queue: tcgui_shared::TcStatsQueue,
+    /// Rate estimator (bps/pps from kernel, if available)
+    pub rate_est: Option<tcgui_shared::TcStatsRateEst>,
+}
 
 /// Traffic Control command manager for network emulation.
 ///
@@ -169,13 +179,13 @@ impl TcCommandManager {
     }
 
     /// Get TC statistics for an interface if it has a netem qdisc configured.
-    /// Returns basic stats (bytes/packets) and queue stats (drops/overlimits).
+    /// Returns basic stats (bytes/packets), queue stats (drops/overlimits), and rate estimator.
     #[instrument(skip(self), fields(namespace, interface))]
     pub async fn get_tc_statistics(
         &self,
         namespace: &str,
         interface: &str,
-    ) -> Result<Option<(tcgui_shared::TcStatsBasic, tcgui_shared::TcStatsQueue)>> {
+    ) -> Result<Option<TcStatisticsResult>> {
         self.get_tc_statistics_with_path(namespace, None, interface)
             .await
     }
@@ -187,7 +197,7 @@ impl TcCommandManager {
         namespace: &str,
         namespace_path: Option<&Path>,
         interface: &str,
-    ) -> Result<Option<(tcgui_shared::TcStatsBasic, tcgui_shared::TcStatsQueue)>> {
+    ) -> Result<Option<TcStatisticsResult>> {
         let conn = Self::create_connection(namespace, namespace_path)?;
 
         let qdiscs =
@@ -214,7 +224,20 @@ impl TcCommandManager {
                         requeues: qdisc.requeues(),
                         overlimits: qdisc.overlimits(),
                     };
-                    return Ok(Some((basic, queue)));
+                    // Use nlink's bps() and pps() convenience methods for rate estimator
+                    let rate_est = if qdisc.bps() > 0 || qdisc.pps() > 0 {
+                        Some(tcgui_shared::TcStatsRateEst {
+                            bps: qdisc.bps(),
+                            pps: qdisc.pps(),
+                        })
+                    } else {
+                        None
+                    };
+                    return Ok(Some(TcStatisticsResult {
+                        basic,
+                        queue,
+                        rate_est,
+                    }));
                 }
             }
         }
@@ -384,15 +407,11 @@ impl TcCommandManager {
             }
         }
 
-        // Add delay if enabled
+        // Add delay if enabled (use delay_ms/jitter_ms convenience methods)
         if config.delay.enabled && config.delay.base_ms > 0.0 {
-            netem = netem.delay(Duration::from_micros(
-                (config.delay.base_ms * 1000.0) as u64,
-            ));
+            netem = netem.delay_ms(config.delay.base_ms as u64);
             if config.delay.jitter_ms > 0.0 {
-                netem = netem.jitter(Duration::from_micros(
-                    (config.delay.jitter_ms * 1000.0) as u64,
-                ));
+                netem = netem.jitter_ms(config.delay.jitter_ms as u64);
                 if config.delay.correlation > 0.0 {
                     netem = netem.delay_correlation(config.delay.correlation as f64);
                 }
@@ -572,11 +591,11 @@ impl TcCommandManager {
         if let Some(delay) = delay_ms
             && delay > 0.0
         {
-            netem = netem.delay(Duration::from_micros((delay * 1000.0) as u64));
+            netem = netem.delay_ms(delay as u64);
             if let Some(jitter) = delay_jitter_ms
                 && jitter > 0.0
             {
-                netem = netem.jitter(Duration::from_micros((jitter * 1000.0) as u64));
+                netem = netem.jitter_ms(jitter as u64);
                 if let Some(corr) = delay_correlation
                     && corr > 0.0
                 {
@@ -601,7 +620,7 @@ impl TcCommandManager {
         {
             // Ensure delay is present for reordering
             if delay_ms.is_none_or(|d| d <= 0.0) {
-                netem = netem.delay(Duration::from_millis(1));
+                netem = netem.delay_ms(1);
             }
             netem = netem.reorder(reorder as f64);
             if let Some(corr) = reorder_correlation

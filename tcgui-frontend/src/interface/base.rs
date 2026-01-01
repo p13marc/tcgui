@@ -600,7 +600,22 @@ impl TcInterface {
             .into()
     }
 
-    /// Render TC qdisc statistics (drops/packets) when TC is active
+    /// Format bytes per second with appropriate units
+    fn format_bps(bps: u32) -> String {
+        if bps >= 1_000_000_000 {
+            format!("{:.1}G", bps as f64 / 1_000_000_000.0)
+        } else if bps >= 1_000_000 {
+            format!("{:.1}M", bps as f64 / 1_000_000.0)
+        } else if bps >= 1_000 {
+            format!("{:.0}K", bps as f64 / 1_000.0)
+        } else if bps > 0 {
+            format!("{}B", bps)
+        } else {
+            "0".to_string()
+        }
+    }
+
+    /// Render TC qdisc statistics (drops/throughput) when TC is active
     fn render_tc_stats_display<'a>(
         &'a self,
         theme: &'a Theme,
@@ -613,11 +628,11 @@ impl TcInterface {
 
         let text_muted = theme.colors.text_muted;
         let error_color = theme.colors.error;
+        let info_color = theme.colors.info;
 
-        // Get queue stats (drops, packets)
+        // Get queue stats (drops) and rate estimator (throughput)
         if let Some(queue_stats) = &self.state.tc_stats_queue {
             let drops = queue_stats.drops;
-            let overlimits = queue_stats.overlimits;
 
             // Show drops in error color if > 0, otherwise muted
             let drops_color = if drops > 0 { error_color } else { text_muted };
@@ -631,12 +646,11 @@ impl TcInterface {
                 format!("{}", drops)
             };
 
-            let overlimits_text = if overlimits >= 1_000_000 {
-                format!("{}M", overlimits / 1_000_000)
-            } else if overlimits >= 1_000 {
-                format!("{}K", overlimits / 1_000)
+            // Get rate estimator if available (kernel-computed throughput)
+            let rate_text = if let Some(rate_est) = &self.state.tc_stats_rate_est {
+                Self::format_bps(rate_est.bps)
             } else {
-                format!("{}", overlimits)
+                "--".to_string()
             };
 
             row![
@@ -646,16 +660,12 @@ impl TcInterface {
                     .style(move |_| text::Style {
                         color: Some(drops_color)
                     }),
-                text("/")
+                text(" ").size(scaled(10, zoom)),
+                Icon::Zap.svg_sized_colored(scaled(10, zoom), info_color),
+                text(rate_text)
                     .size(scaled(10, zoom))
                     .style(move |_| text::Style {
-                        color: Some(text_muted)
-                    }),
-                Icon::AlertTriangle.svg_sized_colored(scaled(10, zoom), text_muted),
-                text(overlimits_text)
-                    .size(scaled(10, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(text_muted)
+                        color: Some(info_color)
                     }),
             ]
             .spacing(scaled_spacing(2, zoom))
@@ -1211,8 +1221,10 @@ impl TcInterface {
         &mut self,
         stats_basic: Option<tcgui_shared::TcStatsBasic>,
         stats_queue: Option<tcgui_shared::TcStatsQueue>,
+        stats_rate_est: Option<tcgui_shared::TcStatsRateEst>,
     ) {
-        self.state.update_tc_statistics(stats_basic, stats_queue);
+        self.state
+            .update_tc_statistics(stats_basic, stats_queue, stats_rate_est);
     }
 
     // Removed unused methods that are not called:

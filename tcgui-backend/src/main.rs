@@ -607,7 +607,7 @@ impl TcBackend {
                 .get_tc_statistics(&namespace, &interface_name)
                 .await
             {
-                Ok(Some((stats_basic, stats_queue))) => {
+                Ok(Some(stats_result)) => {
                     // Get or create publisher for this interface
                     let publisher = self
                         .get_tc_stats_publisher(&namespace, &interface_name)
@@ -618,8 +618,9 @@ impl TcBackend {
                         interface: interface_name.clone(),
                         backend_name: backend_name.clone(),
                         timestamp,
-                        stats_basic: Some(stats_basic),
-                        stats_queue: Some(stats_queue),
+                        stats_basic: Some(stats_result.basic),
+                        stats_queue: Some(stats_result.queue),
+                        stats_rate_est: stats_result.rate_est,
                     };
 
                     let payload =

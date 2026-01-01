@@ -336,18 +336,18 @@ pub fn handle_tc_statistics_update(
 ) -> Task<TcGuiMessage> {
     let backend_name = &tc_stats_update.backend_name;
 
-    if let Some(backend_group) = backend_manager.backends_mut().get_mut(backend_name) {
-        if let Some(namespace_group) = backend_group.namespaces.get_mut(&tc_stats_update.namespace)
-        {
-            if let Some(tc_interface) = namespace_group
-                .tc_interfaces
-                .get_mut(&tc_stats_update.interface)
-            {
-                // Update the TC interface with the received statistics
-                tc_interface
-                    .update_tc_statistics(tc_stats_update.stats_basic, tc_stats_update.stats_queue);
-            }
-        }
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(backend_name)
+        && let Some(namespace_group) = backend_group.namespaces.get_mut(&tc_stats_update.namespace)
+        && let Some(tc_interface) = namespace_group
+            .tc_interfaces
+            .get_mut(&tc_stats_update.interface)
+    {
+        // Update the TC interface with the received statistics
+        tc_interface.update_tc_statistics(
+            tc_stats_update.stats_basic,
+            tc_stats_update.stats_queue,
+            tc_stats_update.stats_rate_est,
+        );
     }
 
     Task::none()

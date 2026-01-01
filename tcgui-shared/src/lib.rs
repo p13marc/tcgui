@@ -325,6 +325,15 @@ pub struct TcStatsQueue {
     pub overlimits: u32,
 }
 
+/// Rate estimator statistics from TC qdisc
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TcStatsRateEst {
+    /// Current throughput in bytes per second
+    pub bps: u32,
+    /// Current throughput in packets per second
+    pub pps: u32,
+}
+
 /// TC Statistics update message (pub/sub)
 /// Topic: tcgui/{backend_name}/tc/stats/{namespace}/{interface}
 /// QoS: Best effort, no history (high frequency updates)
@@ -342,6 +351,8 @@ pub struct TcStatisticsUpdate {
     pub stats_basic: Option<TcStatsBasic>,
     /// Queue statistics (drops/overlimits)
     pub stats_queue: Option<TcStatsQueue>,
+    /// Rate estimator (bps/pps from kernel)
+    pub stats_rate_est: Option<TcStatsRateEst>,
 }
 
 /// Traffic control configuration request (Query)
