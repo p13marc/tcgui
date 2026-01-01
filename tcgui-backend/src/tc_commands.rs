@@ -18,6 +18,7 @@ use nlink::netlink::tc::NetemConfig;
 use nlink::netlink::tc_options::NetemOptions;
 use nlink::netlink::{Connection, Protocol, namespace};
 use std::path::Path;
+use std::time::Duration;
 use tracing::{info, instrument, warn};
 
 use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
@@ -168,7 +169,7 @@ impl TcCommandManager {
                         namespace,
                         interface,
                         netem_opts.loss_percent,
-                        netem_opts.delay_ms()
+                        netem_opts.delay().as_secs_f64() * 1000.0
                     );
                     return Ok(Some(netem_opts));
                 }
@@ -407,11 +408,11 @@ impl TcCommandManager {
             }
         }
 
-        // Add delay if enabled (use delay_ms/jitter_ms convenience methods)
+        // Add delay if enabled
         if config.delay.enabled && config.delay.base_ms > 0.0 {
-            netem = netem.delay_ms(config.delay.base_ms as u64);
+            netem = netem.delay(Duration::from_millis(config.delay.base_ms as u64));
             if config.delay.jitter_ms > 0.0 {
-                netem = netem.jitter_ms(config.delay.jitter_ms as u64);
+                netem = netem.jitter(Duration::from_millis(config.delay.jitter_ms as u64));
                 if config.delay.correlation > 0.0 {
                     netem = netem.delay_correlation(config.delay.correlation as f64);
                 }
@@ -591,11 +592,11 @@ impl TcCommandManager {
         if let Some(delay) = delay_ms
             && delay > 0.0
         {
-            netem = netem.delay_ms(delay as u64);
+            netem = netem.delay(Duration::from_millis(delay as u64));
             if let Some(jitter) = delay_jitter_ms
                 && jitter > 0.0
             {
-                netem = netem.jitter_ms(jitter as u64);
+                netem = netem.jitter(Duration::from_millis(jitter as u64));
                 if let Some(corr) = delay_correlation
                     && corr > 0.0
                 {
@@ -620,7 +621,7 @@ impl TcCommandManager {
         {
             // Ensure delay is present for reordering
             if delay_ms.is_none_or(|d| d <= 0.0) {
-                netem = netem.delay_ms(1);
+                netem = netem.delay(Duration::from_millis(1));
             }
             netem = netem.reorder(reorder as f64);
             if let Some(corr) = reorder_correlation

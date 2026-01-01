@@ -32,7 +32,7 @@ use tcgui_shared::{
 };
 
 use bandwidth::BandwidthMonitor;
-use namespace_watcher::NamespaceWatcher;
+use namespace_watcher::{NamespaceEvent, NamespaceWatcher};
 use netlink_events::NetlinkEventListener;
 use network::NetworkManager;
 use preset_loader::PresetLoader;
@@ -346,14 +346,21 @@ impl TcBackend {
 
         // Start inotify watcher for /var/run/netns to detect namespace changes immediately
         // The watcher must be kept alive for the entire duration of the event loop
-        let (_namespace_watcher, mut namespace_events) = match NamespaceWatcher::new(100) {
-            Some((watcher, rx)) => {
-                info!("Namespace watcher started for /var/run/netns");
-                (Some(watcher), Some(rx))
+        // nlink's watcher also monitors /var/run/ when /var/run/netns doesn't exist
+        let mut namespace_watcher = match NamespaceWatcher::new().await {
+            Ok(watcher) => {
+                info!(
+                    "Namespace watcher started (watching netns directly: {})",
+                    watcher.is_watching_netns()
+                );
+                Some(watcher)
             }
-            None => {
-                warn!("Namespace watcher not available, using polling fallback");
-                (None, None)
+            Err(e) => {
+                warn!(
+                    "Namespace watcher not available: {}, using polling fallback",
+                    e
+                );
+                None
             }
         };
 
@@ -484,20 +491,26 @@ impl TcBackend {
 
                 // Inotify-based namespace change detection (immediate)
                 Some(ns_event) = async {
-                    match &mut namespace_events {
-                        Some(rx) => rx.recv().await,
+                    match &mut namespace_watcher {
+                        Some(watcher) => watcher.recv().await.ok().flatten(),
                         None => std::future::pending().await,
                     }
                 } => {
                     match &ns_event {
-                        namespace_watcher::NamespaceEvent::Created(name) => {
+                        NamespaceEvent::Created { name } => {
                             info!("Namespace created: {}", name);
                             // Small delay to let the namespace setup complete
                             // The inotify event fires before the bind mount is fully ready
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         }
-                        namespace_watcher::NamespaceEvent::Deleted(name) => {
+                        NamespaceEvent::Deleted { name } => {
                             info!("Namespace deleted: {}", name);
+                        }
+                        NamespaceEvent::DirectoryCreated => {
+                            info!("/var/run/netns directory created, now watching for namespaces");
+                        }
+                        NamespaceEvent::DirectoryDeleted => {
+                            info!("/var/run/netns directory deleted");
                         }
                     }
                     // Trigger a full interface refresh on namespace change
@@ -1364,22 +1377,22 @@ impl TcBackend {
                     namespace,
                     interface,
                     netem_opts.loss_percent,
-                    netem_opts.delay_ms(),
+                    netem_opts.delay().as_secs_f64() * 1000.0,
                     netem_opts.duplicate_percent,
                     netem_opts.reorder_percent,
                     netem_opts.corrupt_percent,
                     netem_opts.ecn,
                 );
 
-                // Convert NetemOptions to TcConfiguration using convenience methods
+                // Convert NetemOptions to TcConfiguration
                 let delay_ms = if netem_opts.delay_ns > 0 {
-                    Some(netem_opts.delay_ms() as f32)
+                    Some(netem_opts.delay().as_secs_f64() as f32 * 1000.0)
                 } else {
                     None
                 };
 
                 let jitter_ms = if netem_opts.jitter_ns > 0 {
-                    Some(netem_opts.jitter_ms() as f32)
+                    Some(netem_opts.jitter().as_secs_f64() as f32 * 1000.0)
                 } else {
                     None
                 };
@@ -1462,7 +1475,7 @@ impl TcBackend {
                     command: format!(
                         "# Detected via netlink: loss={:.1}% delay={:.2}ms",
                         netem_opts.loss_percent,
-                        netem_opts.delay_ms()
+                        netem_opts.delay().as_secs_f64() * 1000.0
                     ),
                 })
             }

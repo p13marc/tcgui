@@ -58,9 +58,6 @@ bollard = "0.18"
 # Linux system calls (namespace operations)
 nix = { version = "0.30", features = ["sched", "fs"] }
 
-# Filesystem watching (inotify)
-notify = "7"
-
 [dev-dependencies]
 rand = "0.8"
 tempfile = "3.0"
