@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-01-01
+
+### Changed
+- Migrated from rtnetlink to nlink for all netlink operations
+- Use nlink 0.1.0 from crates.io instead of GitHub dependency
+- Reduced bandwidth update log verbosity (info -> trace)
+
+### Added
+- TC qdisc statistics display using nlink API
+- Multi-namespace event monitoring via NamespaceEventManager
+- TC event monitoring via nlink EventStream
+- Real-time bandwidth rate estimation using nlink
+
+### Fixed
+- Frontend-backend communication when only loopback is available
+- Default localhost endpoints for local communication
+
 ## [0.3.0] - 2024-12-29
 
 ### Added
