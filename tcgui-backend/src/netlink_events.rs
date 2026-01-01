@@ -3,9 +3,20 @@
 //! This module provides event-driven monitoring using nlink's EventStream API.
 //! It listens for link and TC events to detect interface additions, removals,
 //! state changes, and qdisc changes in real-time.
+//!
+//! # Multi-Namespace Support
+//!
+//! The module supports monitoring events across multiple network namespaces:
+//! - Default namespace: Always monitored
+//! - Named namespaces: Created via `ip netns add`
+//! - Container namespaces: Accessed via `/proc/<pid>/ns/net`
+//!
+//! Use `NamespaceEventManager` to manage event streams for multiple namespaces.
 
 use nlink::netlink::events::{EventStream, NetworkEvent};
 use nlink::netlink::messages::{LinkMessage, TcMessage};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -224,6 +235,198 @@ fn parse_network_event(event: NetworkEvent) -> Vec<NetlinkEvent> {
     }
 }
 
+/// A netlink event with its originating namespace
+#[derive(Debug, Clone)]
+pub struct NamespacedEvent {
+    /// The namespace this event originated from
+    pub namespace: String,
+    /// The actual netlink event
+    pub event: NetlinkEvent,
+}
+
+/// Configuration for a namespace to monitor
+#[derive(Debug, Clone)]
+pub enum NamespaceTarget {
+    /// The default network namespace
+    #[allow(dead_code)]
+    Default,
+    /// A named namespace (from /var/run/netns/)
+    #[allow(dead_code)]
+    Named(String),
+    /// A namespace accessed via path (e.g., /proc/<pid>/ns/net for containers)
+    Path { name: String, path: PathBuf },
+}
+
+impl NamespaceTarget {
+    /// Get the display name for this namespace
+    pub fn name(&self) -> &str {
+        match self {
+            NamespaceTarget::Default => "default",
+            NamespaceTarget::Named(name) => name,
+            NamespaceTarget::Path { name, .. } => name,
+        }
+    }
+}
+
+/// Manages netlink event streams for multiple namespaces
+///
+/// This struct creates and manages EventStream instances for different
+/// network namespaces, multiplexing their events onto a single channel.
+pub struct NamespaceEventManager {
+    /// Channel sender for namespaced events
+    event_tx: mpsc::Sender<NamespacedEvent>,
+    /// Track which namespaces are being monitored
+    active_namespaces: HashMap<String, tokio::task::JoinHandle<()>>,
+}
+
+impl NamespaceEventManager {
+    /// Create a new namespace event manager
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer_size` - Size of the event channel buffer
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (NamespaceEventManager, mpsc::Receiver<NamespacedEvent>)
+    pub fn new(buffer_size: usize) -> (Self, mpsc::Receiver<NamespacedEvent>) {
+        let (event_tx, event_rx) = mpsc::channel(buffer_size);
+        (
+            Self {
+                event_tx,
+                active_namespaces: HashMap::new(),
+            },
+            event_rx,
+        )
+    }
+
+    /// Add a namespace to monitor
+    ///
+    /// Creates an EventStream for the specified namespace and starts
+    /// listening for events in a background task.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The namespace to monitor
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the stream was started successfully, Err on failure
+    pub fn add_namespace(&mut self, target: NamespaceTarget) -> Result<(), String> {
+        let namespace_name = target.name().to_string();
+
+        // Don't add duplicate namespaces
+        if self.active_namespaces.contains_key(&namespace_name) {
+            debug!("Namespace {} already being monitored", namespace_name);
+            return Ok(());
+        }
+
+        // Build the event stream for this namespace
+        let mut builder = EventStream::builder().links(true).tc(true);
+
+        builder = match &target {
+            NamespaceTarget::Default => builder,
+            NamespaceTarget::Named(name) => builder.namespace(name),
+            NamespaceTarget::Path { path, .. } => builder.namespace_path(path),
+        };
+
+        let stream = builder.build().map_err(|e| {
+            format!(
+                "Failed to create event stream for {}: {}",
+                namespace_name, e
+            )
+        })?;
+
+        info!(
+            "Started event stream for namespace: {} (links: true, tc: true)",
+            namespace_name
+        );
+
+        // Spawn a task to process events from this namespace
+        let event_tx = self.event_tx.clone();
+        let ns_name = namespace_name.clone();
+        let handle = tokio::spawn(async move {
+            Self::process_namespace_events(stream, ns_name, event_tx).await;
+        });
+
+        self.active_namespaces.insert(namespace_name, handle);
+        Ok(())
+    }
+
+    /// Remove a namespace from monitoring
+    ///
+    /// Stops the background task for the specified namespace.
+    #[allow(dead_code)]
+    pub fn remove_namespace(&mut self, namespace: &str) {
+        if let Some(handle) = self.active_namespaces.remove(namespace) {
+            handle.abort();
+            info!("Stopped event stream for namespace: {}", namespace);
+        }
+    }
+
+    /// Check if a namespace is being monitored
+    pub fn is_monitoring(&self, namespace: &str) -> bool {
+        self.active_namespaces.contains_key(namespace)
+    }
+
+    /// Get the list of namespaces being monitored
+    pub fn monitored_namespaces(&self) -> Vec<String> {
+        self.active_namespaces.keys().cloned().collect()
+    }
+
+    /// Process events from a namespace's event stream
+    async fn process_namespace_events(
+        mut stream: EventStream,
+        namespace: String,
+        event_tx: mpsc::Sender<NamespacedEvent>,
+    ) {
+        loop {
+            match stream.next().await {
+                Ok(Some(event)) => {
+                    let netlink_events = parse_network_event(event);
+
+                    for evt in netlink_events {
+                        let namespaced_event = NamespacedEvent {
+                            namespace: namespace.clone(),
+                            event: evt,
+                        };
+
+                        if event_tx.send(namespaced_event).await.is_err() {
+                            warn!(
+                                "Namespace event receiver dropped, stopping listener for {}",
+                                namespace
+                            );
+                            return;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    warn!("Event stream ended for namespace: {}", namespace);
+                    break;
+                }
+                Err(e) => {
+                    error!("Error receiving event from namespace {}: {}", namespace, e);
+                    // Continue listening despite errors
+                }
+            }
+        }
+        error!(
+            "Netlink event stream ended unexpectedly for namespace: {}",
+            namespace
+        );
+    }
+}
+
+impl Drop for NamespaceEventManager {
+    fn drop(&mut self) {
+        // Abort all background tasks when the manager is dropped
+        for (namespace, handle) in self.active_namespaces.drain() {
+            handle.abort();
+            debug!("Aborted event stream for namespace: {}", namespace);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +478,45 @@ mod tests {
         let (listener, _rx) = NetlinkEventListener::new_with_tc(100);
         assert!(listener.subscribe_tc);
         drop(listener);
+    }
+
+    #[test]
+    fn test_namespace_target_name() {
+        assert_eq!(NamespaceTarget::Default.name(), "default");
+        assert_eq!(NamespaceTarget::Named("myns".to_string()).name(), "myns");
+        assert_eq!(
+            NamespaceTarget::Path {
+                name: "container:nginx".to_string(),
+                path: PathBuf::from("/proc/1234/ns/net")
+            }
+            .name(),
+            "container:nginx"
+        );
+    }
+
+    #[test]
+    fn test_namespaced_event_creation() {
+        let event = NamespacedEvent {
+            namespace: "container:nginx".to_string(),
+            event: NetlinkEvent::LinkAdded(LinkInfo {
+                index: 5,
+                name: Some("eth0".to_string()),
+                is_up: Some(true),
+            }),
+        };
+        assert_eq!(event.namespace, "container:nginx");
+        match event.event {
+            NetlinkEvent::LinkAdded(info) => {
+                assert_eq!(info.index, 5);
+                assert_eq!(info.name, Some("eth0".to_string()));
+            }
+            _ => panic!("Expected LinkAdded event"),
+        }
+    }
+
+    #[test]
+    fn test_namespace_event_manager_creation() {
+        let (manager, _rx) = NamespaceEventManager::new(100);
+        assert!(manager.monitored_namespaces().is_empty());
     }
 }

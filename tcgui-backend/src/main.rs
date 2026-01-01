@@ -333,6 +333,14 @@ impl TcBackend {
             );
         }
 
+        // Create namespace event manager for container namespace monitoring
+        let (mut namespace_event_manager, mut namespace_netlink_events) =
+            netlink_events::NamespaceEventManager::new(100);
+
+        // Set up event streams for discovered container namespaces
+        self.setup_container_event_streams(&mut namespace_event_manager)
+            .await;
+
         // Start inotify watcher for /var/run/netns to detect namespace changes immediately
         // The watcher must be kept alive for the entire duration of the event loop
         let (_namespace_watcher, mut namespace_events) = match NamespaceWatcher::new(100) {
@@ -460,6 +468,16 @@ impl TcBackend {
                     }
                 }
 
+                // Handle events from container namespace event streams
+                Some(ns_event) = namespace_netlink_events.recv() => {
+                    tracing::debug!(
+                        "Received event from namespace {}: {:?}",
+                        ns_event.namespace,
+                        ns_event.event
+                    );
+                    self.handle_namespaced_event(ns_event).await;
+                }
+
                 // Inotify-based namespace change detection (immediate)
                 Some(ns_event) = async {
                     match &mut namespace_events {
@@ -503,6 +521,9 @@ impl TcBackend {
                                         warn!("Failed to publish TC config for new interface {}:{}: {}", namespace, interface_name, e);
                                     }
                                 }
+
+                                // Refresh container event streams after namespace changes
+                                self.setup_container_event_streams(&mut namespace_event_manager).await;
                             }
                         },
                         Err(e) => {
@@ -601,6 +622,163 @@ impl TcBackend {
             }
             Err(e) => {
                 error!("Failed to refresh interfaces after netlink event: {}", e);
+            }
+        }
+    }
+
+    /// Set up event streams for container namespaces
+    ///
+    /// This creates EventStreams for each discovered container namespace,
+    /// allowing real-time monitoring of TC and link events within containers.
+    async fn setup_container_event_streams(
+        &self,
+        manager: &mut netlink_events::NamespaceEventManager,
+    ) {
+        let container_cache = self.network_manager.container_cache();
+        let containers = container_cache.read().await;
+
+        for (ns_name, container) in containers.iter() {
+            // Skip if already monitoring this namespace
+            if manager.is_monitoring(ns_name) {
+                continue;
+            }
+
+            // Get the namespace path for this container
+            if let Some(ns_path) = &container.namespace_path {
+                let target = netlink_events::NamespaceTarget::Path {
+                    name: ns_name.clone(),
+                    path: ns_path.clone(),
+                };
+
+                match manager.add_namespace(target) {
+                    Ok(()) => {
+                        info!(
+                            "Started event monitoring for container namespace: {}",
+                            ns_name
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to start event monitoring for container {}: {}",
+                            ns_name, e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Log the current monitoring status
+        let monitored = manager.monitored_namespaces();
+        if !monitored.is_empty() {
+            tracing::debug!(
+                "Currently monitoring {} container namespaces: {:?}",
+                monitored.len(),
+                monitored
+            );
+        }
+    }
+
+    /// Handle an event from a container namespace
+    async fn handle_namespaced_event(&mut self, event: netlink_events::NamespacedEvent) {
+        let namespace = &event.namespace;
+
+        match &event.event {
+            netlink_events::NetlinkEvent::QdiscAdded(tc_info)
+            | netlink_events::NetlinkEvent::QdiscRemoved(tc_info) => {
+                let is_added = matches!(event.event, netlink_events::NetlinkEvent::QdiscAdded(_));
+                let is_netem = tc_info.is_netem();
+
+                tracing::info!(
+                    "[{}] TC qdisc {} on ifindex {}, kind: {:?}, netem: {}",
+                    namespace,
+                    if is_added { "added" } else { "removed" },
+                    tc_info.ifindex,
+                    tc_info.kind,
+                    is_netem
+                );
+
+                // Find the interface in this namespace by index
+                let iface_info = self
+                    .interfaces
+                    .values()
+                    .find(|iface| {
+                        iface.namespace == *namespace && iface.index == tc_info.ifindex as u32
+                    })
+                    .map(|iface| (iface.name.clone(), iface.has_tc_qdisc));
+
+                if let Some((name, had_qdisc)) = iface_info {
+                    // Check if there's still a netem qdisc after this event
+                    let has_netem = match self
+                        .network_manager
+                        .check_interface_has_netem(namespace, &name)
+                        .await
+                    {
+                        Ok(has) => has,
+                        Err(e) => {
+                            warn!("Failed to check netem for {}:{}: {}", namespace, name, e);
+                            had_qdisc // Keep previous state on error
+                        }
+                    };
+
+                    if has_netem != had_qdisc {
+                        // Update the interface state
+                        for iface in self.interfaces.values_mut() {
+                            if iface.namespace == *namespace && iface.name == name {
+                                iface.has_tc_qdisc = has_netem;
+                                break;
+                            }
+                        }
+
+                        tracing::info!(
+                            "[{}] Interface {} TC state changed: has_tc_qdisc = {}",
+                            namespace,
+                            name,
+                            has_netem
+                        );
+
+                        // Send updated interface list
+                        if let Err(e) = self
+                            .network_manager
+                            .send_interface_list(&self.interfaces)
+                            .await
+                        {
+                            error!("Failed to send updated interface list: {}", e);
+                        }
+
+                        // Publish updated TC config
+                        let current_config = self.detect_current_tc_config(namespace, &name).await;
+                        if let Err(e) = self
+                            .publish_tc_config(namespace, &name, current_config)
+                            .await
+                        {
+                            warn!(
+                                "Failed to publish TC config for {}:{}: {}",
+                                namespace, name, e
+                            );
+                        }
+                    }
+                }
+            }
+
+            netlink_events::NetlinkEvent::LinkAdded(info) => {
+                tracing::info!(
+                    "[{}] Link added: {:?} (index {})",
+                    namespace,
+                    info.name,
+                    info.index
+                );
+                // Trigger interface refresh for this namespace
+                self.handle_link_event().await;
+            }
+
+            netlink_events::NetlinkEvent::LinkRemoved(info) => {
+                tracing::info!(
+                    "[{}] Link removed: {:?} (index {})",
+                    namespace,
+                    info.name,
+                    info.index
+                );
+                self.handle_link_event().await;
             }
         }
     }
