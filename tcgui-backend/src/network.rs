@@ -353,6 +353,51 @@ impl NetworkManager {
         Ok(false)
     }
 
+    /// Check if an interface has a netem qdisc configured.
+    ///
+    /// This is a public method that handles namespace resolution for checking
+    /// TC configuration on any interface.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace containing the interface
+    /// * `interface` - The interface name to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the interface has a netem qdisc, `false` otherwise
+    pub async fn check_interface_has_netem(
+        &self,
+        namespace: &str,
+        interface: &str,
+    ) -> Result<bool> {
+        if namespace == "default" {
+            self.check_tc_qdisc_with_connection(&self.connection, interface)
+                .await
+        } else if namespace.starts_with("container:") {
+            // Container namespace - get the container and use its namespace path
+            let cache = self.cached_containers.read().await;
+            if let Some(container) = cache.get(namespace) {
+                let ns_path = container
+                    .namespace_path
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Container has no namespace path"))?;
+                let conn =
+                    Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
+                        anyhow::anyhow!("Failed to connect to container namespace: {}", e)
+                    })?;
+                self.check_tc_qdisc_with_connection(&conn, interface).await
+            } else {
+                Ok(false) // Container not found, assume no netem
+            }
+        } else {
+            // Named namespace
+            let conn = namespace::connection_for(namespace)
+                .map_err(|e| anyhow::anyhow!("Failed to connect to namespace: {}", e))?;
+            self.check_tc_qdisc_with_connection(&conn, interface).await
+        }
+    }
+
     /// Monitor interfaces across all namespaces (future multi-namespace monitoring)
     #[allow(dead_code)]
     pub async fn monitor_all_namespaces(&mut self, namespaces: &[NetworkNamespace]) -> Result<()> {

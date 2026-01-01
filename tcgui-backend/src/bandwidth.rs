@@ -1,21 +1,22 @@
 //! Network bandwidth monitoring and statistics collection.
 //!
 //! This module provides comprehensive network bandwidth monitoring across multiple network namespaces.
-//! It collects real-time statistics from `/proc/net/dev` and calculates bandwidth rates for all
+//! It collects real-time statistics via netlink and calculates bandwidth rates for all
 //! tracked network interfaces.
 //!
 //! # Key Features
 //!
 //! * **Multi-namespace support**: Monitors interfaces across all network namespaces
-//! * **Real-time statistics**: Collects RX/TX bytes, packets, errors, and drops
-//! * **Rate calculations**: Computes bytes-per-second rates with proper counter wraparound handling
+//! * **Real-time statistics**: Collects RX/TX bytes, packets, errors, and drops via netlink
+//! * **Rate calculations**: Uses nlink's StatsTracker for automatic rate calculation
 //! * **Namespace-aware messaging**: Sends updates with namespace context for proper routing
 //! * **Permission handling**: Gracefully handles namespace access permission issues
 
 use anyhow::Result;
-use nlink::netlink::namespace;
+use nlink::netlink::stats::{LinkStats as NlinkLinkStats, StatsSnapshot, StatsTracker};
+use nlink::netlink::{Connection, Protocol};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -29,18 +30,37 @@ use tcgui_shared::{
     BandwidthUpdate, NetworkBandwidthStats, NetworkInterface, errors::TcguiError, topics,
 };
 
+/// Per-namespace statistics tracker
+struct NamespaceStatsTracker {
+    /// nlink StatsTracker for automatic rate calculation
+    tracker: StatsTracker,
+    /// Last known rates by interface index
+    last_rates: HashMap<i32, (f64, f64)>, // (rx_bps, tx_bps)
+}
+
+impl NamespaceStatsTracker {
+    fn new() -> Self {
+        Self {
+            tracker: StatsTracker::new(),
+            last_rates: HashMap::new(),
+        }
+    }
+}
+
 /// Network bandwidth monitoring service.
 pub struct BandwidthMonitor {
     /// Zenoh session for sending bandwidth update messages
     session: Session,
-    /// Previous bandwidth statistics keyed by "namespace/interface" for rate calculations
-    previous_stats: HashMap<String, NetworkBandwidthStats>,
     /// Backend name for topic routing in multi-backend scenarios
     backend_name: String,
     /// Publishers for bandwidth updates (one per interface)
     bandwidth_publishers: HashMap<String, AdvancedPublisher<'static>>,
     /// Shared container cache for resolving container namespace paths
     container_cache: Option<Arc<RwLock<HashMap<String, Container>>>>,
+    /// Per-namespace stats trackers using nlink's StatsTracker
+    namespace_trackers: HashMap<String, NamespaceStatsTracker>,
+    /// Cached connections per namespace to avoid recreation
+    namespace_connections: HashMap<String, Connection>,
 }
 
 impl BandwidthMonitor {
@@ -48,10 +68,11 @@ impl BandwidthMonitor {
     pub fn new(session: Session, backend_name: String) -> Self {
         Self {
             session,
-            previous_stats: HashMap::new(),
             backend_name,
             bandwidth_publishers: HashMap::new(),
             container_cache: None,
+            namespace_trackers: HashMap::new(),
+            namespace_connections: HashMap::new(),
         }
     }
 
@@ -109,220 +130,217 @@ impl BandwidthMonitor {
         Ok(())
     }
 
-    /// Monitors bandwidth statistics for interfaces within a specific namespace.
+    /// Monitors bandwidth statistics for interfaces within a specific namespace using netlink.
     #[instrument(skip(self, interfaces), fields(backend_name = %self.backend_name, namespace, interface_count = interfaces.len()))]
     pub async fn monitor_namespace_bandwidth(
         &mut self,
         namespace: &str,
         interfaces: &[&NetworkInterface],
     ) -> Result<()> {
-        tracing::debug!("Reading bandwidth stats for namespace: {}", namespace);
-        let current_stats = self.read_proc_net_dev_for_namespace(namespace).await?;
-        tracing::debug!(
-            "Found {} interface stats in namespace {}",
-            current_stats.len(),
+        debug!(
+            "Reading bandwidth stats via netlink for namespace: {}",
             namespace
         );
 
-        for (interface_name, mut stats) in current_stats {
-            // Only send stats for interfaces we're tracking in this namespace
-            if let Some(tracked_interface) =
-                interfaces.iter().find(|iface| iface.name == interface_name)
-            {
-                // Create a namespace-prefixed key for storing previous stats
-                let stats_key = format!("{}/{}", namespace, interface_name);
-                tracing::debug!(
-                    "Processing bandwidth stats for {}: RX {} bytes, TX {} bytes",
-                    stats_key,
-                    stats.rx_bytes,
-                    stats.tx_bytes
-                );
+        // Get stats via netlink
+        let stats_result = self.get_netlink_stats(namespace).await;
 
-                // Calculate rates if we have previous data
-                if let Some(prev_stats) = self.previous_stats.get(&stats_key) {
-                    let time_diff = stats.timestamp.saturating_sub(prev_stats.timestamp) as f64;
-
-                    if time_diff > 0.0 {
-                        let rx_bytes_diff =
-                            stats.rx_bytes.saturating_sub(prev_stats.rx_bytes) as f64;
-                        let tx_bytes_diff =
-                            stats.tx_bytes.saturating_sub(prev_stats.tx_bytes) as f64;
-
-                        stats.rx_bytes_per_sec = rx_bytes_diff / time_diff;
-                        stats.tx_bytes_per_sec = tx_bytes_diff / time_diff;
-                    } else {
-                        stats.rx_bytes_per_sec = 0.0;
-                        stats.tx_bytes_per_sec = 0.0;
-                    }
+        let (snapshot, interface_stats) = match stats_result {
+            Ok(result) => result,
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("EPERM")
+                    || err_str.contains("Operation not permitted")
+                    || err_str.contains("Permission denied")
+                {
+                    warn!(
+                        "Cannot access namespace {}: insufficient permissions",
+                        namespace
+                    );
                 } else {
-                    // First measurement - no rate data available
-                    stats.rx_bytes_per_sec = 0.0;
-                    stats.tx_bytes_per_sec = 0.0;
+                    warn!(
+                        "Failed to get netlink stats for namespace {}: {}",
+                        namespace, e
+                    );
                 }
-
-                // Store current stats for next calculation with namespace-prefixed key
-                self.previous_stats.insert(stats_key, stats.clone());
-
-                let bandwidth_update = BandwidthUpdate {
-                    namespace: tracked_interface.namespace.clone(),
-                    interface: tracked_interface.name.clone(),
-                    stats: stats.clone(),
-                    backend_name: self.backend_name.clone(),
-                };
-                tracing::debug!(
-                    "Sending bandwidth update for {}/{}: RX rate {:.2} B/s, TX rate {:.2} B/s",
-                    namespace,
-                    interface_name,
-                    stats.rx_bytes_per_sec,
-                    stats.tx_bytes_per_sec
-                );
-                self.send_bandwidth_update(bandwidth_update).await?;
+                return Ok(());
             }
+        };
+
+        debug!(
+            "Got {} interface stats from netlink in namespace {}",
+            interface_stats.len(),
+            namespace
+        );
+
+        // Get current timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Collect all updates first, then send them (to avoid borrow issues)
+        let updates: Vec<BandwidthUpdate> = {
+            // Get or create tracker for this namespace
+            let tracker = self
+                .namespace_trackers
+                .entry(namespace.to_string())
+                .or_insert_with(NamespaceStatsTracker::new);
+
+            // Update tracker and get rates
+            let rates_snapshot = tracker.tracker.update(snapshot);
+
+            // Process each tracked interface
+            interfaces
+                .iter()
+                .filter_map(|tracked_interface| {
+                    let ifindex = tracked_interface.index as i32;
+
+                    // Find the stats for this interface
+                    interface_stats.get(&ifindex).map(|nlink_stats| {
+                        // Get rates from the snapshot or use cached values
+                        let (rx_bps, tx_bps) = if let Some(ref rates) = rates_snapshot {
+                            if let Some(link_rates) = rates.links.get(&ifindex) {
+                                let rx = link_rates.rx_bytes_per_sec;
+                                let tx = link_rates.tx_bytes_per_sec;
+                                // Cache the rates
+                                tracker.last_rates.insert(ifindex, (rx, tx));
+                                (rx, tx)
+                            } else {
+                                // Use cached rates if available
+                                tracker
+                                    .last_rates
+                                    .get(&ifindex)
+                                    .copied()
+                                    .unwrap_or((0.0, 0.0))
+                            }
+                        } else {
+                            // First measurement, no rates yet
+                            (0.0, 0.0)
+                        };
+
+                        let stats = NetworkBandwidthStats {
+                            rx_bytes: nlink_stats.rx_bytes,
+                            tx_bytes: nlink_stats.tx_bytes,
+                            rx_packets: nlink_stats.rx_packets,
+                            tx_packets: nlink_stats.tx_packets,
+                            rx_errors: nlink_stats.rx_errors,
+                            tx_errors: nlink_stats.tx_errors,
+                            rx_dropped: nlink_stats.rx_dropped,
+                            tx_dropped: nlink_stats.tx_dropped,
+                            timestamp,
+                            rx_bytes_per_sec: rx_bps,
+                            tx_bytes_per_sec: tx_bps,
+                        };
+
+                        BandwidthUpdate {
+                            namespace: tracked_interface.namespace.clone(),
+                            interface: tracked_interface.name.clone(),
+                            stats,
+                            backend_name: self.backend_name.clone(),
+                        }
+                    })
+                })
+                .collect()
+        };
+
+        // Now send all updates (self is no longer borrowed by tracker)
+        for update in updates {
+            debug!(
+                "Sending bandwidth update for {}/{}: RX rate {:.2} B/s, TX rate {:.2} B/s",
+                update.namespace,
+                update.interface,
+                update.stats.rx_bytes_per_sec,
+                update.stats.tx_bytes_per_sec
+            );
+            self.send_bandwidth_update(update).await?;
         }
 
         Ok(())
     }
 
-    /// Reads network interface statistics from `/proc/net/dev` for a specific namespace.
-    #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace))]
-    async fn read_proc_net_dev_for_namespace(
-        &self,
+    /// Get netlink statistics for a namespace
+    async fn get_netlink_stats(
+        &mut self,
         namespace: &str,
-    ) -> Result<HashMap<String, NetworkBandwidthStats>> {
-        let contents: String = if namespace == "default" {
-            // Default namespace: read directly
-            match tokio::fs::read_to_string("/proc/net/dev").await {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!("Failed to read /proc/net/dev: {}", e);
-                    return Ok(HashMap::new());
-                }
-            }
-        } else if Self::is_container_namespace(namespace) {
-            // Container namespace: use the cached path
-            match self.get_container_namespace_path(namespace).await {
-                Some(path) => match self.read_proc_net_dev_in_namespace_path(&path).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        warn!(
-                            "Failed to read /proc/net/dev in container namespace {}: {}",
-                            namespace, e
-                        );
-                        return Ok(HashMap::new());
-                    }
-                },
-                None => {
-                    warn!(
-                        "Container namespace {} has no path in cache, cannot read bandwidth stats",
-                        namespace
-                    );
-                    return Ok(HashMap::new());
-                }
-            }
-        } else {
-            // Traditional named namespace
-            match self.read_proc_net_dev_in_named_namespace(namespace).await {
-                Ok(c) => c,
-                Err(e) => {
-                    let err_str = e.to_string();
-                    if err_str.contains("EPERM")
-                        || err_str.contains("Operation not permitted")
-                        || err_str.contains("Permission denied")
-                    {
-                        warn!(
-                            "Cannot access namespace {}: insufficient permissions",
-                            namespace
-                        );
-                        return Ok(HashMap::new());
-                    }
-                    warn!(
-                        "Failed to read /proc/net/dev in namespace {}: {}",
-                        namespace, e
-                    );
-                    return Ok(HashMap::new());
-                }
-            }
-        };
-
-        debug!(
-            "Read {} bytes from /proc/net/dev in namespace {}",
-            contents.len(),
-            namespace
-        );
-
-        self.parse_proc_net_dev(&contents)
-    }
-
-    /// Read /proc/net/dev in a named namespace using nlink's namespace utilities
-    async fn read_proc_net_dev_in_named_namespace(&self, namespace: &str) -> Result<String> {
-        let ns_name = namespace.to_string();
-
-        // Use spawn_blocking to run the namespace operation in a separate thread
-        tokio::task::spawn_blocking(move || {
-            // Enter the namespace
-            let _guard = namespace::enter(&ns_name)
-                .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", ns_name, e))?;
-
-            // Read /proc/net/dev while in the namespace
-            std::fs::read_to_string("/proc/net/dev")
-                .map_err(|e| anyhow::anyhow!("Failed to read /proc/net/dev: {}", e))
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))?
-    }
-
-    /// Read /proc/net/dev in a namespace by path (for containers)
-    async fn read_proc_net_dev_in_namespace_path(&self, ns_path: &Path) -> Result<String> {
-        let path = ns_path.to_path_buf();
-
-        // Use spawn_blocking to run the namespace operation in a separate thread
-        tokio::task::spawn_blocking(move || {
-            // Enter the namespace by path
-            let _guard = namespace::enter_path(&path)
-                .map_err(|e| anyhow::anyhow!("Failed to enter namespace {:?}: {}", path, e))?;
-
-            // Read /proc/net/dev while in the namespace
-            std::fs::read_to_string("/proc/net/dev")
-                .map_err(|e| anyhow::anyhow!("Failed to read /proc/net/dev: {}", e))
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))?
-    }
-
-    /// Parse /proc/net/dev contents into bandwidth statistics
-    fn parse_proc_net_dev(&self, contents: &str) -> Result<HashMap<String, NetworkBandwidthStats>> {
-        let mut stats = HashMap::new();
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-        // Skip first two header lines
-        for line in contents.lines().skip(2) {
-            if let Some((interface_part, stats_part)) = line.split_once(':') {
-                let interface_name = interface_part.trim().to_string();
-                let stats_values: Vec<&str> = stats_part.split_whitespace().collect();
-
-                // /proc/net/dev format:
-                // bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed
-                if stats_values.len() >= 16 {
-                    let bandwidth_stats = NetworkBandwidthStats {
-                        rx_bytes: stats_values[0].parse().unwrap_or(0),
-                        rx_packets: stats_values[1].parse().unwrap_or(0),
-                        rx_errors: stats_values[2].parse().unwrap_or(0),
-                        rx_dropped: stats_values[3].parse().unwrap_or(0),
-                        tx_bytes: stats_values[8].parse().unwrap_or(0),
-                        tx_packets: stats_values[9].parse().unwrap_or(0),
-                        tx_errors: stats_values[10].parse().unwrap_or(0),
-                        tx_dropped: stats_values[11].parse().unwrap_or(0),
-                        timestamp,
-                        rx_bytes_per_sec: 0.0, // Will be calculated later
-                        tx_bytes_per_sec: 0.0, // Will be calculated later
-                    };
-
-                    stats.insert(interface_name, bandwidth_stats);
-                }
-            }
+    ) -> Result<(StatsSnapshot, HashMap<i32, NlinkLinkStats>)> {
+        // For container namespaces, we need special handling
+        if Self::is_container_namespace(namespace) {
+            return self.get_container_netlink_stats(namespace).await;
         }
 
-        Ok(stats)
+        // Get links via netlink
+        let links = if namespace == "default" {
+            // Use cached connection for default namespace
+            if !self.namespace_connections.contains_key("default") {
+                let conn = Connection::new(Protocol::Route)
+                    .map_err(|e| anyhow::anyhow!("Failed to create connection: {}", e))?;
+                self.namespace_connections
+                    .insert("default".to_string(), conn);
+            }
+            let conn = self.namespace_connections.get("default").unwrap();
+            conn.get_links()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get links: {}", e))?
+        } else {
+            // Named namespace - create connection in namespace
+            let ns_path = format!("/var/run/netns/{}", namespace);
+            let conn =
+                Connection::new_in_namespace_path(Protocol::Route, &ns_path).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to create connection for namespace {}: {}",
+                        namespace,
+                        e
+                    )
+                })?;
+            conn.get_links().await.map_err(|e| {
+                anyhow::anyhow!("Failed to get links in namespace {}: {}", namespace, e)
+            })?
+        };
+
+        // Create stats snapshot from links
+        let snapshot = StatsSnapshot::from_links(&links);
+
+        // Also build a map by interface index for easy lookup
+        let interface_stats: HashMap<i32, NlinkLinkStats> = links
+            .iter()
+            .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
+            .collect();
+
+        Ok((snapshot, interface_stats))
+    }
+
+    /// Get netlink statistics for a container namespace
+    async fn get_container_netlink_stats(
+        &mut self,
+        namespace: &str,
+    ) -> Result<(StatsSnapshot, HashMap<i32, NlinkLinkStats>)> {
+        let ns_path = self
+            .get_container_namespace_path(namespace)
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!("Container namespace {} has no path in cache", namespace)
+            })?;
+
+        let conn = Connection::new_in_namespace_path(Protocol::Route, &ns_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to create connection for container {}: {}",
+                namespace,
+                e
+            )
+        })?;
+
+        let links = conn.get_links().await.map_err(|e| {
+            anyhow::anyhow!("Failed to get links in container {}: {}", namespace, e)
+        })?;
+
+        let snapshot = StatsSnapshot::from_links(&links);
+        let interface_stats: HashMap<i32, NlinkLinkStats> = links
+            .iter()
+            .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
+            .collect();
+
+        Ok((snapshot, interface_stats))
     }
 
     /// Sends a bandwidth update message via Zenoh to the frontend.
@@ -337,7 +355,7 @@ impl BandwidthMonitor {
         if !self.bandwidth_publishers.contains_key(&publisher_key) {
             let bandwidth_topic =
                 topics::bandwidth_updates(&self.backend_name, &update.namespace, &update.interface);
-            tracing::debug!(
+            debug!(
                 "Creating bandwidth publisher for {}: {}",
                 publisher_key,
                 bandwidth_topic.as_str()
@@ -368,11 +386,9 @@ impl BandwidthMonitor {
                     message: format!("Failed to send bandwidth update: {}", e),
                 })?;
 
-            tracing::debug!(
+            debug!(
                 "Sent bandwidth update for {}: RX rate {:.2} B/s, TX rate {:.2} B/s",
-                publisher_key,
-                update.stats.rx_bytes_per_sec,
-                update.stats.tx_bytes_per_sec
+                publisher_key, update.stats.rx_bytes_per_sec, update.stats.tx_bytes_per_sec
             );
         }
 
@@ -380,6 +396,7 @@ impl BandwidthMonitor {
     }
 
     /// Parses `/proc/net/dev` file contents into bandwidth statistics (test helper).
+    /// Kept for backward compatibility with existing tests.
     #[cfg(test)]
     pub fn parse_proc_net_dev_static(
         contents: &str,

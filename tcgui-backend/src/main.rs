@@ -323,9 +323,9 @@ impl TcBackend {
             }
         }
 
-        // Start netlink event listener for real-time interface change detection
+        // Start netlink event listener for real-time interface and TC change detection
         // This replaces frequent polling for the default namespace
-        let (netlink_listener, mut netlink_events) = NetlinkEventListener::new(100);
+        let (netlink_listener, mut netlink_events) = NetlinkEventListener::new_with_tc(100);
         if let Err(e) = netlink_listener.start().await {
             warn!(
                 "Failed to start netlink event listener: {}. Falling back to polling only.",
@@ -389,36 +389,73 @@ impl TcBackend {
                 // Handle real-time netlink events (default namespace only)
                 Some(event) = netlink_events.recv() => {
                     tracing::debug!("Received netlink event: {:?}", event);
-                    // Trigger a full interface refresh on any link change
-                    // This ensures we capture all details including TC qdisc state
-                    match self.network_manager.discover_all_interfaces().await {
-                        Ok(discovered_interfaces) => {
-                            let updated_interfaces = self.filter_interfaces(discovered_interfaces);
-                            if self.interfaces != updated_interfaces {
-                                tracing::info!("Netlink event triggered interface update");
 
-                                let new_interfaces: Vec<_> = updated_interfaces.values()
-                                    .filter(|new_iface| !self.interfaces.contains_key(&new_iface.index))
-                                    .map(|i| (i.namespace.clone(), i.name.clone()))
-                                    .collect();
+                    match event {
+                        // TC qdisc events - update specific interface's TC state
+                        netlink_events::NetlinkEvent::QdiscAdded(ref tc_info) |
+                        netlink_events::NetlinkEvent::QdiscRemoved(ref tc_info) => {
+                            let is_added = matches!(event, netlink_events::NetlinkEvent::QdiscAdded(_));
+                            let is_netem = tc_info.is_netem();
+                            let ifindex = tc_info.ifindex;
+                            let kind = tc_info.kind.clone();
 
-                                self.cleanup_stale_publishers(&updated_interfaces);
-                                self.interfaces = updated_interfaces;
+                            tracing::info!(
+                                "TC qdisc {} on ifindex {}, kind: {:?}, netem: {}",
+                                if is_added { "added" } else { "removed" },
+                                ifindex,
+                                kind,
+                                is_netem
+                            );
 
-                                if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
-                                    error!("Failed to send updated interface list: {}", e);
-                                }
+                            // Extract interface info first to avoid borrow issues
+                            let iface_info = self.interfaces.get(&(ifindex as u32))
+                                .map(|iface| (iface.namespace.clone(), iface.name.clone(), iface.has_tc_qdisc));
 
-                                for (namespace, interface_name) in new_interfaces {
-                                    let current_config = self.detect_current_tc_config(&namespace, &interface_name).await;
-                                    if let Err(e) = self.publish_tc_config(&namespace, &interface_name, current_config).await {
-                                        warn!("Failed to publish TC config for new interface {}:{}: {}", namespace, interface_name, e);
+                            if let Some((namespace, name, had_qdisc)) = iface_info {
+                                // Check if there's still a netem qdisc after this event
+                                let has_netem = match self.network_manager.check_interface_has_netem(&namespace, &name).await {
+                                    Ok(has) => has,
+                                    Err(e) => {
+                                        warn!("Failed to check netem for {}: {}", name, e);
+                                        had_qdisc // Keep previous state on error
+                                    }
+                                };
+
+                                if has_netem != had_qdisc {
+                                    // Update the interface state
+                                    if let Some(iface) = self.interfaces.get_mut(&(ifindex as u32)) {
+                                        iface.has_tc_qdisc = has_netem;
+                                    }
+
+                                    tracing::info!(
+                                        "Interface {} TC state changed: has_tc_qdisc = {}",
+                                        name,
+                                        has_netem
+                                    );
+
+                                    // Send updated interface list
+                                    if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
+                                        error!("Failed to send updated interface list: {}", e);
+                                    }
+
+                                    // Publish updated TC config
+                                    let current_config = self.detect_current_tc_config(&namespace, &name).await;
+                                    if let Err(e) = self.publish_tc_config(&namespace, &name, current_config).await {
+                                        warn!("Failed to publish TC config for {}: {}", name, e);
                                     }
                                 }
                             }
-                        },
-                        Err(e) => {
-                            error!("Failed to refresh interfaces after netlink event: {}", e);
+                        }
+
+                        // Link events - refresh interface list
+                        netlink_events::NetlinkEvent::LinkAdded(ref info) => {
+                            tracing::info!("Link added: {:?} (index {})", info.name, info.index);
+                            // Trigger a full interface refresh on link changes
+                            self.handle_link_event().await;
+                        }
+                        netlink_events::NetlinkEvent::LinkRemoved(ref info) => {
+                            tracing::info!("Link removed: {:?} (index {})", info.name, info.index);
+                            self.handle_link_event().await;
                         }
                     }
                 }
@@ -517,6 +554,53 @@ impl TcBackend {
                         error!("Failed to monitor bandwidth: {}", e);
                     }
                 }
+            }
+        }
+    }
+
+    /// Handle link add/remove/state change events by refreshing the interface list
+    async fn handle_link_event(&mut self) {
+        match self.network_manager.discover_all_interfaces().await {
+            Ok(discovered_interfaces) => {
+                let updated_interfaces = self.filter_interfaces(discovered_interfaces);
+                if self.interfaces != updated_interfaces {
+                    tracing::info!("Netlink link event triggered interface update");
+
+                    let new_interfaces: Vec<_> = updated_interfaces
+                        .values()
+                        .filter(|new_iface| !self.interfaces.contains_key(&new_iface.index))
+                        .map(|i| (i.namespace.clone(), i.name.clone()))
+                        .collect();
+
+                    self.cleanup_stale_publishers(&updated_interfaces);
+                    self.interfaces = updated_interfaces;
+
+                    if let Err(e) = self
+                        .network_manager
+                        .send_interface_list(&self.interfaces)
+                        .await
+                    {
+                        error!("Failed to send updated interface list: {}", e);
+                    }
+
+                    for (namespace, interface_name) in new_interfaces {
+                        let current_config = self
+                            .detect_current_tc_config(&namespace, &interface_name)
+                            .await;
+                        if let Err(e) = self
+                            .publish_tc_config(&namespace, &interface_name, current_config)
+                            .await
+                        {
+                            warn!(
+                                "Failed to publish TC config for new interface {}:{}: {}",
+                                namespace, interface_name, e
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to refresh interfaces after netlink event: {}", e);
             }
         }
     }
