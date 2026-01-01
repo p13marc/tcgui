@@ -50,7 +50,7 @@ cargo clippy -p tcgui-shared -- -D warnings
 ```
 tcgui/
 ├── tcgui-shared/     # Common types: messages, NetworkInterface, TcConfiguration
-├── tcgui-backend/    # Privileged service (CAP_NET_ADMIN): tc commands, rtnetlink
+├── tcgui-backend/    # Privileged service (CAP_NET_ADMIN): tc commands, nlink
 └── tcgui-frontend/   # Iced GUI: displays interfaces, sends TC requests
 ```
 
@@ -77,7 +77,7 @@ tcgui/
 ### Key Backend Components
 
 - `main.rs` - Application entry, Zenoh session, query handlers
-- `network.rs` - Interface discovery via rtnetlink
+- `network.rs` - Interface discovery via nlink
 - `tc_commands.rs` - TC netem execution with intelligent parameter removal
 - `bandwidth.rs` - `/proc/net/dev` parsing per namespace
 - `preset_loader.rs` - Custom preset loading from directories
@@ -105,7 +105,7 @@ The frontend uses `TcFeatures` with individual `TcFeature<T>` for: Loss, Delay, 
 
 - **Iced 0.14**: GUI framework with tokio integration
 - **Zenoh**: Pub/sub + query/reply messaging
-- **rtnetlink**: Linux netlink for interface enumeration
+- **nlink**: Linux netlink for interface enumeration and TC operations
 - **tokio**: Async runtime
 
 ## Security Model

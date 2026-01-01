@@ -40,7 +40,7 @@ Frontend (unprivileged)          Backend (CAP_NET_ADMIN)
 | Crate | Description |
 |-------|-------------|
 | `tcgui-frontend` | Iced GUI application |
-| `tcgui-backend` | Privileged service (tc, rtnetlink) |
+| `tcgui-backend` | Privileged service (tc, nlink) |
 | `tcgui-shared` | Common types and messages |
 
 ## Development
