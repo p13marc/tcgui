@@ -1197,15 +1197,9 @@ impl ZenohConfig {
 
         match addr.parse::<std::net::SocketAddr>() {
             Ok(socket_addr) => {
-                // Validate port range (1-65535, port 0 is reserved)
+                // Port 0 is allowed - it tells the OS to assign an ephemeral port
+                // This is commonly used for listen endpoints
                 let port = socket_addr.port();
-                if port == 0 {
-                    return Err(ZenohConfigError::InvalidAddress {
-                        address: addr.to_string(),
-                        protocol: protocol.to_string(),
-                        reason: "Port 0 is reserved and not allowed".to_string(),
-                    });
-                }
 
                 // Additional protocol-specific validations
                 match protocol {
@@ -1684,13 +1678,11 @@ mod tests {
 
     #[test]
     fn test_zenoh_config_validation_port_zero() {
+        // Port 0 is valid - it tells the OS to assign an ephemeral port
         let config = ZenohConfig::new_peer().add_listen_endpoint("tcp/127.0.0.1:0");
 
         let result = config.validate();
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Port 0 is reserved"));
-        }
+        assert!(result.is_ok());
     }
 
     #[test]

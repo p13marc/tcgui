@@ -103,6 +103,16 @@ pub fn main() -> iced::Result {
             properties: std::collections::HashMap::new(),
         };
 
+        // Add default endpoints for local communication (peer mode only)
+        // Frontend connects to backend on fixed port and listens on ephemeral port
+        // This ensures communication works even without multicast
+        // Client mode cannot have listen endpoints
+        if matches!(zenoh_config.mode, ZenohMode::Peer) {
+            zenoh_config = zenoh_config
+                .add_connect_endpoint("tcp/127.0.0.1:7447")
+                .add_listen_endpoint("tcp/127.0.0.1:0");
+        }
+
         // Add connect endpoints if specified
         if let Some(connect_endpoints) = matches.get_one::<String>("zenoh-connect") {
             for endpoint in connect_endpoints.split(',') {

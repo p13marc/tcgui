@@ -32,6 +32,13 @@ impl ZenohConfigManager {
             properties: HashMap::new(),
         };
 
+        // Add default listen endpoint on localhost for local communication (peer mode only)
+        // Backend listens on a fixed port so frontend can connect to it
+        // Client mode cannot have listen endpoints
+        if matches!(zenoh_config.mode, ZenohMode::Peer) {
+            zenoh_config = zenoh_config.add_listen_endpoint("tcp/127.0.0.1:7447");
+        }
+
         // Add connect endpoints if specified
         if let Some(connect_endpoints) = &cli_config.zenoh_connect {
             for endpoint in connect_endpoints.split(',') {
@@ -185,7 +192,9 @@ mod tests {
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
         assert!(matches!(zenoh_config.mode, ZenohMode::Peer));
-        assert!(zenoh_config.endpoints.is_empty());
+        // Should have default localhost listen endpoint
+        assert_eq!(zenoh_config.endpoints.len(), 1);
+        assert!(zenoh_config.endpoints[0].contains("127.0.0.1"));
     }
 
     #[test]
@@ -225,7 +234,7 @@ mod tests {
         };
 
         let zenoh_config = ZenohConfigManager::from_cli(&cli_config).unwrap();
-        assert_eq!(zenoh_config.endpoints.len(), 3); // 2 connect + 1 listen
+        assert_eq!(zenoh_config.endpoints.len(), 4); // 1 default localhost + 2 connect + 1 listen
     }
 
     #[test]
