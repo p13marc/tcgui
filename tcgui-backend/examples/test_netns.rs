@@ -1,11 +1,8 @@
-//! Test namespace operations using rtnetlink
+//! Test namespace operations using nlink
 
-use std::fs::File;
-use std::os::fd::AsFd;
 use std::path::Path;
 
-use futures_util::TryStreamExt;
-use nix::sched::{CloneFlags, setns};
+use nlink::netlink::{Connection, Protocol, namespace};
 
 fn main() {
     println!("=== Testing namespace operations ===\n");
@@ -33,41 +30,38 @@ fn main() {
         return;
     }
 
-    // 2. For each namespace, try to enter and list interfaces using rtnetlink
+    // 2. For each namespace, try to enter and list interfaces using nlink
     for ns_name in &namespaces {
-        println!("\n2. Testing namespace '{}' with rtnetlink:", ns_name);
+        println!("\n2. Testing namespace '{}' with nlink:", ns_name);
 
-        let ns_path = format!("/var/run/netns/{}", ns_name);
-
-        // Save current namespace
-        let current_ns = match File::open("/proc/self/ns/net") {
-            Ok(f) => f,
+        // Method 1: Use namespace::enter() to temporarily enter the namespace
+        println!("   Interfaces (via namespace::enter + /proc/net/dev):");
+        match namespace::enter(ns_name) {
+            Ok(_guard) => {
+                // While guard is held, we're in the namespace
+                match std::fs::read_to_string("/proc/net/dev") {
+                    Ok(content) => {
+                        for line in content.lines().skip(2) {
+                            if let Some(name) = line.split(':').next() {
+                                println!("      - {}", name.trim());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("      ERROR reading /proc/net/dev: {}", e);
+                    }
+                }
+                // Guard drops here, restoring original namespace
+            }
             Err(e) => {
-                println!("   ERROR: Failed to open current namespace: {}", e);
+                println!("   ERROR: Failed to enter namespace: {}", e);
                 continue;
             }
-        };
-
-        // Open target namespace
-        let target_ns = match File::open(&ns_path) {
-            Ok(f) => f,
-            Err(e) => {
-                println!("   ERROR: Failed to open namespace file {}: {}", ns_path, e);
-                continue;
-            }
-        };
-
-        // Enter target namespace
-        if let Err(e) = setns(target_ns.as_fd(), CloneFlags::CLONE_NEWNET) {
-            println!("   ERROR: Failed to enter namespace: {}", e);
-            continue;
         }
 
-        println!("   Successfully entered namespace!");
-
-        // Use rtnetlink to list interfaces (namespace-aware)
-        println!("   Interfaces (via rtnetlink):");
-        match list_interfaces_rtnetlink() {
+        // Method 2: Use Connection::new_in_namespace_path for netlink queries
+        println!("   Interfaces (via nlink Connection in namespace):");
+        match list_interfaces_nlink(ns_name) {
             Ok(interfaces) => {
                 for iface in interfaces {
                     println!("      - {}", iface);
@@ -77,67 +71,31 @@ fn main() {
                 println!("      ERROR: {}", e);
             }
         }
-
-        // Also show /proc/net/dev (namespace-aware)
-        println!("   Interfaces (via /proc/net/dev):");
-        match std::fs::read_to_string("/proc/net/dev") {
-            Ok(content) => {
-                for line in content.lines().skip(2) {
-                    if let Some(name) = line.split(':').next() {
-                        println!("      - {}", name.trim());
-                    }
-                }
-            }
-            Err(e) => {
-                println!("      ERROR: {}", e);
-            }
-        }
-
-        // Restore original namespace
-        if let Err(e) = setns(current_ns.as_fd(), CloneFlags::CLONE_NEWNET) {
-            println!("   WARNING: Failed to restore namespace: {}", e);
-        } else {
-            println!("   Restored to original namespace");
-        }
     }
 
     println!("\n=== Test complete ===");
 }
 
-fn list_interfaces_rtnetlink() -> Result<Vec<String>, String> {
+fn list_interfaces_nlink(ns_name: &str) -> Result<Vec<String>, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("Failed to create runtime: {}", e))?;
 
     rt.block_on(async {
-        let (connection, handle, _) = rtnetlink::new_connection()
-            .map_err(|e| format!("Failed to create rtnetlink connection: {}", e))?;
+        let ns_path = format!("/var/run/netns/{}", ns_name);
 
-        tokio::spawn(connection);
+        // Create a connection directly in the target namespace
+        let conn = Connection::new_in_namespace_path(Protocol::Route, &ns_path)
+            .map_err(|e| format!("Failed to create nlink connection in namespace: {}", e))?;
 
-        let mut interfaces = Vec::new();
-        let mut links = handle.link().get().execute();
-
-        while let Some(msg) = links
-            .try_next()
+        // Query all links
+        let links = conn
+            .get_links()
             .await
-            .map_err(|e| format!("Failed to get link: {}", e))?
-        {
-            let name = msg
-                .attributes
-                .iter()
-                .find_map(|attr| {
-                    if let netlink_packet_route::link::LinkAttribute::IfName(name) = attr {
-                        Some(name.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| format!("unknown{}", msg.header.index));
+            .map_err(|e| format!("Failed to get links: {}", e))?;
 
-            interfaces.push(name);
-        }
+        let interfaces: Vec<String> = links.iter().filter_map(|link| link.name.clone()).collect();
 
         Ok(interfaces)
     })

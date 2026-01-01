@@ -1,8 +1,8 @@
 //! Network interface management and monitoring for multiple namespaces.
 //!
 //! This module provides comprehensive network interface discovery, monitoring,
-//! and management across multiple Linux network namespaces. It uses rtnetlink
-//! for efficient kernel communication combined with setns for namespace switching.
+//! and management across multiple Linux network namespaces. It uses nlink
+//! for efficient kernel communication with native namespace support.
 //!
 //! # Key Features
 //!
@@ -13,11 +13,8 @@
 //! * **Robust error handling**: Graceful handling of namespace access permissions
 
 use anyhow::Result;
-use futures_util::stream::TryStreamExt;
-use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
-use rtnetlink::{Handle, LinkMessageBuilder, LinkUnspec};
+use nlink::netlink::{Connection, Protocol, namespace};
 use std::collections::HashMap;
-use std::process::Command;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
@@ -31,18 +28,18 @@ use tcgui_shared::{
 };
 
 use crate::container::{Container, ContainerManager};
-use crate::netns::{self, NamespacePath};
 
 /// Network interface manager for multi-namespace operations.
 ///
 /// This struct provides comprehensive network interface management across
-/// multiple Linux network namespaces. It combines efficient rtnetlink operations
-/// for the default namespace with `ip netns exec` commands for named namespaces.
+/// multiple Linux network namespaces. It uses nlink for efficient netlink
+/// operations with native namespace support.
 ///
 /// # Architecture
 ///
-/// * **Default namespace**: Uses rtnetlink handle for direct kernel communication
-/// * **Named namespaces**: Uses `ip netns exec` for namespace-isolated operations
+/// * **Default namespace**: Uses nlink Connection for direct kernel communication
+/// * **Named namespaces**: Uses nlink namespace API for namespace-isolated operations
+/// * **Container namespaces**: Uses nlink with PID-based namespace paths
 /// * **Interface tracking**: Maintains per-namespace interface maps for change detection
 /// * **TC detection**: Checks for active traffic control configurations
 ///
@@ -51,17 +48,16 @@ use crate::netns::{self, NamespacePath};
 /// ```rust,no_run
 /// use tcgui_backend::network::NetworkManager;
 /// use zenoh::Session;
-/// use rtnetlink::Handle;
 ///
-/// async fn setup_manager(session: Session, handle: Handle) -> anyhow::Result<()> {
-///     let manager = NetworkManager::new(session, handle, "test-backend".to_string()).await?;
+/// async fn setup_manager(session: Session) -> anyhow::Result<()> {
+///     let manager = NetworkManager::new(session, "test-backend".to_string()).await?;
 ///     let interfaces = manager.discover_all_interfaces().await?;
 ///     Ok(())
 /// }
 /// ```
 pub struct NetworkManager {
-    /// rtnetlink handle for efficient default namespace operations
-    rt_handle: Handle,
+    /// nlink connection for default namespace operations
+    connection: Connection,
     /// Track interfaces per namespace for change detection (future namespace monitoring)
     /// Map: namespace_name -> (interface_index -> NetworkInterface)
     #[allow(dead_code)]
@@ -85,19 +81,21 @@ impl NetworkManager {
     /// # Arguments
     ///
     /// * `session` - Zenoh session for sending interface updates and responses
-    /// * `rt_handle` - rtnetlink handle for efficient default namespace operations
     /// * `backend_name` - Unique name for this backend instance for topic routing
     ///
     /// # Returns
     ///
     /// A new `NetworkManager` ready to discover and monitor network interfaces
     /// across multiple namespaces with backend-specific topic routing.
-    #[instrument(skip(session, rt_handle), fields(backend_name = %backend_name))]
-    pub async fn new(
-        session: Session,
-        rt_handle: Handle,
-        backend_name: String,
-    ) -> Result<Self, TcguiError> {
+    #[instrument(skip(session), fields(backend_name = %backend_name))]
+    pub async fn new(session: Session, backend_name: String) -> Result<Self, TcguiError> {
+        // Create nlink connection for default namespace
+        let connection =
+            Connection::new(Protocol::Route).map_err(|e| TcguiError::NetworkError {
+                message: format!("Failed to create nlink connection: {}", e),
+            })?;
+        info!("[BACKEND] nlink connection established for default namespace");
+
         // Declare advanced publishers for interface communications with history
         let interface_list_topic = topics::interface_list(&backend_name);
         info!(
@@ -150,7 +148,7 @@ impl NetworkManager {
         let cached_containers = std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
         Ok(Self {
-            rt_handle,
+            connection,
             namespace_interfaces: HashMap::new(),
             backend_name,
             interface_list_publisher,
@@ -172,9 +170,8 @@ impl NetworkManager {
 
     /// Discovers network interfaces within a specific namespace.
     ///
-    /// This method handles both the default namespace (using rtnetlink for efficiency)
-    /// and named namespaces (using `ip netns exec` commands). It performs comprehensive
-    /// interface discovery including type detection, state checking, and TC configuration detection.
+    /// This method handles both the default namespace and named namespaces
+    /// using nlink's native namespace support.
     ///
     /// # Arguments
     ///
@@ -184,28 +181,6 @@ impl NetworkManager {
     ///
     /// * `Ok(HashMap<u32, NetworkInterface>)` - Map of interface index to interface data
     /// * `Err(BackendError)` - On namespace access failures or system errors
-    ///
-    /// # Behavior
-    ///
-    /// * **Default namespace**: Uses rtnetlink for efficient kernel communication
-    /// * **Named namespace**: Executes `ip netns exec <ns> ip -j link show`
-    /// * **Type detection**: Classifies interfaces by type (Physical, Veth, Bridge, etc.)
-    /// * **TC detection**: Checks for active traffic control qdisc configurations
-    /// * **State monitoring**: Determines UP/DOWN status and configuration state
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tcgui_backend::network::NetworkManager;
-    /// # async fn example(manager: &NetworkManager) -> anyhow::Result<()> {
-    /// // Discover interfaces in default namespace
-    /// let default_interfaces = manager.discover_interfaces_in_namespace("default").await?;
-    ///
-    /// // Discover interfaces in named namespace
-    /// let ns_interfaces = manager.discover_interfaces_in_namespace("test-ns").await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn discover_interfaces_in_namespace(
         &self,
         namespace: &str,
@@ -214,65 +189,91 @@ impl NetworkManager {
 
         let mut discovered_interfaces = HashMap::new();
 
-        if namespace == "default" {
-            // Use rtnetlink for default namespace
-            let mut links = self.rt_handle.link().get().execute();
-
-            while let Some(msg) = links.try_next().await? {
-                let interface = self.parse_link_message(msg, namespace).await;
-                discovered_interfaces.insert(interface.index, interface);
-            }
+        // Get the appropriate connection for this namespace
+        let conn = if namespace == "default" {
+            // Use the existing connection for default namespace
+            &self.connection
         } else {
-            // Use ip command for named namespaces
-            match self.discover_interfaces_via_ip_command(namespace).await {
-                Ok(interfaces) => discovered_interfaces = interfaces,
-                Err(e) => {
-                    error!(
-                        "Failed to discover interfaces in namespace {}: {}",
-                        namespace, e
-                    );
-                    return Err(BackendError::NetworkError {
-                        message: format!(
-                            "Failed to discover interfaces in namespace {}: {}",
-                            namespace, e
-                        ),
-                    });
-                }
-            }
+            // For named namespaces, we need to create a temporary connection
+            // Since we can't store it, we'll handle this differently
+            return self.discover_interfaces_in_named_namespace(namespace).await;
+        };
+
+        // Query interfaces using nlink
+        let links = conn
+            .get_links()
+            .await
+            .map_err(|e| BackendError::NetworkError {
+                message: format!("Failed to get links: {}", e),
+            })?;
+
+        for link in links {
+            let name = link
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("unknown{}", link.ifindex()));
+            let index = link.ifindex() as u32;
+            let is_up = link.is_up();
+
+            // Determine interface type
+            let interface_type = Self::determine_interface_type(&name, &link);
+
+            // Check if interface has TC qdisc
+            let has_tc_qdisc = self
+                .check_tc_qdisc_with_connection(conn, &name)
+                .await
+                .unwrap_or(false);
+
+            discovered_interfaces.insert(
+                index,
+                NetworkInterface {
+                    name,
+                    index,
+                    namespace: namespace.to_string(),
+                    is_up,
+                    has_tc_qdisc,
+                    interface_type,
+                },
+            );
         }
 
         Ok(discovered_interfaces)
     }
 
-    /// Discover interfaces in a named namespace using rtnetlink.
-    ///
-    /// Uses setns to enter the namespace and creates a new rtnetlink connection
-    /// within that namespace. This is necessary because /sys/class/net reflects
-    /// the mount namespace, not the network namespace.
-    async fn discover_interfaces_via_ip_command(
+    /// Discover interfaces in a named namespace using nlink namespace API.
+    async fn discover_interfaces_in_named_namespace(
         &self,
         namespace: &str,
-    ) -> Result<HashMap<u32, NetworkInterface>> {
-        let ns_path = NamespacePath::Named(namespace.to_string());
-        let namespace_owned = namespace.to_string();
+    ) -> Result<HashMap<u32, NetworkInterface>, BackendError> {
+        // Create a connection in the target namespace
+        let conn =
+            namespace::connection_for(namespace).map_err(|e| BackendError::NetworkError {
+                message: format!("Failed to connect to namespace {}: {}", namespace, e),
+            })?;
 
-        // Use rtnetlink within the namespace to get accurate interface info
-        let interface_data = netns::run_in_namespace(ns_path, Self::read_interfaces_via_rtnetlink)
+        let links = conn
+            .get_links()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to read interfaces in namespace {}: {}",
-                    namespace,
-                    e
-                )
+            .map_err(|e| BackendError::NetworkError {
+                message: format!("Failed to get links in namespace {}: {}", namespace, e),
             })?;
 
         let mut interfaces = HashMap::new();
 
-        for (name, index, is_up, iface_type) in interface_data {
+        for link in links {
+            let name = link
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("unknown{}", link.ifindex()));
+            let index = link.ifindex() as u32;
+            let is_up = link.is_up();
+
+            // Determine interface type
+            let interface_type = Self::determine_interface_type(&name, &link);
+
+            // Check TC qdisc in this namespace
             let has_tc_qdisc = self
-                .check_tc_qdisc_in_namespace(&namespace_owned, &name)
+                .check_tc_qdisc_with_connection(&conn, &name)
                 .await
                 .unwrap_or(false);
 
@@ -281,10 +282,10 @@ impl NetworkManager {
                 NetworkInterface {
                     name,
                     index,
-                    namespace: namespace_owned.clone(),
+                    namespace: namespace.to_string(),
                     is_up,
                     has_tc_qdisc,
-                    interface_type: iface_type,
+                    interface_type,
                 },
             );
         }
@@ -292,87 +293,27 @@ impl NetworkManager {
         Ok(interfaces)
     }
 
-    /// Read interface information using rtnetlink (synchronous, creates its own runtime).
-    ///
-    /// This function creates a new tokio runtime and rtnetlink connection to query
-    /// interfaces. It must be called from within the target namespace (after setns).
-    fn read_interfaces_via_rtnetlink() -> Result<Vec<(String, u32, bool, InterfaceType)>, String> {
-        // Create a new runtime for this blocking operation
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-
-        rt.block_on(async {
-            // Create a new rtnetlink connection within this namespace
-            let (connection, handle, _) = rtnetlink::new_connection()
-                .map_err(|e| format!("Failed to create rtnetlink connection: {}", e))?;
-
-            // Spawn the connection handler
-            tokio::spawn(connection);
-
-            let mut interfaces = Vec::new();
-            let mut links = handle.link().get().execute();
-
-            while let Some(msg) = links
-                .try_next()
-                .await
-                .map_err(|e| format!("Failed to get link: {}", e))?
-            {
-                let header = &msg.header;
-                let index = header.index;
-                let is_up = header.flags & netlink_packet_route::link::LinkFlags::Up
-                    == netlink_packet_route::link::LinkFlags::Up;
-
-                // Extract interface name
-                let name = msg
-                    .attributes
-                    .iter()
-                    .find_map(|attr| {
-                        if let netlink_packet_route::link::LinkAttribute::IfName(name) = attr {
-                            Some(name.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(|| format!("unknown{}", index));
-
-                // Determine interface type from link info
-                let iface_type = Self::determine_interface_type_from_msg(&name, &msg);
-
-                interfaces.push((name, index, is_up, iface_type));
-            }
-
-            Ok(interfaces)
-        })
-    }
-
-    /// Determine interface type from name and rtnetlink message
-    fn determine_interface_type_from_msg(
+    /// Determine interface type from name and link message
+    fn determine_interface_type(
         name: &str,
-        msg: &netlink_packet_route::link::LinkMessage,
+        link: &nlink::netlink::messages::LinkMessage,
     ) -> InterfaceType {
-        // Check for loopback from flags
-        if msg.header.flags & netlink_packet_route::link::LinkFlags::Loopback
-            == netlink_packet_route::link::LinkFlags::Loopback
-        {
+        // Check for loopback
+        if link.is_loopback() {
             return InterfaceType::Loopback;
         }
 
-        // Check link kind from attributes
-        for attr in &msg.attributes {
-            if let netlink_packet_route::link::LinkAttribute::LinkInfo(info_attrs) = attr {
-                for info_attr in info_attrs {
-                    if let netlink_packet_route::link::LinkInfo::Kind(kind) = info_attr {
-                        return match kind {
-                            netlink_packet_route::link::InfoKind::Bridge => InterfaceType::Bridge,
-                            netlink_packet_route::link::InfoKind::Veth => InterfaceType::Veth,
-                            netlink_packet_route::link::InfoKind::Tun => InterfaceType::Tun,
-                            _ => InterfaceType::Physical,
-                        };
-                    }
-                }
-            }
+        // Check link kind from the message
+        if let Some(kind) = link.kind() {
+            return match kind {
+                "bridge" => InterfaceType::Bridge,
+                "veth" => InterfaceType::Veth,
+                "tun" | "tap" => InterfaceType::Tun,
+                "vlan" => InterfaceType::Virtual,
+                "bond" => InterfaceType::Virtual,
+                "dummy" => InterfaceType::Virtual,
+                _ => InterfaceType::Physical,
+            };
         }
 
         // Fallback to name-based detection
@@ -382,9 +323,34 @@ impl NetworkManager {
             InterfaceType::Veth
         } else if name.starts_with("tun") || name.starts_with("tap") {
             InterfaceType::Tun
+        } else if name == "lo" {
+            InterfaceType::Loopback
         } else {
             InterfaceType::Physical
         }
+    }
+
+    /// Check TC qdisc using a connection
+    async fn check_tc_qdisc_with_connection(
+        &self,
+        conn: &Connection,
+        interface: &str,
+    ) -> Result<bool> {
+        let qdiscs = conn
+            .get_qdiscs_for(interface)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get qdiscs for {}: {}", interface, e))?;
+
+        // Check if any of the qdiscs is a netem qdisc
+        for qdisc in qdiscs {
+            if let Some(kind) = qdisc.kind()
+                && kind == "netem"
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Monitor interfaces across all namespaces (future multi-namespace monitoring)
@@ -446,176 +412,55 @@ impl NetworkManager {
         }
     }
 
-    async fn parse_link_message(&self, msg: LinkMessage, namespace: &str) -> NetworkInterface {
-        let mut name = format!("unknown_{}", msg.header.index);
-
-        for attr in msg.attributes {
-            if let LinkAttribute::IfName(n) = attr {
-                name = n;
-                break;
-            }
-        }
-
-        let is_up = msg.header.flags.contains(LinkFlags::Up);
-
-        // Determine interface type based on name and properties
-        let interface_type = if name == "lo" {
-            InterfaceType::Loopback
-        } else if name.starts_with("veth") {
-            InterfaceType::Veth
-        } else if name.starts_with("br-") || name == "docker0" {
-            InterfaceType::Bridge
-        } else {
-            InterfaceType::Physical
-        };
-
-        // Check if interface has TC qdisc
-        let has_tc_qdisc = if namespace == "default" {
-            self.check_tc_qdisc(&name).unwrap_or(false)
-        } else {
-            self.check_tc_qdisc_in_namespace(namespace, &name)
-                .await
-                .unwrap_or(false)
-        };
-
-        NetworkInterface {
-            name,
-            index: msg.header.index,
-            namespace: namespace.to_string(),
-            is_up,
-            has_tc_qdisc,
-            interface_type,
-        }
-    }
-
-    fn check_tc_qdisc(&self, interface: &str) -> Result<bool> {
-        let output = Command::new("tc")
-            .args(["qdisc", "show", "dev", interface])
-            .output()
-            .map_err(|e| TcguiError::TcCommandError {
-                message: format!("Failed to check TC qdisc: {}", e),
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.contains("netem"))
-    }
-
-    /// Check TC qdisc in a specific namespace using setns
-    async fn check_tc_qdisc_in_namespace(&self, namespace: &str, interface: &str) -> Result<bool> {
-        if namespace == "default" {
-            return self.check_tc_qdisc(interface);
-        }
-
-        let ns_path = NamespacePath::Named(namespace.to_string());
-        let iface = interface.to_string();
-
-        match netns::run_in_namespace(ns_path, move || Self::check_tc_qdisc_sync(&iface)).await {
-            Ok(result) => result.map_err(|e| anyhow::anyhow!(e)),
-            Err(e) => {
-                debug!("Failed to check TC qdisc in namespace {}: {}", namespace, e);
-                Ok(false)
-            }
-        }
-    }
-
-    /// Check TC qdisc synchronously (for use within setns context)
-    fn check_tc_qdisc_sync(interface: &str) -> std::result::Result<bool, String> {
-        let output = Command::new("tc")
-            .args(["qdisc", "show", "dev", interface])
-            .output()
-            .map_err(|e| format!("Failed to run tc: {}", e))?;
-
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(stdout.contains("netem"))
-        } else {
-            Ok(false)
-        }
-    }
-
-    // Note: namespace-organized interface lists are now sent via send_interface_list method
-
-    /// Discovers accessible network namespaces on the system.
-    ///
-    /// This method scans the system for existing network namespaces using `ip netns list`
-    /// and tests accessibility to avoid permission-denied errors during interface discovery.
-    /// It always includes the "default" namespace and only includes named namespaces that
-    /// are actually accessible by the current process.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Vec<String>)` - List of accessible namespace names, always includes "default"
-    /// * `Err` - On command execution failures (gracefully continues with default only)
-    ///
-    /// # Behavior
-    ///
-    /// * **Always includes "default"**: The host namespace is always available
-    /// * **Permission testing**: Tests each namespace for accessibility before including it
-    /// * **Graceful failure**: If `ip netns list` fails, continues with default namespace only
-    /// * **Access logging**: Logs which namespaces are accessible vs. permission-denied
-    /// * **Deduplication**: Prevents duplicate namespace entries
-    /// * **Parsing**: Handles both simple names and "name (id: N)" format
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tcgui_backend::network::NetworkManager;
-    /// # async fn example(manager: &NetworkManager) -> anyhow::Result<()> {
-    /// let namespaces = manager.discover_all_namespaces().await?;
-    /// // Result might be: ["default", "user-ns1"] (excludes permission-denied namespaces)
-    /// # Ok(())
-    /// # }
-    /// ```
     /// Tests if a network namespace is accessible to the current process.
-    ///
-    /// Uses native setns to test accessibility instead of spawning processes.
     async fn is_namespace_accessible(&self, namespace: &str) -> bool {
         if namespace == "default" {
-            return true; // Default namespace is always accessible
+            return true;
         }
 
-        // Test accessibility using native setns
-        let ns_path = NamespacePath::Named(namespace.to_string());
-
-        // Try to list interfaces in the namespace
-        match netns::list_interfaces(ns_path).await {
-            Ok(_) => {
-                debug!("Namespace '{}' is accessible", namespace);
-                true
+        // Try to create a connection in the namespace
+        match namespace::connection_for(namespace) {
+            Ok(conn) => {
+                // Try to query interfaces to verify it works
+                match conn.get_links().await {
+                    Ok(_) => {
+                        debug!("Namespace '{}' is accessible", namespace);
+                        true
+                    }
+                    Err(e) => {
+                        debug!("Namespace '{}' query failed: {}", namespace, e);
+                        false
+                    }
+                }
             }
-            Err(netns::NamespaceError::TraditionalNamespaceNotFound(_)) => {
-                debug!("Namespace '{}' not found", namespace);
-                false
-            }
-            Err(netns::NamespaceError::EnterNamespace { source, .. }) => {
-                let err_str = source.to_string();
+            Err(e) => {
+                let err_str = e.to_string();
                 if err_str.contains("EPERM") || err_str.contains("Operation not permitted") {
                     debug!(
                         "Namespace '{}' is not accessible due to permissions",
                         namespace
                     );
+                } else if err_str.contains("No such file") {
+                    debug!("Namespace '{}' not found", namespace);
                 } else {
-                    warn!("Namespace '{}' test failed: {}", namespace, source);
+                    warn!(
+                        "Failed to test accessibility of namespace '{}': {}",
+                        namespace, e
+                    );
                 }
-                false
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to test accessibility of namespace '{}': {}",
-                    namespace, e
-                );
                 false
             }
         }
     }
 
+    /// Discovers accessible network namespaces on the system.
     pub async fn discover_all_namespaces(&self) -> Result<Vec<String>> {
         info!("Discovering accessible network namespaces");
 
         let mut accessible_namespaces = vec!["default".to_string()];
 
-        // Use native filesystem read instead of 'ip netns list'
-        let discovered_namespaces = netns::discover_named_namespaces();
+        // Use nlink's namespace::list() to discover named namespaces
+        let discovered_namespaces = namespace::list().unwrap_or_default();
 
         info!(
             "Found {} namespaces in /var/run/netns: {:?}",
@@ -624,17 +469,17 @@ impl NetworkManager {
         );
 
         // Test accessibility for each discovered namespace
-        for namespace in discovered_namespaces {
-            if accessible_namespaces.contains(&namespace) {
+        for ns_name in discovered_namespaces {
+            if accessible_namespaces.contains(&ns_name) {
                 continue;
             }
 
-            info!("Testing accessibility of namespace '{}'", namespace);
-            if self.is_namespace_accessible(&namespace).await {
-                info!("Namespace '{}' is accessible", namespace);
-                accessible_namespaces.push(namespace);
+            info!("Testing accessibility of namespace '{}'", ns_name);
+            if self.is_namespace_accessible(&ns_name).await {
+                info!("Namespace '{}' is accessible", ns_name);
+                accessible_namespaces.push(ns_name);
             } else {
-                warn!("Namespace '{}' is not accessible", namespace);
+                warn!("Namespace '{}' is not accessible", ns_name);
             }
         }
 
@@ -647,13 +492,6 @@ impl NetworkManager {
     }
 
     /// Discovers running containers and returns them with their network namespaces.
-    ///
-    /// This method queries Docker and Podman runtimes (if available) to find
-    /// running containers and their network namespace information.
-    ///
-    /// # Returns
-    ///
-    /// A vector of discovered containers with namespace paths
     pub async fn discover_containers(&self) -> Vec<Container> {
         if !self.container_manager.is_available() {
             return Vec::new();
@@ -671,7 +509,7 @@ impl NetworkManager {
         }
     }
 
-    /// Discovers interfaces inside a container's network namespace using nsenter.
+    /// Discovers interfaces inside a container's network namespace.
     ///
     /// # Arguments
     ///
@@ -690,128 +528,75 @@ impl NetworkManager {
             container.name, container.short_id
         );
 
-        // Use the container manager to discover interfaces
-        match self
-            .container_manager
-            .discover_container_interfaces(container)
-            .await
-        {
-            Ok(interface_names) => {
-                let mut interfaces = HashMap::new();
+        // Get the namespace path for this container
+        let ns_path =
+            container
+                .namespace_path
+                .as_ref()
+                .ok_or_else(|| BackendError::NetworkError {
+                    message: format!("Container {} has no namespace path", container.name),
+                })?;
 
-                for (idx, name) in interface_names.iter().enumerate() {
-                    // Check if interface is UP by querying via nsenter
-                    let is_up = self
-                        .check_interface_up_in_container(container, name)
-                        .await
-                        .unwrap_or(false);
-
-                    // Check TC qdisc
-                    let has_tc_qdisc = self
-                        .check_tc_qdisc_in_container(container, name)
-                        .await
-                        .unwrap_or(false);
-
-                    // Determine interface type
-                    // Container eth interfaces are typically veth pairs on the host side
-                    let interface_type = if name == "lo" {
-                        InterfaceType::Loopback
-                    } else if name.starts_with("eth") || name.starts_with("veth") {
-                        InterfaceType::Veth
-                    } else {
-                        InterfaceType::Virtual
-                    };
-
-                    let interface = NetworkInterface {
-                        name: name.clone(),
-                        index: idx as u32 + 1, // 1-based index within container
-                        namespace: namespace_name.clone(),
-                        is_up,
-                        has_tc_qdisc,
-                        interface_type,
-                    };
-
-                    interfaces.insert(interface.index, interface);
-                }
-
-                Ok(interfaces)
-            }
-            Err(e) => {
-                error!(
-                    "Failed to discover interfaces in container {}: {}",
+        // Create a connection in the container's namespace
+        let conn = Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
+            BackendError::NetworkError {
+                message: format!(
+                    "Failed to connect to container {} namespace: {}",
                     container.name, e
-                );
-                Err(BackendError::NetworkError {
-                    message: format!(
-                        "Failed to discover interfaces in container {}: {}",
-                        container.name, e
-                    ),
-                })
+                ),
             }
+        })?;
+
+        // Query interfaces
+        let links = conn
+            .get_links()
+            .await
+            .map_err(|e| BackendError::NetworkError {
+                message: format!("Failed to get links in container {}: {}", container.name, e),
+            })?;
+
+        let mut interfaces = HashMap::new();
+
+        for link in links {
+            let name = link
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("eth{}", link.ifindex()));
+            let index = link.ifindex() as u32;
+            let is_up = link.is_up();
+
+            // Determine interface type
+            let interface_type = if link.is_loopback() {
+                InterfaceType::Loopback
+            } else if name.starts_with("eth") || name.starts_with("veth") {
+                InterfaceType::Veth
+            } else {
+                InterfaceType::Virtual
+            };
+
+            // Check TC qdisc
+            let has_tc_qdisc = self
+                .check_tc_qdisc_with_connection(&conn, &name)
+                .await
+                .unwrap_or(false);
+
+            interfaces.insert(
+                index,
+                NetworkInterface {
+                    name,
+                    index,
+                    namespace: namespace_name.clone(),
+                    is_up,
+                    has_tc_qdisc,
+                    interface_type,
+                },
+            );
         }
-    }
 
-    /// Check if an interface is UP inside a container
-    async fn check_interface_up_in_container(
-        &self,
-        container: &Container,
-        interface: &str,
-    ) -> Result<bool> {
-        let output = self
-            .container_manager
-            .exec_in_netns(container, &["ip", "-o", "link", "show", interface])
-            .await?;
-
-        Ok(output.contains("state UP") || output.contains(",UP,") || output.contains("<UP,"))
-    }
-
-    /// Check TC qdisc inside a container
-    async fn check_tc_qdisc_in_container(
-        &self,
-        container: &Container,
-        interface: &str,
-    ) -> Result<bool> {
-        let output = self
-            .container_manager
-            .exec_in_netns(container, &["tc", "qdisc", "show", "dev", interface])
-            .await?;
-
-        Ok(output.contains("netem"))
+        Ok(interfaces)
     }
 
     /// Discovers network interfaces across all available namespaces.
-    ///
-    /// This is the primary interface discovery method that combines namespace discovery
-    /// with per-namespace interface enumeration. It provides a complete view of all
-    /// network interfaces available on the system across all namespaces.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(HashMap<u32, NetworkInterface>)` - Map of composite keys to interfaces
-    /// * `Err(BackendError)` - On critical system failures (individual namespace failures are logged)
-    ///
-    /// # Key Generation
-    ///
-    /// To avoid interface index conflicts between namespaces, this method uses:
-    /// * **Default namespace**: Uses original interface index
-    /// * **Named namespaces**: Uses `index + (namespace.len() * 1000000)` for uniqueness
-    ///
-    /// # Error Handling
-    ///
-    /// * **Per-namespace resilience**: Failure in one namespace doesn't stop discovery in others
-    /// * **Logging**: Failed namespace discoveries are logged as errors
-    /// * **Graceful degradation**: Returns available interfaces even if some namespaces fail
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use tcgui_backend::network::NetworkManager;
-    /// # async fn example(manager: &NetworkManager) -> anyhow::Result<()> {
-    /// let all_interfaces = manager.discover_all_interfaces().await?;
-    /// println!("Found {} interfaces across all namespaces", all_interfaces.len());
-    /// # Ok(())
-    /// # }
-    /// ```
     #[instrument(skip(self), fields(backend_name = %self.backend_name))]
     pub async fn discover_all_interfaces(
         &self,
@@ -835,7 +620,6 @@ impl NetworkManager {
                     );
                     for (index, interface) in interfaces {
                         // Use a composite key to avoid index conflicts between namespaces
-                        // Each namespace gets a unique ID multiplied by a large number
                         let composite_key = index + (namespace_id * 1000000);
                         all_interfaces.insert(composite_key, interface);
                     }
@@ -846,7 +630,6 @@ impl NetworkManager {
                         "Failed to discover interfaces in namespace {}: {}",
                         namespace, e
                     );
-                    // Continue with other namespaces
                 }
             }
         }
@@ -854,7 +637,7 @@ impl NetworkManager {
         // Also discover container interfaces
         let containers = self.discover_containers().await;
 
-        // Update the container cache for namespace type lookup
+        // Update the container cache
         {
             let mut cache = self.cached_containers.write().await;
             cache.clear();
@@ -868,8 +651,6 @@ impl NetworkManager {
             match self.discover_interfaces_in_container(container).await {
                 Ok(interfaces) => {
                     for (index, interface) in interfaces {
-                        // Use a unique composite key for container interfaces
-                        // Container namespace names start with "container:" prefix
                         let composite_key = index + (interface.namespace.len() as u32 * 1000000);
                         all_interfaces.insert(composite_key, interface);
                     }
@@ -879,7 +660,6 @@ impl NetworkManager {
                         "Failed to discover interfaces in container {}: {}",
                         container.name, e
                     );
-                    // Continue with other containers
                 }
             }
         }
@@ -892,31 +672,6 @@ impl NetworkManager {
     }
 
     /// Sends interface list to frontend organized by namespaces.
-    ///
-    /// This method takes a flat map of interfaces and reorganizes them by namespace
-    /// for structured display in the frontend. It creates `NetworkNamespace` objects
-    /// containing their respective interfaces and sends the complete list via Zenoh.
-    ///
-    /// # Arguments
-    ///
-    /// * `interfaces` - Map of interface keys to NetworkInterface objects
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - On successful message sending
-    /// * `Err` - On serialization or Zenoh communication failures
-    ///
-    /// # Behavior
-    ///
-    /// * **Namespace grouping**: Groups interfaces by their namespace field
-    /// * **Structured response**: Creates NetworkNamespace objects with interface lists
-    /// * **Zenoh messaging**: Sends via `BACKEND_TO_FRONTEND` topic
-    /// * **JSON serialization**: Converts to JSON for frontend consumption
-    ///
-    /// # Message Format
-    ///
-    /// Sends `BackendMessage::InterfaceList { namespaces: Vec<NetworkNamespace> }`
-    /// where each namespace contains its interfaces.
     #[instrument(skip(self, interfaces), fields(backend_name = %self.backend_name, interface_count = interfaces.len()))]
     pub async fn send_interface_list(
         &self,
@@ -942,7 +697,6 @@ impl NetworkManager {
                 let namespace_type = if name == "default" {
                     NamespaceType::Default
                 } else if name.starts_with("container:") {
-                    // Look up container metadata from cache
                     if let Some(container) = container_cache.get(&name) {
                         NamespaceType::Container {
                             runtime: format!("{:?}", container.runtime),
@@ -950,7 +704,6 @@ impl NetworkManager {
                             image: container.image.clone(),
                         }
                     } else {
-                        // Fallback if container not in cache
                         NamespaceType::Container {
                             runtime: "unknown".to_string(),
                             container_id: name
@@ -961,7 +714,6 @@ impl NetworkManager {
                         }
                     }
                 } else {
-                    // Traditional ip netns namespace
                     NamespaceType::Traditional
                 };
 
@@ -983,7 +735,6 @@ impl NetworkManager {
             backend_name: self.backend_name.clone(),
         };
 
-        // Send on interface list topic using declared publisher
         let payload = serde_json::to_string(&interface_list_update)
             .map_err(TcguiError::SerializationError)?;
 
@@ -1018,7 +769,6 @@ impl NetworkManager {
             backend_name: self.backend_name.clone(),
         };
 
-        // Send on interface events topic using declared publisher
         let payload =
             serde_json::to_string(&interface_event).map_err(TcguiError::SerializationError)?;
 
@@ -1039,18 +789,7 @@ impl NetworkManager {
 
     /// Enables a network interface by bringing it UP.
     ///
-    /// Uses native rtnetlink for the default namespace and setns + rtnetlink
-    /// for named namespaces, eliminating process spawning.
-    ///
-    /// # Arguments
-    ///
-    /// * `namespace` - Target namespace ("default" or named namespace)
-    /// * `interface` - Interface name to enable (e.g., "eth0", "fo")
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Interface successfully brought up
-    /// * `Err` - On netlink or namespace errors
+    /// Uses native nlink for both default and named namespaces.
     #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace, interface))]
     pub async fn enable_interface(&self, namespace: &str, interface: &str) -> Result<()> {
         info!(
@@ -1059,19 +798,38 @@ impl NetworkManager {
         );
 
         if namespace == "default" {
-            // Use rtnetlink directly for default namespace
-            self.set_interface_state_rtnetlink(interface, true).await?;
+            self.connection
+                .set_link_up(interface)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to enable interface: {}", e))?;
+        } else if namespace.starts_with("container:") {
+            // Container namespace - get the container and use its namespace path
+            let container_name = namespace.strip_prefix("container:").unwrap();
+            let cache = self.cached_containers.read().await;
+            if let Some(container) = cache.get(namespace) {
+                let ns_path = container.namespace_path.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Container {} has no namespace path", container_name)
+                })?;
+                let conn =
+                    Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
+                        anyhow::anyhow!("Failed to connect to container namespace: {}", e)
+                    })?;
+                conn.set_link_up(interface)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to enable interface: {}", e))?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Container {} not found in cache",
+                    container_name
+                ));
+            }
         } else {
-            // For named namespaces, use setns + rtnetlink in a blocking task
-            let ns_path = NamespacePath::Named(namespace.to_string());
-            let iface = interface.to_string();
-
-            netns::run_in_namespace(ns_path, move || {
-                Self::set_interface_state_sync(&iface, true)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?
-            .map_err(|e| anyhow::anyhow!("Failed to bring {} up: {}", interface, e))?;
+            // Named namespace
+            let conn = namespace::connection_for(namespace)
+                .map_err(|e| anyhow::anyhow!("Failed to connect to namespace: {}", e))?;
+            conn.set_link_up(interface)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to enable interface: {}", e))?;
         }
 
         info!(
@@ -1084,23 +842,7 @@ impl NetworkManager {
 
     /// Disables a network interface by bringing it DOWN.
     ///
-    /// Uses native rtnetlink for the default namespace and setns + rtnetlink
-    /// for named namespaces, eliminating process spawning.
-    ///
-    /// # Arguments
-    ///
-    /// * `namespace` - Target namespace ("default" or named namespace)
-    /// * `interface` - Interface name to disable (e.g., "eth0", "fo")
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Interface successfully brought down
-    /// * `Err` - On netlink or namespace errors
-    ///
-    /// # Warning
-    ///
-    /// Disabling network interfaces can interrupt network connectivity.
-    /// Use with caution, especially on remote systems.
+    /// Uses native nlink for both default and named namespaces.
     #[instrument(skip(self), fields(backend_name = %self.backend_name, namespace, interface))]
     pub async fn disable_interface(&self, namespace: &str, interface: &str) -> Result<()> {
         info!(
@@ -1109,19 +851,38 @@ impl NetworkManager {
         );
 
         if namespace == "default" {
-            // Use rtnetlink directly for default namespace
-            self.set_interface_state_rtnetlink(interface, false).await?;
+            self.connection
+                .set_link_down(interface)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to disable interface: {}", e))?;
+        } else if namespace.starts_with("container:") {
+            // Container namespace
+            let container_name = namespace.strip_prefix("container:").unwrap();
+            let cache = self.cached_containers.read().await;
+            if let Some(container) = cache.get(namespace) {
+                let ns_path = container.namespace_path.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Container {} has no namespace path", container_name)
+                })?;
+                let conn =
+                    Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
+                        anyhow::anyhow!("Failed to connect to container namespace: {}", e)
+                    })?;
+                conn.set_link_down(interface)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to disable interface: {}", e))?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Container {} not found in cache",
+                    container_name
+                ));
+            }
         } else {
-            // For named namespaces, use setns + rtnetlink in a blocking task
-            let ns_path = NamespacePath::Named(namespace.to_string());
-            let iface = interface.to_string();
-
-            netns::run_in_namespace(ns_path, move || {
-                Self::set_interface_state_sync(&iface, false)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to enter namespace {}: {}", namespace, e))?
-            .map_err(|e| anyhow::anyhow!("Failed to bring {} down: {}", interface, e))?;
+            // Named namespace
+            let conn = namespace::connection_for(namespace)
+                .map_err(|e| anyhow::anyhow!("Failed to connect to namespace: {}", e))?;
+            conn.set_link_down(interface)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to disable interface: {}", e))?;
         }
 
         info!(
@@ -1131,102 +892,4 @@ impl NetworkManager {
 
         Ok(())
     }
-
-    /// Set interface state using rtnetlink (async, for default namespace)
-    async fn set_interface_state_rtnetlink(&self, interface: &str, up: bool) -> Result<()> {
-        // Find interface index
-        let mut links = self
-            .rt_handle
-            .link()
-            .get()
-            .match_name(interface.to_string())
-            .execute();
-
-        let link = links
-            .try_next()
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Interface {} not found", interface))?;
-
-        let index = link.header.index;
-
-        // Build the set request
-        let message = if up {
-            LinkMessageBuilder::<LinkUnspec>::new()
-                .index(index)
-                .up()
-                .build()
-        } else {
-            LinkMessageBuilder::<LinkUnspec>::new()
-                .index(index)
-                .down()
-                .build()
-        };
-
-        self.rt_handle
-            .link()
-            .set(message)
-            .execute()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to set interface state: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Set interface state synchronously (for use within setns context)
-    fn set_interface_state_sync(interface: &str, up: bool) -> std::result::Result<(), String> {
-        // Create a new tokio runtime for this blocking context
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-
-        rt.block_on(async {
-            // Create a new rtnetlink connection in this namespace
-            let (connection, handle, _) = rtnetlink::new_connection()
-                .map_err(|e| format!("Failed to create rtnetlink connection: {}", e))?;
-
-            // Spawn the connection handler
-            tokio::spawn(connection);
-
-            // Find interface index
-            let mut links = handle
-                .link()
-                .get()
-                .match_name(interface.to_string())
-                .execute();
-
-            let link = links
-                .try_next()
-                .await
-                .map_err(|e| format!("Failed to get interface: {}", e))?
-                .ok_or_else(|| format!("Interface {} not found", interface))?;
-
-            let index = link.header.index;
-
-            // Build the set request
-            let message = if up {
-                LinkMessageBuilder::<LinkUnspec>::new()
-                    .index(index)
-                    .up()
-                    .build()
-            } else {
-                LinkMessageBuilder::<LinkUnspec>::new()
-                    .index(index)
-                    .down()
-                    .build()
-            };
-
-            handle
-                .link()
-                .set(message)
-                .execute()
-                .await
-                .map_err(|e| format!("Failed to set interface state: {}", e))?;
-
-            Ok(())
-        })
-    }
-
-    // Interface state results are now handled via query/reply pattern
-    // No need for separate result messages
 }

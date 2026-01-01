@@ -31,8 +31,8 @@ pub enum BackendError {
     #[error("Failed to initialize backend: {message}")]
     InitializationError { message: String },
 
-    #[error("Rtnetlink error: {0}")]
-    RtnetlinkError(#[from] rtnetlink::Error),
+    #[error("Netlink error: {0}")]
+    NlinkError(#[from] nlink::netlink::Error),
 
     #[error("Failed to read network statistics: {0}")]
     NetworkStatsError(#[from] std::io::Error),
@@ -44,7 +44,7 @@ pub enum BackendError {
     Common(#[from] TcguiError),
 }
 
-/// Frontend-specific errors  
+/// Frontend-specific errors
 #[derive(Error, Debug)]
 pub enum FrontendError {
     #[error("GUI initialization error: {message}")]

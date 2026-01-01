@@ -15,5 +15,5 @@ serde_json = { workspace = true }
 json5 = "0.4"
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-rtnetlink = { workspace = true }
+nlink = { workspace = true }
 duration-string = "0.4"

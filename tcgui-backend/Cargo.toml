@@ -23,8 +23,7 @@ tcgui-shared = { path = "../tcgui-shared" }
 
 # Network operations
 futures-util = { workspace = true }
-netlink-packet-route = { workspace = true }
-rtnetlink = { workspace = true }
+nlink = { workspace = true }
 
 # Communication
 zenoh = { workspace = true }

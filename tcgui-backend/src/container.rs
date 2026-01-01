@@ -13,9 +13,9 @@ use bollard::container::{InspectContainerOptions, ListContainersOptions};
 use bollard::models::ContainerInspectResponse;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::netns::{self, NamespacePath};
+use nlink::netlink::{Connection, Protocol};
 
 /// Container runtime type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,6 +452,7 @@ impl ContainerManager {
     }
 
     /// Executes a command in a container's network namespace using nsenter.
+    #[allow(dead_code)] // Reserved for future container TC operations
     pub async fn exec_in_netns(&self, container: &Container, cmd: &[&str]) -> Result<String> {
         if let Some(ns_path) = &container.namespace_path {
             // Use nsenter to execute in the network namespace
@@ -477,6 +478,7 @@ impl ContainerManager {
     }
 
     /// Executes a command inside a container using docker/podman exec.
+    #[allow(dead_code)] // Reserved for future container TC operations
     async fn exec_in_container(&self, container: &Container, cmd: &[&str]) -> Result<String> {
         let runtime_cmd = match container.runtime {
             ContainerRuntime::Docker => "docker",
@@ -501,31 +503,31 @@ impl ContainerManager {
 
     /// Discovers network interfaces inside a container's namespace.
     ///
-    /// Uses native setns + filesystem reads instead of spawning processes.
+    /// Uses nlink to query interfaces via netlink in the container's namespace.
+    #[allow(dead_code)] // Reserved for future container interface discovery
     pub async fn discover_container_interfaces(
         &self,
         container: &Container,
     ) -> Result<Vec<String>> {
         if let Some(ns_path) = &container.namespace_path {
-            // Use native setns to list interfaces via /sys/class/net
-            let ns = NamespacePath::Path(ns_path.clone());
-            match netns::list_interfaces(ns).await {
-                Ok(interfaces) => {
-                    // Filter out loopback
-                    Ok(interfaces.into_iter().filter(|name| name != "lo").collect())
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to list interfaces in container {} via setns: {}",
-                        container.name, e
-                    );
-                    Err(anyhow::anyhow!(
-                        "Failed to list interfaces in container {}: {}",
-                        container.name,
-                        e
-                    ))
-                }
-            }
+            // Create a connection in the container's namespace
+            let conn = Connection::new_in_namespace_path(Protocol::Route, ns_path)
+                .map_err(|e| anyhow::anyhow!("Failed to connect to container namespace: {}", e))?;
+
+            // Query interfaces
+            let links = conn
+                .get_links()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get links: {}", e))?;
+
+            // Extract interface names, filter out loopback
+            let interfaces: Vec<String> = links
+                .into_iter()
+                .filter_map(|link| link.name)
+                .filter(|name| name != "lo")
+                .collect();
+
+            Ok(interfaces)
         } else {
             Err(anyhow::anyhow!(
                 "Container {} has no namespace path",

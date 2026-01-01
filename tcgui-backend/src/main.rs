@@ -4,7 +4,6 @@ mod container;
 mod interfaces;
 mod namespace_watcher;
 mod netlink_events;
-mod netns;
 mod network;
 pub mod preset_loader;
 pub mod scenario;
@@ -17,7 +16,6 @@ mod utils;
 mod tc_commands_test;
 
 use anyhow::Result;
-use rtnetlink::new_connection;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, interval};
@@ -28,9 +26,7 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 use tcgui_shared::{
     BackendHealthStatus, BackendMetadata, InterfaceControlOperation, InterfaceControlRequest,
     InterfaceControlResponse, NetworkInterface, TcConfigUpdate, TcConfiguration, TcNetemConfig,
-    TcOperation, TcRequest, TcResponse, ZenohConfig,
-    errors::{BackendError, TcguiError},
-    presets::PresetList,
+    TcOperation, TcRequest, TcResponse, ZenohConfig, errors::TcguiError, presets::PresetList,
     topics,
 };
 
@@ -103,17 +99,10 @@ impl TcBackend {
             backend_health_topic.as_str()
         );
 
-        // Initialize rtnetlink connection
-        let (connection, handle, _messages) =
-            new_connection().map_err(|e| BackendError::InitializationError {
-                message: format!("Failed to create rtnetlink connection: {}", e),
-            })?;
-        tokio::spawn(connection);
-        info!("[BACKEND] Rtnetlink connection established");
-
         // Initialize managers with backend name for topic routing
-        let network_manager =
-            NetworkManager::new(session.clone(), handle, backend_name.clone()).await?;
+        // NetworkManager now creates its own nlink connection internally
+        let network_manager = NetworkManager::new(session.clone(), backend_name.clone()).await?;
+        info!("[BACKEND] Network manager initialized with nlink");
 
         // Create bandwidth monitor and share container cache for container namespace support
         let mut bandwidth_monitor = BandwidthMonitor::new(session.clone(), backend_name.clone());
