@@ -208,11 +208,8 @@ impl NetworkManager {
             })?;
 
         for link in links {
-            let name = link
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("unknown{}", link.ifindex()));
-            let index = link.ifindex() as u32;
+            let index = link.ifindex();
+            let name = link.name_or(&format!("unknown{}", index)).to_string();
             let is_up = link.is_up();
 
             // Determine interface type
@@ -261,11 +258,8 @@ impl NetworkManager {
         let mut interfaces = HashMap::new();
 
         for link in links {
-            let name = link
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("unknown{}", link.ifindex()));
-            let index = link.ifindex() as u32;
+            let index = link.ifindex();
+            let name = link.name_or(&format!("unknown{}", index)).to_string();
             let is_up = link.is_up();
 
             // Determine interface type
@@ -603,11 +597,8 @@ impl NetworkManager {
         let mut interfaces = HashMap::new();
 
         for link in links {
-            let name = link
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("eth{}", link.ifindex()));
-            let index = link.ifindex() as u32;
+            let index = link.ifindex();
+            let name = link.name_or(&format!("eth{}", index)).to_string();
             let is_up = link.is_up();
 
             // Determine interface type

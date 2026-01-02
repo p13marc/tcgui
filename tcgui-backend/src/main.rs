@@ -426,7 +426,7 @@ impl TcBackend {
                             );
 
                             // Extract interface info first to avoid borrow issues
-                            let iface_info = self.interfaces.get(&(ifindex as u32))
+                            let iface_info = self.interfaces.get(&ifindex)
                                 .map(|iface| (iface.namespace.clone(), iface.name.clone(), iface.has_tc_qdisc));
 
                             if let Some((namespace, name, had_qdisc)) = iface_info {
@@ -441,7 +441,7 @@ impl TcBackend {
 
                                 if has_netem != had_qdisc {
                                     // Update the interface state
-                                    if let Some(iface) = self.interfaces.get_mut(&(ifindex as u32)) {
+                                    if let Some(iface) = self.interfaces.get_mut(&ifindex) {
                                         iface.has_tc_qdisc = has_netem;
                                     }
 
@@ -812,9 +812,7 @@ impl TcBackend {
                 let iface_info = self
                     .interfaces
                     .values()
-                    .find(|iface| {
-                        iface.namespace == *namespace && iface.index == tc_info.ifindex as u32
-                    })
+                    .find(|iface| iface.namespace == *namespace && iface.index == tc_info.ifindex)
                     .map(|iface| (iface.name.clone(), iface.has_tc_qdisc));
 
                 if let Some((name, had_qdisc)) = iface_info {

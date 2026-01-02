@@ -47,7 +47,7 @@ pub struct LinkInfo {
 impl LinkInfo {
     fn from_link_message(msg: &LinkMessage) -> Self {
         Self {
-            index: msg.ifindex() as u32,
+            index: msg.ifindex(),
             name: msg.name.clone(),
             is_up: Some(msg.is_up()),
         }
@@ -58,7 +58,7 @@ impl LinkInfo {
 #[derive(Debug, Clone)]
 pub struct TcInfo {
     /// Interface index
-    pub ifindex: i32,
+    pub ifindex: u32,
     /// Qdisc handle
     pub handle: u32,
     /// Qdisc parent handle (useful for identifying qdisc hierarchy)
@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn test_tc_info_creation() {
         let info = TcInfo {
-            ifindex: 2,
+            ifindex: 2u32,
             handle: 0x10000,
             parent: 0xFFFFFFFF,
             kind: Some("netem".to_string()),
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn test_tc_info_not_netem() {
         let info = TcInfo {
-            ifindex: 2,
+            ifindex: 2u32,
             handle: 0x10000,
             parent: 0xFFFFFFFF,
             kind: Some("fq_codel".to_string()),

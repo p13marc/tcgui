@@ -35,7 +35,7 @@ struct NamespaceStatsTracker {
     /// nlink StatsTracker for automatic rate calculation
     tracker: StatsTracker,
     /// Last known rates by interface index
-    last_rates: HashMap<i32, (f64, f64)>, // (rx_bps, tx_bps)
+    last_rates: HashMap<u32, (f64, f64)>, // (rx_bps, tx_bps)
 }
 
 impl NamespaceStatsTracker {
@@ -194,7 +194,7 @@ impl BandwidthMonitor {
             interfaces
                 .iter()
                 .filter_map(|tracked_interface| {
-                    let ifindex = tracked_interface.index as i32;
+                    let ifindex = tracked_interface.index;
 
                     // Find the stats for this interface
                     interface_stats.get(&ifindex).map(|nlink_stats| {
@@ -263,7 +263,7 @@ impl BandwidthMonitor {
     async fn get_netlink_stats(
         &mut self,
         namespace: &str,
-    ) -> Result<(StatsSnapshot, HashMap<i32, NlinkLinkStats>)> {
+    ) -> Result<(StatsSnapshot, HashMap<u32, NlinkLinkStats>)> {
         // For container namespaces, we need special handling
         if Self::is_container_namespace(namespace) {
             return self.get_container_netlink_stats(namespace).await;
@@ -302,7 +302,7 @@ impl BandwidthMonitor {
         let snapshot = StatsSnapshot::from_links(&links);
 
         // Also build a map by interface index for easy lookup
-        let interface_stats: HashMap<i32, NlinkLinkStats> = links
+        let interface_stats: HashMap<u32, NlinkLinkStats> = links
             .iter()
             .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
             .collect();
@@ -314,7 +314,7 @@ impl BandwidthMonitor {
     async fn get_container_netlink_stats(
         &mut self,
         namespace: &str,
-    ) -> Result<(StatsSnapshot, HashMap<i32, NlinkLinkStats>)> {
+    ) -> Result<(StatsSnapshot, HashMap<u32, NlinkLinkStats>)> {
         let ns_path = self
             .get_container_namespace_path(namespace)
             .await
@@ -335,7 +335,7 @@ impl BandwidthMonitor {
         })?;
 
         let snapshot = StatsSnapshot::from_links(&links);
-        let interface_stats: HashMap<i32, NlinkLinkStats> = links
+        let interface_stats: HashMap<u32, NlinkLinkStats> = links
             .iter()
             .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
             .collect();
