@@ -13,6 +13,7 @@
 //!
 //! Use `NamespaceEventManager` to manage event streams for multiple namespaces.
 
+use futures_util::StreamExt;
 use nlink::netlink::events::{EventStream, NetworkEvent};
 use nlink::netlink::messages::{LinkMessage, TcMessage};
 use std::collections::HashMap;
@@ -162,9 +163,9 @@ impl NetlinkEventListener {
         // Spawn the message processing task
         let event_tx = self.event_tx;
         tokio::spawn(async move {
-            loop {
-                match stream.next().await {
-                    Ok(Some(event)) => {
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(event) => {
                         let netlink_events = parse_network_event(event);
 
                         for evt in netlink_events {
@@ -173,11 +174,6 @@ impl NetlinkEventListener {
                                 return;
                             }
                         }
-                    }
-                    Ok(None) => {
-                        // Stream ended
-                        warn!("Netlink event stream ended");
-                        break;
                     }
                     Err(e) => {
                         error!("Error receiving netlink event: {}", e);
@@ -380,9 +376,9 @@ impl NamespaceEventManager {
         namespace: String,
         event_tx: mpsc::Sender<NamespacedEvent>,
     ) {
-        loop {
-            match stream.next().await {
-                Ok(Some(event)) => {
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(event) => {
                     let netlink_events = parse_network_event(event);
 
                     for evt in netlink_events {
@@ -399,10 +395,6 @@ impl NamespaceEventManager {
                             return;
                         }
                     }
-                }
-                Ok(None) => {
-                    warn!("Event stream ended for namespace: {}", namespace);
-                    break;
                 }
                 Err(e) => {
                     error!("Error receiving event from namespace {}: {}", namespace, e);

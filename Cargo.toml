@@ -22,7 +22,7 @@ regex = "1.10"
 
 # Backend-specific dependencies
 futures-util = "0.3"
-nlink = { version = "0.2.0", features = ["full"] }
+nlink = { version = "0.3.0", features = ["full"] }
 
 # Frontend-specific dependencies
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }

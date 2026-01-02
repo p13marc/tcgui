@@ -14,9 +14,11 @@
 //! * **Robust error handling**: Graceful handling of common TC command failures
 
 use anyhow::Result;
+use nlink::netlink::Connection;
+use nlink::netlink::namespace::NamespaceSpec;
 use nlink::netlink::tc::NetemConfig;
 use nlink::netlink::tc_options::NetemOptions;
-use nlink::netlink::{Connection, Protocol, namespace};
+use nlink::util::rate;
 use std::path::Path;
 use std::time::Duration;
 use tracing::{info, instrument, warn};
@@ -60,36 +62,37 @@ impl TcCommandManager {
         namespace.starts_with("container:")
     }
 
-    /// Create a connection for the appropriate namespace.
-    fn create_connection(
-        namespace: &str,
-        namespace_path: Option<&Path>,
-    ) -> Result<Connection, TcguiError> {
+    /// Create a NamespaceSpec for the given namespace configuration.
+    fn namespace_spec<'a>(
+        namespace: &'a str,
+        namespace_path: Option<&'a Path>,
+    ) -> Result<NamespaceSpec<'a>, TcguiError> {
         if namespace == "default" {
-            Connection::new(Protocol::Route).map_err(|e| TcguiError::NetworkError {
-                message: format!("Failed to create nlink connection: {}", e),
-            })
+            Ok(NamespaceSpec::Default)
         } else if Self::is_container_namespace(namespace) {
-            if let Some(ns_path) = namespace_path {
-                Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
-                    TcguiError::NetworkError {
-                        message: format!("Failed to connect to container namespace: {}", e),
-                    }
-                })
-            } else {
-                Err(TcguiError::NetworkError {
+            namespace_path
+                .map(NamespaceSpec::Path)
+                .ok_or_else(|| TcguiError::NetworkError {
                     message: format!(
                         "Container namespace {} requires a namespace path",
                         namespace
                     ),
                 })
-            }
         } else {
             // Traditional named namespace
-            namespace::connection_for(namespace).map_err(|e| TcguiError::NetworkError {
-                message: format!("Failed to connect to namespace {}: {}", namespace, e),
-            })
+            Ok(NamespaceSpec::Named(namespace))
         }
+    }
+
+    /// Create a connection for the appropriate namespace.
+    fn create_connection(
+        namespace: &str,
+        namespace_path: Option<&Path>,
+    ) -> Result<Connection, TcguiError> {
+        let spec = Self::namespace_spec(namespace, namespace_path)?;
+        spec.connection().map_err(|e| TcguiError::NetworkError {
+            message: format!("Failed to connect to namespace '{}': {}", namespace, e),
+        })
     }
 
     /// Check if there's an existing qdisc on the interface and return its details.
@@ -295,99 +298,65 @@ impl TcCommandManager {
         // Build nlink NetemConfig from TcNetemConfig
         let netem_config = self.build_netem_config(config);
 
-        // Check if there's an existing qdisc
-        let existing_qdisc = self
-            .check_existing_qdisc_with_path(namespace, namespace_path, interface)
+        // Check for existing netem options using nlink's typed API
+        let existing_netem = self
+            .get_netem_options_with_path(namespace, namespace_path, interface)
             .await
-            .unwrap_or_default();
+            .ok()
+            .flatten();
 
-        if existing_qdisc.is_empty() {
-            // No existing qdisc, add new one
-            info!("Adding new netem qdisc to {}/{}", namespace, interface);
-            conn.add_qdisc_by_index(ifindex, netem_config)
-                .await
-                .map_err(|e| TcguiError::TcCommandError {
-                    message: format!("Failed to add netem qdisc: {}", e),
-                })?;
-        } else if existing_qdisc.contains("netem") {
-            // Check if we need to recreate (to remove parameters)
-            let (
-                loss,
-                correlation,
-                delay_ms,
-                delay_jitter_ms,
-                delay_correlation,
-                duplicate_percent,
-                duplicate_correlation,
-                reorder_percent,
-                reorder_correlation,
-                reorder_gap,
-                corrupt_percent,
-                corrupt_correlation,
-                rate_limit_kbps,
-            ) = config.to_legacy_params();
-
-            let current_config = self.parse_current_tc_config(&existing_qdisc);
-            let needs_recreation = self.needs_qdisc_recreation(
-                &current_config,
-                loss,
-                correlation,
-                delay_ms,
-                delay_jitter_ms,
-                delay_correlation,
-                duplicate_percent,
-                duplicate_correlation,
-                reorder_percent,
-                reorder_correlation,
-                reorder_gap,
-                corrupt_percent,
-                corrupt_correlation,
-                rate_limit_kbps,
-            );
-
-            if needs_recreation {
-                info!(
-                    "Recreating netem qdisc on {}/{} (removing parameters)",
-                    namespace, interface
-                );
-                // Delete first, then add
-                let _ = conn.del_qdisc_by_index(ifindex, "root").await;
-                conn.add_qdisc_by_index(ifindex, netem_config)
-                    .await
-                    .map_err(|e| TcguiError::TcCommandError {
-                        message: format!("Failed to add netem qdisc after delete: {}", e),
-                    })?;
-            } else {
-                info!("Replacing netem qdisc on {}/{}", namespace, interface);
-                conn.replace_qdisc_by_index(ifindex, netem_config)
-                    .await
-                    .map_err(|e| TcguiError::TcCommandError {
-                        message: format!("Failed to replace netem qdisc: {}", e),
-                    })?;
+        match existing_netem {
+            Some(current_opts) => {
+                // Use nlink's requires_recreation_for() to determine if we need delete+add
+                if current_opts.requires_recreation_for(&netem_config) {
+                    info!(
+                        "Recreating netem qdisc on {}/{} (removing parameters)",
+                        namespace, interface
+                    );
+                    let _ = conn.del_qdisc_by_index(ifindex, "root").await;
+                    conn.add_qdisc_by_index(ifindex, netem_config)
+                        .await
+                        .map_err(|e| TcguiError::TcCommandError {
+                            message: format!("Failed to add netem qdisc after delete: {}", e),
+                        })?;
+                } else {
+                    info!("Replacing netem qdisc on {}/{}", namespace, interface);
+                    conn.replace_qdisc_by_index(ifindex, netem_config)
+                        .await
+                        .map_err(|e| TcguiError::TcCommandError {
+                            message: format!("Failed to replace netem qdisc: {}", e),
+                        })?;
+                }
             }
-        } else if existing_qdisc.contains("noqueue") {
-            // noqueue can be replaced with add
-            info!(
-                "Adding netem qdisc to replace noqueue on {}/{}",
-                namespace, interface
-            );
-            conn.add_qdisc_by_index(ifindex, netem_config)
-                .await
-                .map_err(|e| TcguiError::TcCommandError {
-                    message: format!("Failed to add netem qdisc: {}", e),
-                })?;
-        } else {
-            // Other qdisc type - try delete and add
-            info!(
-                "Removing existing qdisc and adding netem on {}/{}",
-                namespace, interface
-            );
-            let _ = conn.del_qdisc_by_index(ifindex, "root").await;
-            conn.add_qdisc_by_index(ifindex, netem_config)
-                .await
-                .map_err(|e| TcguiError::TcCommandError {
-                    message: format!("Failed to add netem qdisc after delete: {}", e),
-                })?;
+            None => {
+                // No existing netem qdisc - check if there's any other qdisc
+                let existing_qdisc = self
+                    .check_existing_qdisc_with_path(namespace, namespace_path, interface)
+                    .await
+                    .unwrap_or_default();
+
+                if existing_qdisc.is_empty() || existing_qdisc.contains("noqueue") {
+                    // No qdisc or noqueue - just add
+                    info!("Adding new netem qdisc to {}/{}", namespace, interface);
+                    conn.add_qdisc_by_index(ifindex, netem_config)
+                        .await
+                        .map_err(|e| TcguiError::TcCommandError {
+                            message: format!("Failed to add netem qdisc: {}", e),
+                        })?;
+                } else {
+                    // Other qdisc type - delete and add
+                    info!(
+                        "Removing existing qdisc and adding netem on {}/{}",
+                        namespace, interface
+                    );
+                    let _ = conn.del_qdisc_by_index(ifindex, "root").await;
+                    conn.add_qdisc_by_index(ifindex, netem_config)
+                        .await
+                        .map_err(|e| TcguiError::TcCommandError {
+                            message: format!("Failed to add netem qdisc after delete: {}", e),
+                        })?;
+                }
+            }
         }
 
         Ok(format!(
@@ -448,9 +417,7 @@ impl TcCommandManager {
 
         // Add rate limit if enabled
         if config.rate_limit.enabled && config.rate_limit.rate_kbps > 0 {
-            // Convert kbps to bytes per second
-            let bytes_per_sec = (config.rate_limit.rate_kbps as u64) * 1000 / 8;
-            netem = netem.rate(bytes_per_sec);
+            netem = netem.rate(rate::kbps_to_bytes(config.rate_limit.rate_kbps.into()));
         }
 
         netem.build()
@@ -647,11 +614,10 @@ impl TcCommandManager {
             }
         }
 
-        if let Some(rate) = rate_limit_kbps
-            && rate > 0
+        if let Some(rate_kbps) = rate_limit_kbps
+            && rate_kbps > 0
         {
-            let bytes_per_sec = (rate as u64) * 1000 / 8;
-            netem = netem.rate(bytes_per_sec);
+            netem = netem.rate(rate::kbps_to_bytes(rate_kbps.into()));
         }
 
         let netem_config = netem.build();
