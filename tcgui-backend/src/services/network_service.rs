@@ -326,7 +326,8 @@ impl NetworkService {
                 index: iface.index,
                 namespace: namespace.to_string(),
                 is_up: iface.is_up,
-                has_tc_qdisc: false, // Will be updated by TC detection
+                is_oper_up: iface.is_up, // Assume oper_up matches is_up for this path
+                has_tc_qdisc: false,     // Will be updated by TC detection
                 interface_type: tcgui_shared::InterfaceType::Virtual, // Default type
             })
             .collect();

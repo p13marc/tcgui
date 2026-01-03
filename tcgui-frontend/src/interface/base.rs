@@ -371,14 +371,24 @@ impl TcInterface {
             Icon::Circle
         };
 
+        // Carrier/link status indicator
+        let carrier_color = if self.state.has_carrier() {
+            theme.colors.success // Green when carrier present
+        } else {
+            theme.colors.text_muted // Dimmed when no carrier
+        };
+        let carrier_icon = Icon::Link.svg_sized_colored(scaled(10, zoom), carrier_color);
+
         let interface_name = row![
             interface_icon.svg_sized_colored(scaled(14, zoom), text_primary),
             text(format!(" {}", self.state.name))
                 .size(scaled(14, zoom))
                 .style(move |_| text::Style {
                     color: Some(text_primary),
-                })
+                }),
+            carrier_icon,
         ]
+        .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center);
 
         // Core checkboxes - use row with styled text for theme support
@@ -1241,8 +1251,11 @@ impl TcInterface {
 
     /// Update from backend interface information (compatibility method)
     pub fn update_from_backend(&mut self, interface: &tcgui_shared::NetworkInterface) {
-        self.state
-            .set_interface_state(interface.is_up, interface.has_tc_qdisc);
+        self.state.set_interface_state(
+            interface.is_up,
+            interface.is_oper_up,
+            interface.has_tc_qdisc,
+        );
     }
 
     /// Get bandwidth stats (compatibility method)

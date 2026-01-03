@@ -210,6 +210,7 @@ impl NetworkManager {
             let index = link.ifindex();
             let name = link.name_or(&format!("unknown{}", index)).to_string();
             let is_up = link.is_up();
+            let is_oper_up = link.has_carrier();
 
             // Determine interface type
             let interface_type = Self::determine_interface_type(&name, &link);
@@ -227,6 +228,7 @@ impl NetworkManager {
                     index,
                     namespace: namespace.to_string(),
                     is_up,
+                    is_oper_up,
                     has_tc_qdisc,
                     interface_type,
                 },
@@ -260,6 +262,7 @@ impl NetworkManager {
             let index = link.ifindex();
             let name = link.name_or(&format!("unknown{}", index)).to_string();
             let is_up = link.is_up();
+            let is_oper_up = link.has_carrier();
 
             // Determine interface type
             let interface_type = Self::determine_interface_type(&name, &link);
@@ -277,6 +280,7 @@ impl NetworkManager {
                     index,
                     namespace: namespace.to_string(),
                     is_up,
+                    is_oper_up,
                     has_tc_qdisc,
                     interface_type,
                 },
@@ -598,6 +602,7 @@ impl NetworkManager {
             let index = link.ifindex();
             let name = link.name_or(&format!("eth{}", index)).to_string();
             let is_up = link.is_up();
+            let is_oper_up = link.has_carrier();
 
             // Determine interface type
             let interface_type = if link.is_loopback() {
@@ -621,6 +626,7 @@ impl NetworkManager {
                     index,
                     namespace: namespace_name.clone(),
                     is_up,
+                    is_oper_up,
                     has_tc_qdisc,
                     interface_type,
                 },

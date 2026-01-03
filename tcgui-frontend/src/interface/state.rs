@@ -13,8 +13,11 @@ pub struct InterfaceState {
     /// Interface name (e.g., "eth0", "fo")
     pub name: String,
 
-    /// Current interface state (from backend)
+    /// Whether the interface is administratively UP (from backend)
     pub is_up: bool,
+
+    /// Whether the interface is operationally up - has carrier/link (from backend)
+    pub is_oper_up: bool,
 
     /// Whether TC qdisc is currently configured (from backend)
     pub has_tc_qdisc: bool,
@@ -60,6 +63,7 @@ impl InterfaceState {
         Self {
             name: name.into(),
             is_up: false,
+            is_oper_up: false,
             has_tc_qdisc: false,
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
@@ -135,11 +139,17 @@ impl InterfaceState {
 
     /// Set interface up/down state from backend update.
     /// The interface_enabled checkbox is synchronized with the actual is_up state.
-    pub fn set_interface_state(&mut self, is_up: bool, has_tc_qdisc: bool) {
+    pub fn set_interface_state(&mut self, is_up: bool, is_oper_up: bool, has_tc_qdisc: bool) {
         self.is_up = is_up;
+        self.is_oper_up = is_oper_up;
         self.has_tc_qdisc = has_tc_qdisc;
         // Keep checkbox in sync with actual interface state
         self.interface_enabled = is_up;
+    }
+
+    /// Check if the interface has carrier/link
+    pub fn has_carrier(&self) -> bool {
+        self.is_oper_up
     }
 
     // Methods removed as they were unused in current implementation:

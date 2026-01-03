@@ -408,6 +408,7 @@ mod tests {
             index: 1,
             namespace: namespace.to_string(),
             is_up: true,
+            is_oper_up: true,
             has_tc_qdisc: false,
             interface_type: InterfaceType::Virtual,
         }

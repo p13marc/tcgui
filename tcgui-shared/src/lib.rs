@@ -1567,8 +1567,16 @@ pub struct NetworkInterface {
     pub index: u32,
     /// Parent network namespace name
     pub namespace: String,
-    /// Whether the interface is currently UP (enabled)
+    /// Whether the interface is administratively UP (IFF_UP flag set via `ip link set up`)
     pub is_up: bool,
+    /// Whether the interface is operationally up (has carrier/link)
+    ///
+    /// This reflects the actual link state - whether there's a physical connection
+    /// or, for virtual interfaces like bridges, whether there are active members.
+    /// An interface can be administratively up (`is_up=true`) but operationally
+    /// down (`is_oper_up=false`) if there's no carrier.
+    #[serde(default)]
+    pub is_oper_up: bool,
     /// Whether traffic control qdisc is configured on this interface
     pub has_tc_qdisc: bool,
     /// Type classification of the network interface
