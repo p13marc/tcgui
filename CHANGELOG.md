@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-01-04
+
+### Added
+- Carrier/link status indicator next to interface name (green when connected, dimmed when no carrier)
+- Separate tracking of administrative state (is_up) vs operational state (is_oper_up)
+
+### Changed
+- Interface checkbox now clearly represents administrative state only
+- NetworkInterface struct includes is_oper_up field for carrier detection
+
+### Removed
+- iced_anim dependency (was causing layout invalidation warnings on checkbox clicks)
+
+### Fixed
+- "More than 3 consecutive RedrawRequested events produced layout invalidation" warnings
+
 ## [0.4.0] - 2026-01-01
 
 ### Changed
