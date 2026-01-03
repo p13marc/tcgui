@@ -14,7 +14,7 @@
 
 use anyhow::Result;
 use nlink::netlink::stats::{LinkStats as NlinkLinkStats, StatsSnapshot, StatsTracker};
-use nlink::netlink::{Connection, Protocol};
+use nlink::netlink::{Connection, Route};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ pub struct BandwidthMonitor {
     /// Per-namespace stats trackers using nlink's StatsTracker
     namespace_trackers: HashMap<String, NamespaceStatsTracker>,
     /// Cached connections per namespace to avoid recreation
-    namespace_connections: HashMap<String, Connection>,
+    namespace_connections: HashMap<String, Connection<Route>>,
 }
 
 impl BandwidthMonitor {
@@ -273,7 +273,7 @@ impl BandwidthMonitor {
         let links = if namespace == "default" {
             // Use cached connection for default namespace
             if !self.namespace_connections.contains_key("default") {
-                let conn = Connection::new(Protocol::Route)
+                let conn = Connection::<Route>::new()
                     .map_err(|e| anyhow::anyhow!("Failed to create connection: {}", e))?;
                 self.namespace_connections
                     .insert("default".to_string(), conn);
@@ -285,14 +285,13 @@ impl BandwidthMonitor {
         } else {
             // Named namespace - create connection in namespace
             let ns_path = format!("/var/run/netns/{}", namespace);
-            let conn =
-                Connection::new_in_namespace_path(Protocol::Route, &ns_path).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to create connection for namespace {}: {}",
-                        namespace,
-                        e
-                    )
-                })?;
+            let conn = Connection::<Route>::new_in_namespace_path(&ns_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to create connection for namespace {}: {}",
+                    namespace,
+                    e
+                )
+            })?;
             conn.get_links().await.map_err(|e| {
                 anyhow::anyhow!("Failed to get links in namespace {}: {}", namespace, e)
             })?
@@ -301,7 +300,8 @@ impl BandwidthMonitor {
         // Create stats snapshot from links
         let snapshot = StatsSnapshot::from_links(&links);
 
-        // Also build a map by interface index for easy lookup
+        // Build a map by interface index using LinkMessage convenience methods (nlink 0.5.0)
+        // These delegate to stats() internally for cleaner access
         let interface_stats: HashMap<u32, NlinkLinkStats> = links
             .iter()
             .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
@@ -322,7 +322,7 @@ impl BandwidthMonitor {
                 anyhow::anyhow!("Container namespace {} has no path in cache", namespace)
             })?;
 
-        let conn = Connection::new_in_namespace_path(Protocol::Route, &ns_path).map_err(|e| {
+        let conn = Connection::<Route>::new_in_namespace_path(&ns_path).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to create connection for container {}: {}",
                 namespace,

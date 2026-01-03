@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use nlink::netlink::{Connection, Protocol};
+use nlink::netlink::{Connection, Route};
 
 /// Container runtime type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -511,7 +511,7 @@ impl ContainerManager {
     ) -> Result<Vec<String>> {
         if let Some(ns_path) = &container.namespace_path {
             // Create a connection in the container's namespace
-            let conn = Connection::new_in_namespace_path(Protocol::Route, ns_path)
+            let conn = Connection::<Route>::new_in_namespace_path(ns_path)
                 .map_err(|e| anyhow::anyhow!("Failed to connect to container namespace: {}", e))?;
 
             // Query interfaces
@@ -522,8 +522,8 @@ impl ContainerManager {
 
             // Extract interface names, filter out loopback
             let interfaces: Vec<String> = links
-                .into_iter()
-                .filter_map(|link| link.name)
+                .iter()
+                .filter_map(|link| link.name().map(|s| s.to_string()))
                 .filter(|name| name != "lo")
                 .collect();
 

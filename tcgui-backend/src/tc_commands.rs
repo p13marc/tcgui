@@ -15,9 +15,10 @@
 
 use anyhow::Result;
 use nlink::netlink::Connection;
+use nlink::netlink::Route;
 use nlink::netlink::namespace::NamespaceSpec;
 use nlink::netlink::tc::NetemConfig;
-use nlink::netlink::tc_options::NetemOptions;
+use nlink::netlink::tc_options::{NetemOptions, QdiscOptions};
 use nlink::util::rate;
 use std::path::Path;
 use std::time::Duration;
@@ -88,7 +89,7 @@ impl TcCommandManager {
     fn create_connection(
         namespace: &str,
         namespace_path: Option<&Path>,
-    ) -> Result<Connection, TcguiError> {
+    ) -> Result<Connection<Route>, TcguiError> {
         let spec = Self::namespace_spec(namespace, namespace_path)?;
         spec.connection().map_err(|e| TcguiError::NetworkError {
             message: format!("Failed to connect to namespace '{}': {}", namespace, e),
@@ -166,13 +167,15 @@ impl TcCommandManager {
             // Check if this is the root qdisc by examining the parent
             if qdisc.parent() == 0xFFFFFFFF {
                 // TC_H_ROOT
-                if let Some(netem_opts) = qdisc.netem_options() {
+                if let Some(QdiscOptions::Netem(netem_opts)) = qdisc.options() {
+                    let loss_pct = netem_opts.loss().unwrap_or(0.0);
+                    let delay_ms = netem_opts
+                        .delay()
+                        .map(|d| d.as_secs_f64() * 1000.0)
+                        .unwrap_or(0.0);
                     info!(
-                        "Found netem qdisc on {}:{} with loss={}%, delay={:.2}ms",
-                        namespace,
-                        interface,
-                        netem_opts.loss_percent,
-                        netem_opts.delay().as_secs_f64() * 1000.0
+                        "Found netem qdisc on {}:{} with loss={:.1}%, delay={:.2}ms",
+                        namespace, interface, loss_pct, delay_ms
                     );
                     return Ok(Some(netem_opts));
                 }

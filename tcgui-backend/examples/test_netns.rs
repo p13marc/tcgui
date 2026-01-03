@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use nlink::netlink::{Connection, Protocol, namespace};
+use nlink::netlink::{Connection, Route, namespace};
 
 fn main() {
     println!("=== Testing namespace operations ===\n");
@@ -86,7 +86,7 @@ fn list_interfaces_nlink(ns_name: &str) -> Result<Vec<String>, String> {
         let ns_path = format!("/var/run/netns/{}", ns_name);
 
         // Create a connection directly in the target namespace
-        let conn = Connection::new_in_namespace_path(Protocol::Route, &ns_path)
+        let conn = Connection::<Route>::new_in_namespace_path(&ns_path)
             .map_err(|e| format!("Failed to create nlink connection in namespace: {}", e))?;
 
         // Query all links
@@ -95,7 +95,10 @@ fn list_interfaces_nlink(ns_name: &str) -> Result<Vec<String>, String> {
             .await
             .map_err(|e| format!("Failed to get links: {}", e))?;
 
-        let interfaces: Vec<String> = links.iter().filter_map(|link| link.name.clone()).collect();
+        let interfaces: Vec<String> = links
+            .iter()
+            .filter_map(|link| link.name().map(|s| s.to_string()))
+            .collect();
 
         Ok(interfaces)
     })

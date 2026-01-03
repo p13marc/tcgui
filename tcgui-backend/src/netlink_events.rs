@@ -1,6 +1,6 @@
 //! Netlink event listener for real-time interface and TC change notifications.
 //!
-//! This module provides event-driven monitoring using nlink's EventStream API.
+//! This module provides event-driven monitoring using nlink's Connection API.
 //! It listens for link and TC events to detect interface additions, removals,
 //! state changes, and qdisc changes in real-time.
 //!
@@ -14,8 +14,10 @@
 //! Use `NamespaceEventManager` to manage event streams for multiple namespaces.
 
 use futures_util::StreamExt;
-use nlink::netlink::events::{EventStream, NetworkEvent};
+use nlink::RtnetlinkGroup;
+use nlink::netlink::events::NetworkEvent;
 use nlink::netlink::messages::{LinkMessage, TcMessage};
+use nlink::netlink::{Connection, Route};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -49,7 +51,7 @@ impl LinkInfo {
     fn from_link_message(msg: &LinkMessage) -> Self {
         Self {
             index: msg.ifindex(),
-            name: msg.name.clone(),
+            name: msg.name().map(|s| s.to_string()),
             is_up: Some(msg.is_up()),
         }
     }
@@ -75,7 +77,7 @@ impl TcInfo {
             ifindex: msg.ifindex(),
             handle: msg.handle(),
             parent: msg.parent(),
-            kind: msg.kind.clone(),
+            kind: msg.kind().map(|s| s.to_string()),
         }
     }
 
@@ -144,26 +146,30 @@ impl NetlinkEventListener {
     ///
     /// Ok(()) if the listener started successfully, Err on failure
     pub async fn start(self) -> Result<(), String> {
-        // Create an event stream that subscribes to link and optionally TC events
-        let mut builder = EventStream::builder().links(true);
+        // Create a connection and subscribe to events
+        let mut conn = Connection::<Route>::new()
+            .map_err(|e| format!("Failed to create connection: {}", e))?;
 
-        if self.subscribe_tc {
-            builder = builder.tc(true);
-        }
+        // Subscribe to link events, and optionally TC events
+        let groups = if self.subscribe_tc {
+            vec![RtnetlinkGroup::Link, RtnetlinkGroup::Tc]
+        } else {
+            vec![RtnetlinkGroup::Link]
+        };
 
-        let mut stream = builder
-            .build()
-            .map_err(|e| format!("Failed to create event stream: {}", e))?;
+        conn.subscribe(&groups)
+            .map_err(|e| format!("Failed to subscribe to events: {}", e))?;
 
         info!(
             "Netlink event listener started (links: true, tc: {})",
             self.subscribe_tc
         );
 
-        // Spawn the message processing task
+        // Spawn the message processing task - consume conn with into_events()
         let event_tx = self.event_tx;
         tokio::spawn(async move {
-            while let Some(result) = stream.next().await {
+            let mut events = conn.into_events();
+            while let Some(result) = events.next().await {
                 match result {
                     Ok(event) => {
                         let netlink_events = parse_network_event(event);
@@ -266,7 +272,7 @@ impl NamespaceTarget {
 
 /// Manages netlink event streams for multiple namespaces
 ///
-/// This struct creates and manages EventStream instances for different
+/// This struct creates and manages Connection instances for different
 /// network namespaces, multiplexing their events onto a single channel.
 pub struct NamespaceEventManager {
     /// Channel sender for namespaced events
@@ -298,7 +304,7 @@ impl NamespaceEventManager {
 
     /// Add a namespace to monitor
     ///
-    /// Creates an EventStream for the specified namespace and starts
+    /// Creates a Connection for the specified namespace and starts
     /// listening for events in a background task.
     ///
     /// # Arguments
@@ -317,21 +323,26 @@ impl NamespaceEventManager {
             return Ok(());
         }
 
-        // Build the event stream for this namespace
-        let mut builder = EventStream::builder().links(true).tc(true);
+        // Create connection for this namespace
+        let mut conn = match &target {
+            NamespaceTarget::Default => Connection::<Route>::new(),
+            NamespaceTarget::Named(name) => {
+                // Named namespaces are at /var/run/netns/<name>
+                let path = PathBuf::from(format!("/var/run/netns/{}", name));
+                Connection::<Route>::new_in_namespace_path(&path)
+            }
+            NamespaceTarget::Path { path, .. } => Connection::<Route>::new_in_namespace_path(path),
+        }
+        .map_err(|e| format!("Failed to create connection for {}: {}", namespace_name, e))?;
 
-        builder = match &target {
-            NamespaceTarget::Default => builder,
-            NamespaceTarget::Named(name) => builder.namespace(name),
-            NamespaceTarget::Path { path, .. } => builder.namespace_path(path),
-        };
-
-        let stream = builder.build().map_err(|e| {
-            format!(
-                "Failed to create event stream for {}: {}",
-                namespace_name, e
-            )
-        })?;
+        // Subscribe to link and TC events
+        conn.subscribe(&[RtnetlinkGroup::Link, RtnetlinkGroup::Tc])
+            .map_err(|e| {
+                format!(
+                    "Failed to subscribe to events for {}: {}",
+                    namespace_name, e
+                )
+            })?;
 
         info!(
             "Started event stream for namespace: {} (links: true, tc: true)",
@@ -342,7 +353,7 @@ impl NamespaceEventManager {
         let event_tx = self.event_tx.clone();
         let ns_name = namespace_name.clone();
         let handle = tokio::spawn(async move {
-            Self::process_namespace_events(stream, ns_name, event_tx).await;
+            Self::process_namespace_events(conn, ns_name, event_tx).await;
         });
 
         self.active_namespaces.insert(namespace_name, handle);
@@ -372,11 +383,12 @@ impl NamespaceEventManager {
 
     /// Process events from a namespace's event stream
     async fn process_namespace_events(
-        mut stream: EventStream,
+        conn: Connection<Route>,
         namespace: String,
         event_tx: mpsc::Sender<NamespacedEvent>,
     ) {
-        while let Some(result) = stream.next().await {
+        let mut events = conn.into_events();
+        while let Some(result) = events.next().await {
             match result {
                 Ok(event) => {
                     let netlink_events = parse_network_event(event);

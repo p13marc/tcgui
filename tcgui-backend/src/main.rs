@@ -1370,94 +1370,74 @@ impl TcBackend {
             .await
         {
             Ok(Some(netem_opts)) => {
+                // Use Option-returning accessor methods from nlink 0.5.0
+                let loss_pct = netem_opts.loss().unwrap_or(0.0);
+                let delay_duration = netem_opts.delay();
+                let delay_ms_val = delay_duration
+                    .map(|d| d.as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0);
+                let duplicate_pct = netem_opts.duplicate().unwrap_or(0.0);
+                let reorder_pct = netem_opts.reorder().unwrap_or(0.0);
+                let corrupt_pct = netem_opts.corrupt().unwrap_or(0.0);
+                let ecn_val = netem_opts.ecn();
+
                 info!(
-                    "Detected existing netem qdisc on {}:{}: loss={}%, delay={:.2}ms, duplicate={}%, reorder={}%, corrupt={}%, ecn={}",
+                    "Detected existing netem qdisc on {}:{}: loss={:.1}%, delay={:.2}ms, duplicate={:.1}%, reorder={:.1}%, corrupt={:.1}%, ecn={}",
                     namespace,
                     interface,
-                    netem_opts.loss_percent,
-                    netem_opts.delay().as_secs_f64() * 1000.0,
-                    netem_opts.duplicate_percent,
-                    netem_opts.reorder_percent,
-                    netem_opts.corrupt_percent,
-                    netem_opts.ecn,
+                    loss_pct,
+                    delay_ms_val,
+                    duplicate_pct,
+                    reorder_pct,
+                    corrupt_pct,
+                    ecn_val,
                 );
 
-                // Convert NetemOptions to TcConfiguration
-                let delay_ms = if netem_opts.delay_ns > 0 {
-                    Some(netem_opts.delay().as_secs_f64() as f32 * 1000.0)
-                } else {
-                    None
-                };
+                // Convert NetemOptions to TcConfiguration using nlink 0.5.0 accessor methods
+                let delay_ms = netem_opts.delay().map(|d| d.as_secs_f64() as f32 * 1000.0);
 
-                let jitter_ms = if netem_opts.jitter_ns > 0 {
-                    Some(netem_opts.jitter().as_secs_f64() as f32 * 1000.0)
-                } else {
-                    None
-                };
+                let jitter_ms = netem_opts.jitter().map(|j| j.as_secs_f64() as f32 * 1000.0);
 
-                let delay_correlation = if netem_opts.delay_corr > 0.0 {
-                    Some(netem_opts.delay_corr as f32)
-                } else {
-                    None
-                };
+                // Use correlation accessor methods (nlink 0.5.0)
+                let delay_correlation = netem_opts
+                    .delay_correlation()
+                    .filter(|&c| c > 0.0)
+                    .map(|c| c as f32);
 
-                let correlation = if netem_opts.loss_corr > 0.0 {
-                    Some(netem_opts.loss_corr as f32)
-                } else {
-                    None
-                };
+                let correlation = netem_opts
+                    .loss_correlation()
+                    .filter(|&c| c > 0.0)
+                    .map(|c| c as f32);
 
-                let duplicate_percent = if netem_opts.duplicate_percent > 0.0 {
-                    Some(netem_opts.duplicate_percent as f32)
-                } else {
-                    None
-                };
+                let duplicate_percent = netem_opts.duplicate().map(|d| d as f32);
 
-                let duplicate_correlation = if netem_opts.duplicate_corr > 0.0 {
-                    Some(netem_opts.duplicate_corr as f32)
-                } else {
-                    None
-                };
+                let duplicate_correlation = netem_opts
+                    .duplicate_correlation()
+                    .filter(|&c| c > 0.0)
+                    .map(|c| c as f32);
 
-                let reorder_percent = if netem_opts.reorder_percent > 0.0 {
-                    Some(netem_opts.reorder_percent as f32)
-                } else {
-                    None
-                };
+                let reorder_percent = netem_opts.reorder().map(|r| r as f32);
 
-                let reorder_correlation = if netem_opts.reorder_corr > 0.0 {
-                    Some(netem_opts.reorder_corr as f32)
-                } else {
-                    None
-                };
+                let reorder_correlation = netem_opts
+                    .reorder_correlation()
+                    .filter(|&c| c > 0.0)
+                    .map(|c| c as f32);
 
-                let reorder_gap = if netem_opts.gap > 0 {
-                    Some(netem_opts.gap)
-                } else {
-                    None
-                };
+                // Use gap accessor method (nlink 0.5.0)
+                let reorder_gap = netem_opts.gap().filter(|&g| g > 0);
 
-                let corrupt_percent = if netem_opts.corrupt_percent > 0.0 {
-                    Some(netem_opts.corrupt_percent as f32)
-                } else {
-                    None
-                };
+                let corrupt_percent = netem_opts.corrupt().map(|c| c as f32);
 
-                let corrupt_correlation = if netem_opts.corrupt_corr > 0.0 {
-                    Some(netem_opts.corrupt_corr as f32)
-                } else {
-                    None
-                };
+                let corrupt_correlation = netem_opts
+                    .corrupt_correlation()
+                    .filter(|&c| c > 0.0)
+                    .map(|c| c as f32);
 
-                // Convert rate from bytes/sec to kbps (rate is 0 if not set)
-                let rate_limit_kbps = if netem_opts.rate > 0 {
-                    Some((netem_opts.rate * 8 / 1000) as u32) // bytes/sec to kbps
-                } else {
-                    None
-                };
+                // Convert rate from bytes/sec to kbps
+                let rate_limit_kbps = netem_opts.rate_bps().map(|r| (r * 8 / 1000) as u32);
 
                 Some(TcConfiguration {
-                    loss: netem_opts.loss_percent as f32,
+                    loss: loss_pct as f32,
                     correlation,
                     delay_ms,
                     delay_jitter_ms: jitter_ms,
@@ -1472,8 +1452,7 @@ impl TcBackend {
                     rate_limit_kbps,
                     command: format!(
                         "# Detected via netlink: loss={:.1}% delay={:.2}ms",
-                        netem_opts.loss_percent,
-                        netem_opts.delay().as_secs_f64() * 1000.0
+                        loss_pct, delay_ms_val
                     ),
                 })
             }

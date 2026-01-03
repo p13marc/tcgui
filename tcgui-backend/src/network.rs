@@ -13,7 +13,7 @@
 //! * **Robust error handling**: Graceful handling of namespace access permissions
 
 use anyhow::Result;
-use nlink::netlink::{Connection, Protocol, namespace};
+use nlink::netlink::{Connection, Route, namespace};
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
@@ -57,7 +57,7 @@ use crate::container::{Container, ContainerManager};
 /// ```
 pub struct NetworkManager {
     /// nlink connection for default namespace operations
-    connection: Connection,
+    connection: Connection<Route>,
     /// Track interfaces per namespace for change detection (future namespace monitoring)
     /// Map: namespace_name -> (interface_index -> NetworkInterface)
     #[allow(dead_code)]
@@ -90,10 +90,9 @@ impl NetworkManager {
     #[instrument(skip(session), fields(backend_name = %backend_name))]
     pub async fn new(session: Session, backend_name: String) -> Result<Self, TcguiError> {
         // Create nlink connection for default namespace
-        let connection =
-            Connection::new(Protocol::Route).map_err(|e| TcguiError::NetworkError {
-                message: format!("Failed to create nlink connection: {}", e),
-            })?;
+        let connection = Connection::<Route>::new().map_err(|e| TcguiError::NetworkError {
+            message: format!("Failed to create nlink connection: {}", e),
+        })?;
         info!("[BACKEND] nlink connection established for default namespace");
 
         // Declare advanced publishers for interface communications with history
@@ -327,7 +326,7 @@ impl NetworkManager {
     /// Check TC qdisc using a connection
     async fn check_tc_qdisc_with_connection(
         &self,
-        conn: &Connection,
+        conn: &Connection<Route>,
         interface: &str,
     ) -> Result<bool> {
         let qdiscs = conn
@@ -376,10 +375,9 @@ impl NetworkManager {
                     .namespace_path
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Container has no namespace path"))?;
-                let conn =
-                    Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
-                        anyhow::anyhow!("Failed to connect to container namespace: {}", e)
-                    })?;
+                let conn = Connection::<Route>::new_in_namespace_path(ns_path).map_err(|e| {
+                    anyhow::anyhow!("Failed to connect to container namespace: {}", e)
+                })?;
                 self.check_tc_qdisc_with_connection(&conn, interface).await
             } else {
                 Ok(false) // Container not found, assume no netem
@@ -577,7 +575,7 @@ impl NetworkManager {
                 })?;
 
         // Create a connection in the container's namespace
-        let conn = Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
+        let conn = Connection::<Route>::new_in_namespace_path(ns_path).map_err(|e| {
             BackendError::NetworkError {
                 message: format!(
                     "Failed to connect to container {} namespace: {}",
@@ -846,10 +844,9 @@ impl NetworkManager {
                 let ns_path = container.namespace_path.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("Container {} has no namespace path", container_name)
                 })?;
-                let conn =
-                    Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
-                        anyhow::anyhow!("Failed to connect to container namespace: {}", e)
-                    })?;
+                let conn = Connection::<Route>::new_in_namespace_path(ns_path).map_err(|e| {
+                    anyhow::anyhow!("Failed to connect to container namespace: {}", e)
+                })?;
                 conn.set_link_up(interface)
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to enable interface: {}", e))?;
@@ -899,10 +896,9 @@ impl NetworkManager {
                 let ns_path = container.namespace_path.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("Container {} has no namespace path", container_name)
                 })?;
-                let conn =
-                    Connection::new_in_namespace_path(Protocol::Route, ns_path).map_err(|e| {
-                        anyhow::anyhow!("Failed to connect to container namespace: {}", e)
-                    })?;
+                let conn = Connection::<Route>::new_in_namespace_path(ns_path).map_err(|e| {
+                    anyhow::anyhow!("Failed to connect to container namespace: {}", e)
+                })?;
                 conn.set_link_down(interface)
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to disable interface: {}", e))?;
