@@ -1,4 +1,3 @@
-use iced_anim::Event as AnimEvent;
 use tcgui_shared::{
     BackendHealthStatus, BandwidthUpdate, InterfaceControlRequest, InterfaceControlResponse,
     InterfaceListUpdate, InterfaceStateEvent, TcConfigUpdate, TcRequest, TcResponse,
@@ -266,7 +265,4 @@ pub enum TcInterfaceMessage {
 
     // Chart control
     ToggleChart,
-
-    // Animation events
-    AnimateTcIntensity(AnimEvent<f32>),
 }

@@ -1205,8 +1205,6 @@ pub fn handle_tc_interface_message(
             }),
             // Toggle chart visibility is UI-only, no backend action needed
             TcInterfaceMessage::ToggleChart => Task::none(),
-            // Animation events are UI-only, handled by the interface component
-            TcInterfaceMessage::AnimateTcIntensity(_) => Task::none(),
         };
 
         let backend_copy = backend_name.clone();

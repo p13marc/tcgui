@@ -6,7 +6,6 @@
 
 use iced::widget::{checkbox, column, container, row, slider, text, tooltip};
 use iced::{Background, Color, Element, Task};
-use iced_anim::Animation;
 use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
 use tcgui_shared::presets::PresetList;
@@ -301,10 +300,6 @@ impl TcInterface {
                 self.state.chart_expanded = !self.state.chart_expanded;
                 Task::none()
             }
-            TcInterfaceMessage::AnimateTcIntensity(event) => {
-                self.state.tc_active_intensity.update(event);
-                Task::none()
-            }
         }
     }
 
@@ -330,30 +325,25 @@ impl TcInterface {
             column![main_row, expandable_rows].spacing(scaled_spacing(4, zoom))
         };
 
-        // Get current animated TC intensity (0.0 = inactive, 1.0 = active)
-        let intensity = *self.state.tc_active_intensity.value();
+        // Use static background based on TC state
+        let bg_color = if self.state.has_tc_qdisc() {
+            let tc_active = theme.colors.tc_active;
+            Color::from_rgba(tc_active.r, tc_active.g, tc_active.b, 0.1)
+        } else {
+            Color::TRANSPARENT
+        };
 
-        // Interpolate background color based on intensity and theme
-        let tc_active = theme.colors.tc_active;
-        let bg_color = Color::from_rgba(tc_active.r, tc_active.g, tc_active.b, 0.1 * intensity);
-
-        // Wrap content in animated container
-        let styled_container =
-            container(content)
-                .padding(scaled_spacing(8, zoom))
-                .style(move |_| iced::widget::container::Style {
-                    background: Some(Background::Color(bg_color)),
-                    border: iced::Border {
-                        radius: 8.0.into(),
-                        width: 0.0,
-                        color: Color::TRANSPARENT,
-                    },
-                    ..Default::default()
-                });
-
-        // Wrap in Animation widget to drive the animation
-        Animation::new(&self.state.tc_active_intensity, styled_container)
-            .on_update(TcInterfaceMessage::AnimateTcIntensity)
+        container(content)
+            .padding(scaled_spacing(8, zoom))
+            .style(move |_| iced::widget::container::Style {
+                background: Some(Background::Color(bg_color)),
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                ..Default::default()
+            })
             .into()
     }
 
