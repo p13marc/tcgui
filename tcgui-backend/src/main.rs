@@ -1,6 +1,7 @@
 mod bandwidth;
 pub mod config;
 mod container;
+mod diagnostics;
 mod interfaces;
 mod namespace_watcher;
 mod netlink_events;
@@ -253,6 +254,21 @@ impl TcBackend {
             interface_query_topic.as_str()
         );
 
+        // Set up Diagnostics query handler
+        let diagnostics_query_topic = topics::diagnostics_query_service(&self.backend_name);
+        let diagnostics_queryable = self
+            .session
+            .declare_queryable(&diagnostics_query_topic)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to declare Diagnostics queryable: {}", e),
+            })?;
+        info!(
+            "[BACKEND] Backend '{}' Diagnostics query handler declared on: {}",
+            self.backend_name,
+            diagnostics_query_topic.as_str()
+        );
+
         // Initialize scenario management services
         if let (Some(scenario_handlers), Some(execution_handlers)) = (
             self.scenario_handlers.as_ref(),
@@ -400,6 +416,20 @@ impl TcBackend {
                         }
                         Err(e) => {
                             error!("Error receiving Interface query: {}", e);
+                        }
+                    }
+                }
+
+                // Handle Diagnostics queries
+                query = diagnostics_queryable.recv_async() => {
+                    match query {
+                        Ok(query) => {
+                            if let Err(e) = self.handle_diagnostics_query(query).await {
+                                error!("Failed to handle Diagnostics query: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error receiving Diagnostics query: {}", e);
                         }
                     }
                 }
@@ -1249,6 +1279,61 @@ impl TcBackend {
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to reply to Interface query: {}", e),
             })?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
+    async fn handle_diagnostics_query(&self, query: zenoh::query::Query) -> Result<()> {
+        use tcgui_shared::{DiagnosticsRequest, DiagnosticsResponse, DiagnosticsResults};
+
+        let payload = query.payload().ok_or_else(|| {
+            TcguiError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Diagnostics query missing payload",
+            ))
+        })?;
+        let payload_bytes = payload.to_bytes();
+        let payload_str = std::str::from_utf8(&payload_bytes).map_err(|e| {
+            TcguiError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Invalid UTF-8: {}", e),
+            ))
+        })?;
+
+        let request = serde_json::from_str::<DiagnosticsRequest>(payload_str)?;
+        info!(
+            "Received Diagnostics query for {}/{}",
+            request.namespace, request.interface
+        );
+
+        // Create diagnostics service and run diagnostics
+        let diagnostics_service =
+            diagnostics::DiagnosticsService::new(&self.network_manager, &self.tc_manager);
+
+        let response = match diagnostics_service.run_diagnostics(&request).await {
+            Ok(result) => result,
+            Err(e) => DiagnosticsResponse {
+                success: false,
+                message: format!("Diagnostics failed: {}", e),
+                results: DiagnosticsResults::default(),
+                error_code: Some(-1),
+            },
+        };
+
+        // Send response back to query
+        let response_payload = serde_json::to_string(&response)?;
+        query
+            .reply(query.key_expr(), response_payload)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to reply to Diagnostics query: {}", e),
+            })?;
+
+        info!(
+            "Diagnostics completed for {}/{}: {}",
+            request.namespace, request.interface, response.message
+        );
 
         Ok(())
     }

@@ -11,8 +11,8 @@ use tracing::{error, info, trace};
 use zenoh_ext::{AdvancedSubscriberBuilderExt, HistoryConfig, RecoveryConfig};
 
 use crate::messages::{
-    InterfaceControlQueryMessage, ScenarioExecutionQueryMessage, ScenarioQueryMessage,
-    TcQueryMessage, ZenohEvent,
+    DiagnosticsQueryMessage, InterfaceControlQueryMessage, ScenarioExecutionQueryMessage,
+    ScenarioQueryMessage, TcQueryMessage, ZenohEvent,
 };
 
 /// Common zenoh sample processing logic extracted to reduce code duplication
@@ -345,6 +345,8 @@ impl ZenohManager {
                             scenario_execution_query_sender,
                             mut scenario_execution_query_receiver,
                         ) = mpsc::unbounded_channel::<ScenarioExecutionQueryMessage>();
+                        let (diagnostics_query_sender, mut diagnostics_query_receiver) =
+                            mpsc::unbounded_channel::<DiagnosticsQueryMessage>();
 
                         let _ = output
                             .send(ZenohEvent::TcQueryChannelReady(tc_query_sender))
@@ -360,6 +362,11 @@ impl ZenohManager {
                         let _ = output
                             .send(ZenohEvent::ScenarioExecutionQueryChannelReady(
                                 scenario_execution_query_sender,
+                            ))
+                            .await;
+                        let _ = output
+                            .send(ZenohEvent::DiagnosticsQueryChannelReady(
+                                diagnostics_query_sender,
                             ))
                             .await;
 
@@ -847,6 +854,54 @@ impl ZenohManager {
                                         }
                                         Err(e) => {
                                             error!("Failed to serialize scenario execution request: {}", e);
+                                        }
+                                    }
+                                }
+
+                                // Handle outgoing diagnostics queries
+                                Some(diag_query) = diagnostics_query_receiver.recv() => {
+                                    use tcgui_shared::DiagnosticsResponse;
+                                    let topic = topics::diagnostics_query_service(&diag_query.backend_name);
+                                    let mut output_clone = output.clone();
+                                    let backend_name = diag_query.backend_name.clone();
+                                    let namespace = diag_query.request.namespace.clone();
+                                    let interface = diag_query.request.interface.clone();
+
+                                    match serde_json::to_string(&diag_query.request) {
+                                        Ok(payload) => {
+                                            match session.get(&topic).payload(payload).await {
+                                                Ok(replies) => {
+                                                    tokio::spawn(async move {
+                                                        while let Ok(reply) = replies.recv_async().await {
+                                                            match reply.into_result() {
+                                                                Ok(sample) => {
+                                                                    let payload_bytes = sample.payload().to_bytes();
+                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
+                                                                        && let Ok(response) = serde_json::from_str::<DiagnosticsResponse>(payload_str)
+                                                                    {
+                                                                        info!("Received diagnostics response for {}/{}: {}", namespace, interface, response.message);
+                                                                        let _ = output_clone.send(ZenohEvent::DiagnosticsResponse {
+                                                                            backend_name: backend_name.clone(),
+                                                                            namespace: namespace.clone(),
+                                                                            interface: interface.clone(),
+                                                                            response,
+                                                                        }).await;
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Diagnostics query reply error: {}", e);
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to send diagnostics query to '{}': {}", backend_name, e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to serialize diagnostics request: {}", e);
                                         }
                                     }
                                 }

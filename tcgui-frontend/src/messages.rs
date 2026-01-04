@@ -1,7 +1,7 @@
 use tcgui_shared::{
-    BackendHealthStatus, BandwidthUpdate, InterfaceControlRequest, InterfaceControlResponse,
-    InterfaceListUpdate, InterfaceStateEvent, TcConfigUpdate, TcRequest, TcResponse,
-    TcStatisticsUpdate,
+    BackendHealthStatus, BandwidthUpdate, DiagnosticsRequest, DiagnosticsResponse,
+    InterfaceControlRequest, InterfaceControlResponse, InterfaceListUpdate, InterfaceStateEvent,
+    TcConfigUpdate, TcRequest, TcResponse, TcStatisticsUpdate,
     presets::{CustomPreset, PresetList},
     scenario::{
         NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionResponse,
@@ -44,6 +44,14 @@ pub struct InterfaceControlQueryMessage {
     pub response_sender: Option<mpsc::UnboundedSender<(String, InterfaceControlResponse)>>,
 }
 
+/// Message for diagnostics query operations
+#[derive(Debug, Clone)]
+pub struct DiagnosticsQueryMessage {
+    pub backend_name: String,
+    pub request: DiagnosticsRequest,
+    pub response_sender: Option<mpsc::UnboundedSender<(String, DiagnosticsResponse)>>,
+}
+
 /// Frontend application messages with new communication architecture
 #[derive(Debug, Clone)]
 pub enum TcGuiMessage {
@@ -79,6 +87,7 @@ pub enum TcGuiMessage {
     SetupInterfaceQueryChannel(mpsc::UnboundedSender<InterfaceControlQueryMessage>),
     SetupScenarioQueryChannel(mpsc::UnboundedSender<ScenarioQueryMessage>),
     SetupScenarioExecutionQueryChannel(mpsc::UnboundedSender<ScenarioExecutionQueryMessage>),
+    SetupDiagnosticsQueryChannel(mpsc::UnboundedSender<DiagnosticsQueryMessage>),
     ToggleNamespaceVisibility(String, String), // (backend_name, namespace_name)
     ShowAllNamespaces,                         // Show all hidden namespaces
     ResetUiState,                              // Reset all UI visibility state
@@ -178,6 +187,19 @@ pub enum TcGuiMessage {
         response: tcgui_shared::scenario::ScenarioResponse,
     },
 
+    // Diagnostics operations
+    RunDiagnostics {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
+    DiagnosticsResult {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+        response: DiagnosticsResponse,
+    },
+
     // Backend cleanup
     CleanupStaleBackends,
 }
@@ -209,10 +231,18 @@ pub enum ZenohEvent {
     InterfaceQueryChannelReady(mpsc::UnboundedSender<InterfaceControlQueryMessage>),
     ScenarioQueryChannelReady(mpsc::UnboundedSender<ScenarioQueryMessage>),
     ScenarioExecutionQueryChannelReady(mpsc::UnboundedSender<ScenarioExecutionQueryMessage>),
+    DiagnosticsQueryChannelReady(mpsc::UnboundedSender<DiagnosticsQueryMessage>),
     // Scenario query responses
     ScenarioResponse {
         backend_name: String,
         response: tcgui_shared::scenario::ScenarioResponse,
+    },
+    // Diagnostics query responses
+    DiagnosticsResponse {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+        response: tcgui_shared::DiagnosticsResponse,
     },
     // Query responses (commented out until response handling is implemented)
     // TcResponse { backend_name: String, request: TcRequest, response: TcResponse },
@@ -265,4 +295,9 @@ pub enum TcInterfaceMessage {
 
     // Chart control
     ToggleChart,
+
+    // Diagnostics control
+    StartDiagnostics,
+    DiagnosticsComplete(DiagnosticsResponse),
+    DismissDiagnostics,
 }

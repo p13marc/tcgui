@@ -300,6 +300,24 @@ impl TcInterface {
                 self.state.chart_expanded = !self.state.chart_expanded;
                 Task::none()
             }
+            TcInterfaceMessage::StartDiagnostics => {
+                self.state.diagnostics_running = true;
+                self.state.diagnostics_result = None;
+                self.state
+                    .add_status_message("Running diagnostics...".to_string(), false);
+                Task::none()
+            }
+            TcInterfaceMessage::DiagnosticsComplete(response) => {
+                self.state.diagnostics_running = false;
+                self.state.diagnostics_result = Some(response.clone());
+                self.state
+                    .add_status_message(format!("Diagnostics: {}", response.message), false);
+                Task::none()
+            }
+            TcInterfaceMessage::DismissDiagnostics => {
+                self.state.diagnostics_result = None;
+                Task::none()
+            }
         }
     }
 
@@ -313,16 +331,18 @@ impl TcInterface {
     ) -> Element<'a, TcInterfaceMessage> {
         let main_row = self.render_main_row(preset_list, theme, zoom);
         let expandable_rows = self.render_expandable_features(theme, zoom);
+        let diagnostics_panel = self.render_diagnostics_panel(theme, zoom);
 
-        // Build content column with optional chart
+        // Build content column with optional chart and diagnostics
         let content = if self.state.chart_expanded {
             let chart_height = scaled(80, zoom);
             let dark_mode = theme.is_dark();
             let chart_element = bandwidth_chart_view(bandwidth_history, chart_height, dark_mode);
 
-            column![main_row, expandable_rows, chart_element].spacing(scaled_spacing(4, zoom))
+            column![main_row, expandable_rows, diagnostics_panel, chart_element]
+                .spacing(scaled_spacing(4, zoom))
         } else {
-            column![main_row, expandable_rows].spacing(scaled_spacing(4, zoom))
+            column![main_row, expandable_rows, diagnostics_panel].spacing(scaled_spacing(4, zoom))
         };
 
         // Use static background based on TC state
@@ -416,6 +436,9 @@ impl TcInterface {
         // TC stats display (drops/packets when TC is active)
         let tc_stats_display = self.render_tc_stats_display(theme, zoom);
 
+        // Diagnose button
+        let diagnose_button = self.render_diagnose_button(theme, zoom);
+
         // Status display
         let status_display = self.render_status_display(theme, zoom);
 
@@ -445,6 +468,9 @@ impl TcInterface {
                 .align_y(iced::alignment::Vertical::Center),
             container(tc_stats_display)
                 .width(Length::Fixed(120.0 * zoom))
+                .align_y(iced::alignment::Vertical::Center),
+            container(diagnose_button)
+                .width(Length::Fixed(30.0 * zoom))
                 .align_y(iced::alignment::Vertical::Center),
             container(status_display)
                 .width(Length::Fill)
@@ -691,6 +717,235 @@ impl TcInterface {
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
         self.status_display.view(theme, zoom)
+    }
+
+    /// Render diagnose button
+    fn render_diagnose_button(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+        use iced::widget::{button, tooltip};
+        use std::time::Duration;
+
+        let icon_color = if self.state.diagnostics_running {
+            theme.colors.warning
+        } else if self.state.diagnostics_result.is_some() {
+            if self
+                .state
+                .diagnostics_result
+                .as_ref()
+                .map(|r| r.success)
+                .unwrap_or(false)
+            {
+                theme.colors.success
+            } else {
+                theme.colors.error
+            }
+        } else {
+            theme.colors.text_muted
+        };
+
+        let icon_size = scaled(12, zoom);
+        let btn = button(Icon::Activity.svg_sized_colored(icon_size, icon_color))
+            .padding(scaled_spacing(4, zoom));
+
+        let btn = if self.state.diagnostics_running {
+            btn // Disabled while running
+        } else {
+            btn.on_press(TcInterfaceMessage::StartDiagnostics)
+        };
+
+        let tooltip_text = if self.state.diagnostics_running {
+            "Running diagnostics..."
+        } else if let Some(ref result) = self.state.diagnostics_result {
+            if result.success {
+                "Diagnostics passed - click to re-run"
+            } else {
+                "Diagnostics failed - click to re-run"
+            }
+        } else {
+            "Run network diagnostics"
+        };
+
+        let tooltip_style = theme.tooltip_style();
+        tooltip(
+            btn,
+            text(tooltip_text).size(scaled(11, zoom)),
+            tooltip::Position::Top,
+        )
+        .delay(Duration::from_millis(300))
+        .style(move |_| tooltip_style)
+        .into()
+    }
+
+    /// Render diagnostics results panel (shown when diagnostics complete)
+    fn render_diagnostics_panel(
+        &self,
+        theme: &Theme,
+        zoom: f32,
+    ) -> Element<'_, TcInterfaceMessage> {
+        use iced::widget::{Space, button};
+
+        // Only show if we have diagnostics results
+        let Some(ref result) = self.state.diagnostics_result else {
+            return row![].into();
+        };
+
+        let text_primary = theme.colors.text_primary;
+        let text_muted = theme.colors.text_muted;
+        let success_color = theme.colors.success;
+        let error_color = theme.colors.error;
+        let warning_color = theme.colors.warning;
+
+        let results = &result.results;
+
+        // Link status
+        let link_status_text = if results.link_status.is_up && results.link_status.has_carrier {
+            format!("Link: UP (MTU {})", results.link_status.mtu)
+        } else if results.link_status.is_up {
+            "Link: UP (no carrier)".to_string()
+        } else {
+            "Link: DOWN".to_string()
+        };
+        let link_color = if results.link_status.is_up && results.link_status.has_carrier {
+            success_color
+        } else {
+            error_color
+        };
+
+        // Connectivity
+        let connectivity_text = if let Some(ref conn) = results.connectivity {
+            if conn.reachable {
+                format!("{}: reachable", conn.target)
+            } else {
+                format!("{}: unreachable", conn.target)
+            }
+        } else {
+            "Connectivity: not tested".to_string()
+        };
+        let connectivity_color = results
+            .connectivity
+            .as_ref()
+            .map(|c| {
+                if c.reachable {
+                    success_color
+                } else {
+                    error_color
+                }
+            })
+            .unwrap_or(text_muted);
+
+        // Latency
+        let latency_text = if let Some(ref lat) = results.latency {
+            format!(
+                "Latency: {:.1}/{:.1}/{:.1}ms (loss: {:.1}%)",
+                lat.min_ms, lat.avg_ms, lat.max_ms, lat.packet_loss_percent
+            )
+        } else {
+            "Latency: N/A".to_string()
+        };
+        let latency_color = results
+            .latency
+            .as_ref()
+            .map(|l| {
+                if l.packet_loss_percent > 5.0 {
+                    error_color
+                } else if l.packet_loss_percent > 0.0 {
+                    warning_color
+                } else {
+                    success_color
+                }
+            })
+            .unwrap_or(text_muted);
+
+        // TC config status
+        let tc_text = if let Some(ref tc) = results.configured_tc {
+            let mut parts = Vec::new();
+            if tc.delay.enabled {
+                parts.push(format!("delay {}ms", tc.delay.base_ms));
+            }
+            if tc.loss.enabled {
+                parts.push(format!("loss {}%", tc.loss.percentage));
+            }
+            if tc.rate_limit.enabled {
+                parts.push(format!("rate {}kbps", tc.rate_limit.rate_kbps));
+            }
+            if parts.is_empty() {
+                "TC: configured (no active features)".to_string()
+            } else {
+                format!("TC: {}", parts.join(", "))
+            }
+        } else {
+            "TC: not configured".to_string()
+        };
+
+        // Dismiss button
+        let dismiss_btn = button(Icon::X.svg_sized_colored(scaled(10, zoom), text_muted))
+            .on_press(TcInterfaceMessage::DismissDiagnostics)
+            .padding(scaled_spacing(2, zoom));
+
+        // Build the panel
+        let panel_bg = if result.success {
+            Color::from_rgba(success_color.r, success_color.g, success_color.b, 0.1)
+        } else {
+            Color::from_rgba(error_color.r, error_color.g, error_color.b, 0.1)
+        };
+
+        let content = row![
+            text(link_status_text)
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(link_color)
+                }),
+            text(" | ")
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(text_muted)
+                }),
+            text(connectivity_text)
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(connectivity_color)
+                }),
+            text(" | ")
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(text_muted)
+                }),
+            text(latency_text)
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(latency_color)
+                }),
+            text(" | ")
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(text_muted)
+                }),
+            text(tc_text)
+                .size(scaled(11, zoom))
+                .style(move |_| text::Style {
+                    color: Some(text_primary)
+                }),
+            Space::new().width(iced::Length::Fill),
+            dismiss_btn,
+        ]
+        .spacing(scaled_spacing(4, zoom))
+        .align_y(iced::Alignment::Center);
+
+        container(content)
+            .padding(scaled_spacing(6, zoom))
+            .style(move |_| iced::widget::container::Style {
+                background: Some(Background::Color(panel_bg)),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    width: 1.0,
+                    color: if result.success {
+                        success_color
+                    } else {
+                        error_color
+                    },
+                },
+                ..Default::default()
+            })
+            .into()
     }
 
     /// Render expandable feature rows with parameter sliders

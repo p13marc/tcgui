@@ -3,8 +3,10 @@
 //! This module handles TC and interface control query channels,
 //! providing a centralized way to send queries to backends.
 
-use crate::messages::{InterfaceControlQueryMessage, TcQueryMessage};
-use tcgui_shared::{InterfaceControlOperation, InterfaceControlRequest, TcOperation, TcRequest};
+use crate::messages::{DiagnosticsQueryMessage, InterfaceControlQueryMessage, TcQueryMessage};
+use tcgui_shared::{
+    DiagnosticsRequest, InterfaceControlOperation, InterfaceControlRequest, TcOperation, TcRequest,
+};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -14,6 +16,8 @@ pub struct QueryManager {
     tc_query_sender: Option<mpsc::UnboundedSender<TcQueryMessage>>,
     /// Channel for sending interface control queries to specific backends
     interface_query_sender: Option<mpsc::UnboundedSender<InterfaceControlQueryMessage>>,
+    /// Channel for sending diagnostics queries to specific backends
+    diagnostics_query_sender: Option<mpsc::UnboundedSender<DiagnosticsQueryMessage>>,
 }
 
 impl QueryManager {
@@ -22,6 +26,7 @@ impl QueryManager {
         Self {
             tc_query_sender: None,
             interface_query_sender: None,
+            diagnostics_query_sender: None,
         }
     }
 
@@ -223,6 +228,56 @@ impl QueryManager {
             Ok(())
         } else {
             let error_msg = "Interface query sender not available".to_string();
+            error!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
+
+    /// Sets up the diagnostics query channel.
+    pub fn setup_diagnostics_query_channel(
+        &mut self,
+        sender: mpsc::UnboundedSender<DiagnosticsQueryMessage>,
+    ) {
+        info!("Setting up diagnostics query channel for multi-backend communication");
+        self.diagnostics_query_sender = Some(sender);
+    }
+
+    /// Sends a diagnostics query to a backend.
+    pub fn run_diagnostics(
+        &self,
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    ) -> Result<(), String> {
+        if let Some(sender) = &self.diagnostics_query_sender {
+            let request = DiagnosticsRequest {
+                namespace: namespace.clone(),
+                interface: interface.clone(),
+                target: None, // Auto-detect target
+                timeout_ms: 5000,
+            };
+            let query_message = DiagnosticsQueryMessage {
+                backend_name: backend_name.clone(),
+                request,
+                response_sender: None, // Response handled via ZenohEvent
+            };
+
+            if let Err(e) = sender.send(query_message) {
+                let error_msg = format!(
+                    "Failed to send diagnostics query to backend '{}': {}",
+                    backend_name, e
+                );
+                error!("{}", error_msg);
+                return Err(error_msg);
+            }
+
+            info!(
+                "Sent diagnostics query to backend '{}' for {}/{}",
+                backend_name, namespace, interface
+            );
+            Ok(())
+        } else {
+            let error_msg = "Diagnostics query sender not available".to_string();
             error!("{}", error_msg);
             Err(error_msg)
         }

@@ -1205,6 +1205,15 @@ pub fn handle_tc_interface_message(
             }),
             // Toggle chart visibility is UI-only, no backend action needed
             TcInterfaceMessage::ToggleChart => Task::none(),
+            // Diagnostics messages - StartDiagnostics triggers backend query
+            TcInterfaceMessage::StartDiagnostics => Task::done(TcGuiMessage::RunDiagnostics {
+                backend_name: backend_name.clone(),
+                namespace: namespace.clone(),
+                interface: interface_name.clone(),
+            }),
+            // DiagnosticsComplete and DismissDiagnostics are UI-only state updates
+            TcInterfaceMessage::DiagnosticsComplete(_) => Task::none(),
+            TcInterfaceMessage::DismissDiagnostics => Task::none(),
         };
 
         let backend_copy = backend_name.clone();
@@ -1449,6 +1458,61 @@ pub fn handle_cleanup_stale_backends(
             backends_to_remove.len(),
             stats
         );
+    }
+
+    Task::none()
+}
+
+/// Handles running diagnostics for an interface.
+pub fn handle_run_diagnostics(
+    query_manager: &QueryManager,
+    backend_manager: &mut BackendManager,
+    backend_name: String,
+    namespace: String,
+    interface: String,
+) -> Task<TcGuiMessage> {
+    info!(
+        "Running diagnostics for {}/{}/{}",
+        backend_name, namespace, interface
+    );
+
+    // Mark diagnostics as running in the interface state
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(&backend_name)
+        && let Some(namespace_group) = backend_group.namespaces.get_mut(&namespace)
+        && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface)
+    {
+        let _ = tc_interface.update(TcInterfaceMessage::StartDiagnostics);
+    }
+
+    // Send diagnostics query to backend
+    if let Err(e) =
+        query_manager.run_diagnostics(backend_name.clone(), namespace.clone(), interface.clone())
+    {
+        warn!("Failed to run diagnostics: {}", e);
+    }
+
+    Task::none()
+}
+
+/// Handles diagnostics result from backend.
+pub fn handle_diagnostics_result(
+    backend_manager: &mut BackendManager,
+    backend_name: String,
+    namespace: String,
+    interface: String,
+    response: tcgui_shared::DiagnosticsResponse,
+) -> Task<TcGuiMessage> {
+    info!(
+        "Received diagnostics result for {}/{}/{}: {}",
+        backend_name, namespace, interface, response.message
+    );
+
+    // Update the interface with diagnostics result
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(&backend_name)
+        && let Some(namespace_group) = backend_group.namespaces.get_mut(&namespace)
+        && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface)
+    {
+        let _ = tc_interface.update(TcInterfaceMessage::DiagnosticsComplete(response));
     }
 
     Task::none()

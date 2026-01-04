@@ -4,7 +4,8 @@
 //! to provide clean state management across all interface components.
 
 use tcgui_shared::{
-    InterfaceFeatureStates, NetworkBandwidthStats, TcStatsBasic, TcStatsQueue, TcStatsRateEst,
+    DiagnosticsResponse, InterfaceFeatureStates, NetworkBandwidthStats, TcStatsBasic, TcStatsQueue,
+    TcStatsRateEst,
 };
 
 /// Centralized state for a network interface and all its components
@@ -55,6 +56,12 @@ pub struct InterfaceState {
 
     /// Whether the bandwidth chart is expanded/visible
     pub chart_expanded: bool,
+
+    /// Whether diagnostics are currently running
+    pub diagnostics_running: bool,
+
+    /// Last diagnostics result (None if never run or dismissed)
+    pub diagnostics_result: Option<DiagnosticsResponse>,
 }
 
 impl InterfaceState {
@@ -76,6 +83,8 @@ impl InterfaceState {
             applying: false,
             applying_interface_state: false,
             chart_expanded: false,
+            diagnostics_running: false,
+            diagnostics_result: None,
         }
     }
 

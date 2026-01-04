@@ -205,6 +205,10 @@ impl TcGui {
                 self.scenario_manager.setup_execution_query_channel(sender);
                 Task::none()
             }
+            TcGuiMessage::SetupDiagnosticsQueryChannel(sender) => {
+                self.query_manager.setup_diagnostics_query_channel(sender);
+                Task::none()
+            }
 
             // Scenario events
             TcGuiMessage::ScenarioExecutionUpdate(update) => {
@@ -551,6 +555,31 @@ impl TcGui {
                 Task::none()
             }
 
+            // Diagnostics operations
+            TcGuiMessage::RunDiagnostics {
+                backend_name,
+                namespace,
+                interface,
+            } => handle_run_diagnostics(
+                &self.query_manager,
+                &mut self.backend_manager,
+                backend_name,
+                namespace,
+                interface,
+            ),
+            TcGuiMessage::DiagnosticsResult {
+                backend_name,
+                namespace,
+                interface,
+                response,
+            } => handle_diagnostics_result(
+                &mut self.backend_manager,
+                backend_name,
+                namespace,
+                interface,
+                response,
+            ),
+
             // Maintenance operations
             TcGuiMessage::CleanupStaleBackends => handle_cleanup_stale_backends(
                 &mut self.backend_manager,
@@ -639,11 +668,25 @@ impl TcGui {
                 ZenohEvent::ScenarioExecutionQueryChannelReady(sender) => {
                     TcGuiMessage::SetupScenarioExecutionQueryChannel(sender)
                 }
+                ZenohEvent::DiagnosticsQueryChannelReady(sender) => {
+                    TcGuiMessage::SetupDiagnosticsQueryChannel(sender)
+                }
                 ZenohEvent::ScenarioResponse {
                     backend_name,
                     response,
                 } => TcGuiMessage::ScenarioListResponse {
                     backend_name,
+                    response,
+                },
+                ZenohEvent::DiagnosticsResponse {
+                    backend_name,
+                    namespace,
+                    interface,
+                    response,
+                } => TcGuiMessage::DiagnosticsResult {
+                    backend_name,
+                    namespace,
+                    interface,
                     response,
                 },
                 ZenohEvent::PresetListUpdate {

@@ -68,7 +68,8 @@ pub mod topics {
         pub scenario_query_keys: "tcgui/${backend:*}/query/scenario",
         pub scenario_execution_query_keys: "tcgui/${backend:*}/query/scenario/execution",
         pub scenario_execution_updates_keys: "tcgui/${backend:*}/scenario/execution/${namespace:*}/${interface:*}",
-        pub preset_list_keys: "tcgui/${backend:*}/presets/list"
+        pub preset_list_keys: "tcgui/${backend:*}/presets/list",
+        pub diagnostics_query_keys: "tcgui/${backend:*}/query/diagnostics"
     );
 
     kedefine!(
@@ -188,6 +189,13 @@ pub mod topics {
     pub fn preset_list(backend_name: &str) -> OwnedKeyExpr {
         keformat!(preset_list_keys::formatter(), backend = backend_name).expect(
             "Failed to format preset list topic - this should never happen with valid backend name",
+        )
+    }
+
+    /// Get diagnostics query service key expression
+    pub fn diagnostics_query_service(backend_name: &str) -> OwnedKeyExpr {
+        keformat!(diagnostics_query_keys::formatter(), backend = backend_name).expect(
+            "Failed to format diagnostics query topic - this should never happen with valid backend name",
         )
     }
 
@@ -1049,6 +1057,100 @@ pub struct InterfaceControlResponse {
     pub new_state: bool,
     /// Error details (if failed)
     pub error_code: Option<i32>,
+}
+
+// ============================================================================
+// Diagnostics Types
+// ============================================================================
+
+/// Network diagnostics request (Query)
+/// Query Service: tcgui/{backend_name}/query/diagnostics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticsRequest {
+    /// Target network namespace
+    pub namespace: String,
+    /// Target interface name
+    pub interface: String,
+    /// Optional target IP/host for connectivity tests (auto-detected if None)
+    pub target: Option<String>,
+    /// Timeout for diagnostic tests in milliseconds
+    pub timeout_ms: u32,
+}
+
+impl Default for DiagnosticsRequest {
+    fn default() -> Self {
+        Self {
+            namespace: String::new(),
+            interface: String::new(),
+            target: None,
+            timeout_ms: 5000,
+        }
+    }
+}
+
+/// Network diagnostics response (Reply)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticsResponse {
+    /// Whether diagnostics completed successfully
+    pub success: bool,
+    /// Summary message
+    pub message: String,
+    /// Detailed diagnostic results
+    pub results: DiagnosticsResults,
+    /// Error code if diagnostics failed
+    pub error_code: Option<i32>,
+}
+
+/// Comprehensive diagnostic results
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiagnosticsResults {
+    /// Link layer status
+    pub link_status: LinkStatus,
+    /// Connectivity test result (if performed)
+    pub connectivity: Option<ConnectivityResult>,
+    /// Latency measurement result (if performed)
+    pub latency: Option<LatencyResult>,
+    /// Currently configured TC settings on this interface
+    pub configured_tc: Option<TcNetemConfig>,
+}
+
+/// Network link status information
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LinkStatus {
+    /// Whether the interface is administratively UP
+    pub is_up: bool,
+    /// Whether the interface has carrier/link
+    pub has_carrier: bool,
+    /// Interface MTU
+    pub mtu: u32,
+}
+
+/// Connectivity test result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectivityResult {
+    /// Target that was tested
+    pub target: String,
+    /// Whether the target is reachable
+    pub reachable: bool,
+    /// Method used for testing (e.g., "ping", "tcp", "arp")
+    pub method: String,
+}
+
+/// Latency measurement result from ping tests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatencyResult {
+    /// Target that was tested
+    pub target: String,
+    /// Minimum round-trip time in milliseconds
+    pub min_ms: f32,
+    /// Average round-trip time in milliseconds
+    pub avg_ms: f32,
+    /// Maximum round-trip time in milliseconds
+    pub max_ms: f32,
+    /// Packet loss percentage (0.0-100.0)
+    pub packet_loss_percent: f32,
+    /// Number of ping samples taken
+    pub samples: u32,
 }
 
 /// Quality of Service configuration for different message types
