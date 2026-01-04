@@ -9,13 +9,14 @@
 use crate::network::NetworkManager;
 use crate::tc_commands::TcCommandManager;
 use nlink::netlink::namespace;
+use nlink::netlink::{Connection, Route};
 use std::process::Stdio;
 
 use std::time::Duration;
 use tcgui_shared::{
     ConnectivityResult, DiagnosticsRequest, DiagnosticsResponse, DiagnosticsResults, LatencyResult,
-    LinkStatus, TcCorruptConfig, TcDelayConfig, TcDuplicateConfig, TcLossConfig, TcNetemConfig,
-    TcRateLimitConfig, TcReorderConfig,
+    LinkStatus, TcCorruptConfig, TcDelayConfig, TcDiagnosticStats, TcDuplicateConfig, TcLossConfig,
+    TcNetemConfig, TcRateLimitConfig, TcReorderConfig,
 };
 use tokio::process::Command;
 use tracing::{debug, info, instrument};
@@ -73,6 +74,11 @@ impl<'a> DiagnosticsService<'a> {
             .await
             .ok()
             .flatten();
+
+        // Step 2b: Get TC statistics if netem is configured
+        results.tc_stats = self
+            .get_tc_diagnostic_stats(&request.namespace, &request.interface)
+            .await;
 
         // Step 3: Detect target for connectivity tests
         let target = match &request.target {
@@ -220,6 +226,36 @@ impl<'a> DiagnosticsService<'a> {
         }
     }
 
+    /// Get TC diagnostic statistics for an interface (drops, overlimits, etc.).
+    async fn get_tc_diagnostic_stats(
+        &self,
+        namespace: &str,
+        interface: &str,
+    ) -> Option<TcDiagnosticStats> {
+        match self
+            .tc_manager
+            .get_tc_statistics(namespace, interface)
+            .await
+        {
+            Ok(Some(stats)) => Some(TcDiagnosticStats {
+                drops: stats.queue.drops,
+                overlimits: stats.queue.overlimits,
+                qlen: stats.queue.qlen,
+                backlog: stats.queue.backlog,
+                bps: stats.rate_est.map(|r| r.bps),
+                pps: stats.rate_est.map(|r| r.pps),
+            }),
+            Ok(None) => None, // No netem configured
+            Err(e) => {
+                debug!(
+                    "Failed to get TC stats for {}/{}: {}",
+                    namespace, interface, e
+                );
+                None
+            }
+        }
+    }
+
     /// Detect a reasonable target for ping tests.
     async fn detect_target(&self, namespace: &str, _interface: &str) -> Option<String> {
         // Try to get the default gateway
@@ -231,38 +267,22 @@ impl<'a> DiagnosticsService<'a> {
         Some("8.8.8.8".to_string())
     }
 
-    /// Get the default gateway for a namespace.
-    async fn get_default_gateway(&self, namespace: &str) -> Option<String> {
-        let output = if namespace == "default" {
-            Command::new("ip")
-                .args(["route", "show", "default"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .output()
-                .await
-                .ok()?
+    /// Get the default gateway for a namespace using nlink's route query API.
+    async fn get_default_gateway(&self, ns: &str) -> Option<String> {
+        let conn = if ns == "default" {
+            Connection::<Route>::new().ok()?
         } else {
-            Command::new("ip")
-                .args(["netns", "exec", namespace, "ip", "route", "show", "default"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .output()
-                .await
-                .ok()?
+            namespace::connection_for(ns).ok()?
         };
 
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Parse "default via 192.168.1.1 dev eth0"
-            for line in stdout.lines() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 3 && parts[0] == "default" && parts[1] == "via" {
-                    return Some(parts[2].to_string());
-                }
-            }
-        }
+        let routes = conn.get_routes().await.ok()?;
 
-        None
+        // Find IPv4 default route (dst_len == 0 means 0.0.0.0/0)
+        routes
+            .iter()
+            .find(|r| r.dst_len() == 0 && r.is_ipv4())
+            .and_then(|r| r.gateway())
+            .map(|ip| ip.to_string())
     }
 
     /// Run a ping test and parse results.
@@ -426,6 +446,16 @@ impl<'a> DiagnosticsService<'a> {
         // TC status
         if results.configured_tc.is_some() {
             parts.push("TC active".to_string());
+        }
+
+        // TC stats summary (drops and overlimits)
+        if let Some(ref tc_stats) = results.tc_stats
+            && (tc_stats.drops > 0 || tc_stats.overlimits > 0)
+        {
+            parts.push(format!(
+                "TC: {} drops, {} overlimits",
+                tc_stats.drops, tc_stats.overlimits
+            ));
         }
 
         parts.join(", ")

@@ -94,8 +94,9 @@ pub struct PresetFile {
 }
 
 impl PresetFile {
-    /// Convert to CustomPreset with implicit enabled=true for present fields
-    pub fn to_custom_preset(self) -> CustomPreset {
+    /// Convert to CustomPreset with implicit enabled=true for present fields.
+    /// Returns an error if rate parsing fails.
+    pub fn to_custom_preset(self) -> Result<CustomPreset, PresetParseError> {
         let config = TcNetemConfig {
             loss: match self.loss {
                 Some(loss) => TcLossConfig {
@@ -147,7 +148,9 @@ impl PresetFile {
             rate_limit: match self.rate_limit {
                 Some(rate) => TcRateLimitConfig {
                     enabled: true,
-                    rate_kbps: rate.rate_kbps,
+                    rate_kbps: rate
+                        .to_rate_kbps()
+                        .map_err(PresetParseError::ValidationError)?,
                 },
                 None => TcRateLimitConfig {
                     enabled: false,
@@ -156,12 +159,12 @@ impl PresetFile {
             },
         };
 
-        CustomPreset {
+        Ok(CustomPreset {
             id: self.id,
             name: self.name,
             description: self.description,
             config,
-        }
+        })
     }
 }
 
@@ -173,7 +176,7 @@ pub fn parse_preset_json5(json5_content: &str) -> Result<PresetFile, PresetParse
 /// Parse and convert a preset from a JSON5 string
 pub fn parse_preset(json5_content: &str) -> Result<CustomPreset, PresetParseError> {
     let preset_file = parse_preset_json5(json5_content)?;
-    Ok(preset_file.to_custom_preset())
+    preset_file.to_custom_preset()
 }
 
 /// Parse a preset from a file path

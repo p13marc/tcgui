@@ -817,6 +817,7 @@ impl TcCommandManager {
     }
 
     /// Capture the current TC state for an interface (for rollback purposes)
+    /// Now captures the actual netem configuration for proper restoration.
     #[instrument(skip(self), fields(namespace, interface))]
     pub async fn capture_tc_state(
         &self,
@@ -841,31 +842,86 @@ impl TcCommandManager {
 
         let had_netem = qdisc_info.contains("netem");
 
+        // Capture the actual netem configuration if present
+        let netem_config = if had_netem {
+            match self.get_netem_options(namespace, interface).await {
+                Ok(Some(opts)) => {
+                    // Convert NetemOptions to TcNetemConfig for storage
+                    Some(TcNetemConfig {
+                        loss: tcgui_shared::TcLossConfig {
+                            enabled: opts.loss().unwrap_or(0.0) > 0.0,
+                            percentage: opts.loss().unwrap_or(0.0) as f32,
+                            correlation: opts.loss_correlation().unwrap_or(0.0) as f32,
+                        },
+                        delay: tcgui_shared::TcDelayConfig {
+                            enabled: opts.delay().map(|d| d.as_millis() > 0).unwrap_or(false),
+                            base_ms: opts.delay().map(|d| d.as_millis() as f32).unwrap_or(0.0),
+                            jitter_ms: opts.jitter().map(|d| d.as_millis() as f32).unwrap_or(0.0),
+                            correlation: opts.delay_correlation().unwrap_or(0.0) as f32,
+                        },
+                        duplicate: tcgui_shared::TcDuplicateConfig {
+                            enabled: opts.duplicate().unwrap_or(0.0) > 0.0,
+                            percentage: opts.duplicate().unwrap_or(0.0) as f32,
+                            correlation: opts.duplicate_correlation().unwrap_or(0.0) as f32,
+                        },
+                        reorder: tcgui_shared::TcReorderConfig {
+                            enabled: opts.reorder().unwrap_or(0.0) > 0.0,
+                            percentage: opts.reorder().unwrap_or(0.0) as f32,
+                            correlation: opts.reorder_correlation().unwrap_or(0.0) as f32,
+                            gap: opts.gap().unwrap_or(5),
+                        },
+                        corrupt: tcgui_shared::TcCorruptConfig {
+                            enabled: opts.corrupt().unwrap_or(0.0) > 0.0,
+                            percentage: opts.corrupt().unwrap_or(0.0) as f32,
+                            correlation: opts.corrupt_correlation().unwrap_or(0.0) as f32,
+                        },
+                        rate_limit: tcgui_shared::TcRateLimitConfig {
+                            enabled: opts.rate_bps().map(|r| r > 0).unwrap_or(false),
+                            rate_kbps: opts.rate_bps().map(|r| (r / 1000) as u32).unwrap_or(0),
+                        },
+                    })
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    warn!("Could not capture netem options: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let state = CapturedTcState {
             namespace: namespace.to_string(),
             interface: interface.to_string(),
             qdisc_info: qdisc_info.clone(),
             had_netem,
+            netem_config,
         };
 
         info!(
-            "Captured TC state: had_netem={}, qdisc_info='{}'",
+            "Captured TC state: had_netem={}, has_config={}, qdisc_info='{}'",
             had_netem,
+            state.netem_config.is_some(),
             qdisc_info.trim()
         );
 
         Ok(state)
     }
 
-    /// Restore TC state from a previously captured state
+    /// Restore TC state from a previously captured state.
+    /// If the captured state includes netem configuration, it will be reapplied.
     #[instrument(skip(self, state), fields(namespace = %state.namespace, interface = %state.interface))]
     pub async fn restore_tc_state(&self, state: &CapturedTcState) -> Result<String> {
         info!(
-            "Restoring TC state for {}/{}: had_netem={}",
-            state.namespace, state.interface, state.had_netem
+            "Restoring TC state for {}/{}: had_netem={}, has_config={}",
+            state.namespace,
+            state.interface,
+            state.had_netem,
+            state.netem_config.is_some()
         );
 
-        // Remove any current TC configuration
+        // Remove any current TC configuration first
         match self
             .remove_tc_config_in_namespace(&state.namespace, &state.interface)
             .await
@@ -875,6 +931,31 @@ impl TcCommandManager {
             }
             Err(e) => {
                 info!("Note while removing TC config: {}", e);
+            }
+        }
+
+        // If we have a captured netem configuration, reapply it
+        if let Some(ref config) = state.netem_config {
+            info!(
+                "Reapplying captured TC config for {}/{}",
+                state.namespace, state.interface
+            );
+
+            match self
+                .apply_tc_config_structured(&state.namespace, &state.interface, config)
+                .await
+            {
+                Ok(msg) => {
+                    info!("Restored TC config: {}", msg);
+                    return Ok("TC state restored with original configuration".to_string());
+                }
+                Err(e) => {
+                    warn!("Failed to restore TC config: {}", e);
+                    return Ok(format!(
+                        "TC state partially restored (config reapply failed: {})",
+                        e
+                    ));
+                }
             }
         }
 
@@ -917,6 +998,8 @@ pub struct CapturedTcState {
     pub qdisc_info: String,
     /// Whether there was a netem qdisc configured
     pub had_netem: bool,
+    /// The captured netem configuration (if any) for proper restoration
+    pub netem_config: Option<TcNetemConfig>,
 }
 
 impl CapturedTcState {

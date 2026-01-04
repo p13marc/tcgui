@@ -1112,6 +1112,25 @@ pub struct DiagnosticsResults {
     pub latency: Option<LatencyResult>,
     /// Currently configured TC settings on this interface
     pub configured_tc: Option<TcNetemConfig>,
+    /// TC qdisc statistics (if netem is configured)
+    pub tc_stats: Option<TcDiagnosticStats>,
+}
+
+/// TC diagnostic statistics showing qdisc effectiveness
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TcDiagnosticStats {
+    /// Packets dropped by qdisc
+    pub drops: u32,
+    /// Queue overlimit events (rate limiting triggered)
+    pub overlimits: u32,
+    /// Current queue length in packets
+    pub qlen: u32,
+    /// Current backlog in bytes
+    pub backlog: u32,
+    /// Kernel-measured throughput in bytes per second (if available)
+    pub bps: Option<u32>,
+    /// Kernel-measured throughput in packets per second (if available)
+    pub pps: Option<u32>,
 }
 
 /// Network link status information
