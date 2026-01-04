@@ -28,7 +28,7 @@ nlink = { version = "0.6.0", features = ["full"] }
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Marc Pardo <p13marc@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/p13marc/tcgui"

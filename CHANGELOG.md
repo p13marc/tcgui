@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-01-04
+
+### Added
+- TC diagnostic statistics in diagnostics output (drops, overlimits, qlen, backlog, bps/pps)
+- Human-readable rate parsing for presets and scenarios (e.g., `rate: "10mbit"`)
+- Full TC state capture for proper scenario rollback (stores actual netem config)
+- TcDiagnosticStats type for TC qdisc effectiveness metrics
+
+### Changed
+- Upgraded nlink dependency from 0.5.0 to 0.6.0
+- Gateway detection now uses nlink's get_routes() API instead of shell commands
+- TC state restore now reapplies the original netem configuration instead of just clearing
+
+### Removed
+- Shell command dependency for gateway detection (`ip route show default`)
+
 ## [0.5.0] - 2026-01-04
 
 ### Added
