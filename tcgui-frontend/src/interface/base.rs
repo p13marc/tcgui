@@ -4,7 +4,7 @@
 //! feature-specific components while maintaining the same external API as
 //! the original monolithic interface.
 
-use iced::widget::{Column, Row, checkbox, column, container, row, text, tooltip};
+use iced::widget::{Column, checkbox, column, container, row, text, tooltip};
 use iced::{Background, Color, Element, Task};
 use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
@@ -981,36 +981,11 @@ impl TcInterface {
             return column![].into();
         }
 
-        // Build grid with 3 columns using FillPortion for equal widths
-        let num_cols = 3;
-        let spacing = scaled_spacing(4, zoom);
-        let mut grid_rows: Vec<Element<'a, TcInterfaceMessage>> = Vec::new();
-        let mut cards_iter = cards.into_iter().peekable();
-
-        while cards_iter.peek().is_some() {
-            let mut row_cards: Vec<Element<'a, TcInterfaceMessage>> = Vec::new();
-            for _ in 0..num_cols {
-                if let Some(card) = cards_iter.next() {
-                    row_cards.push(container(card).width(iced::Length::FillPortion(1)).into());
-                } else {
-                    // Empty placeholder for alignment
-                    row_cards.push(
-                        container(text(""))
-                            .width(iced::Length::FillPortion(1))
-                            .into(),
-                    );
-                }
-            }
-
-            grid_rows.push(
-                Row::with_children(row_cards)
-                    .spacing(spacing)
-                    .align_y(iced::Alignment::Start)
-                    .into(),
-            );
-        }
-
-        Column::with_children(grid_rows).spacing(spacing).into()
+        iced::widget::Grid::with_children(cards)
+            .columns(3)
+            .spacing(scaled_spacing(4, zoom))
+            .height(iced::Length::Shrink)
+            .into()
     }
 
     /// Render loss feature as a card
