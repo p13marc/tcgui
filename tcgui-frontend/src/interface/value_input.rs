@@ -19,53 +19,47 @@ use crate::view::{scaled, scaled_spacing};
 // Research-based preset values (expanded chip sets)
 // ============================================================================
 
-/// Loss percentage presets (based on network quality thresholds)
+/// Loss percentage presets (meaningful thresholds)
+/// - 1%: acceptable threshold (causes ~70% throughput drop)
+/// - 5%: poor connection
+/// - 10%: severely degraded
+/// - 25%: stress testing
+/// - 50%: extreme conditions
 const LOSS_CHIPS: &[(&str, f32)] = &[
-    ("0.5", 0.5),
     ("1", 1.0),
-    ("2", 2.0),
     ("5", 5.0),
     ("10", 10.0),
-    ("20", 20.0),
+    ("25", 25.0),
     ("50", 50.0),
 ];
 
 /// Delay presets in ms (based on network types)
-const DELAY_CHIPS: &[(&str, f32)] = &[
-    ("5", 5.0),
-    ("20", 20.0),
-    ("50", 50.0),
-    ("100", 100.0),
-    ("200", 200.0),
-    ("500", 500.0),
-    ("1s", 1000.0),
-];
+/// - 20ms: good broadband/5G
+/// - 100ms: 4G LTE
+/// - 500ms: satellite/poor mobile
+/// - 1s: extreme latency
+const DELAY_CHIPS: &[(&str, f32)] = &[("20", 20.0), ("100", 100.0), ("500", 500.0), ("1s", 1000.0)];
 
 /// Jitter presets in ms (based on VoIP/video quality thresholds)
-const JITTER_CHIPS: &[(&str, f32)] = &[
-    ("5", 5.0),
-    ("10", 10.0),
-    ("20", 20.0),
-    ("30", 30.0),
-    ("50", 50.0),
-    ("100", 100.0),
-];
+/// - 10ms: good quality
+/// - 30ms: VoIP acceptable limit
+/// - 100ms: poor/mobile
+const JITTER_CHIPS: &[(&str, f32)] = &[("10", 10.0), ("30", 30.0), ("100", 100.0)];
 
 /// Duplicate/Corrupt percentage presets
-const SMALL_PERCENT_CHIPS: &[(&str, f32)] = &[
-    ("0.1", 0.1),
-    ("0.5", 0.5),
-    ("1", 1.0),
-    ("2", 2.0),
-    ("5", 5.0),
-    ("10", 10.0),
-];
+/// - 1%: testing
+/// - 5%: stress test
+/// - 10%: extreme
+const SMALL_PERCENT_CHIPS: &[(&str, f32)] = &[("1", 1.0), ("5", 5.0), ("10", 10.0)];
 
 /// Reorder percentage presets
-const REORDER_CHIPS: &[(&str, f32)] = &[("5", 5.0), ("10", 10.0), ("25", 25.0), ("50", 50.0)];
+/// - 5%: slight
+/// - 25%: heavy
+/// - 50%: extreme
+const REORDER_CHIPS: &[(&str, f32)] = &[("5", 5.0), ("25", 25.0), ("50", 50.0)];
 
 /// Gap presets (packets between reordered packets)
-const GAP_CHIPS: &[(&str, u32)] = &[("1", 1), ("2", 2), ("3", 3), ("5", 5)];
+const GAP_CHIPS: &[(&str, u32)] = &[("1", 1), ("3", 3), ("5", 5)];
 
 // ============================================================================
 // Theme color extraction (avoids lifetime issues with closures)
