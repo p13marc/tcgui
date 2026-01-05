@@ -4,8 +4,8 @@
 //! feature-specific components while maintaining the same external API as
 //! the original monolithic interface.
 
-use iced::widget::{Column, Grid, checkbox, column, container, row, text, tooltip};
-use iced::{Background, Color, Element, Length, Task};
+use iced::widget::{Column, Row, checkbox, column, container, row, text, tooltip};
+use iced::{Background, Color, Element, Task};
 use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
 use tcgui_shared::presets::PresetList;
@@ -949,47 +949,47 @@ impl TcInterface {
             .into()
     }
 
-    /// Render expandable feature cards in a grid layout
+    /// Render expandable feature cards in a flowing row layout
     fn render_expandable_features<'a>(
         &'a self,
         theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
-        let mut grid = Grid::new().spacing(scaled_spacing(8, zoom));
+        let mut cards: Vec<Element<'a, TcInterfaceMessage>> = Vec::new();
 
         // Loss feature card
         if self.state.features.loss.enabled {
-            grid = grid.push(self.render_loss_card(theme, zoom));
+            cards.push(self.render_loss_card(theme, zoom));
         }
 
         // Delay feature card
         if self.state.features.delay.enabled {
-            grid = grid.push(self.render_delay_card(theme, zoom));
+            cards.push(self.render_delay_card(theme, zoom));
         }
 
         // Duplicate feature card
         if self.state.features.duplicate.enabled {
-            grid = grid.push(self.render_duplicate_card(theme, zoom));
+            cards.push(self.render_duplicate_card(theme, zoom));
         }
 
         // Reorder feature card
         if self.state.features.reorder.enabled {
-            grid = grid.push(self.render_reorder_card(theme, zoom));
+            cards.push(self.render_reorder_card(theme, zoom));
         }
 
         // Corrupt feature card
         if self.state.features.corrupt.enabled {
-            grid = grid.push(self.render_corrupt_card(theme, zoom));
+            cards.push(self.render_corrupt_card(theme, zoom));
         }
 
         // Rate limit feature card
         if self.state.features.rate_limit.enabled {
-            grid = grid.push(self.render_rate_limit_card(theme, zoom));
+            cards.push(self.render_rate_limit_card(theme, zoom));
         }
 
-        container(grid)
-            .padding(scaled_spacing(4, zoom))
-            .width(Length::Fill)
+        Row::with_children(cards)
+            .spacing(scaled_spacing(4, zoom))
+            .wrap()
             .into()
     }
 

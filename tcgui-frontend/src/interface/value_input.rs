@@ -466,9 +466,9 @@ pub fn feature_card<'a>(
             color: Some(text_color),
         });
 
-    container(column![header, content].spacing(scaled_spacing(6, zoom)))
-        .padding(scaled_spacing(8, zoom))
-        .width(Length::Fill)
+    container(column![header, content].spacing(scaled_spacing(2, zoom)))
+        .padding(scaled_spacing(4, zoom))
+        .width(Length::Shrink)
         .style(card_style(card_colors))
         .into()
 }
