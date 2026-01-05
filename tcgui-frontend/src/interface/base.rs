@@ -4,14 +4,14 @@
 //! feature-specific components while maintaining the same external API as
 //! the original monolithic interface.
 
-use iced::widget::{checkbox, column, container, row, text, tooltip};
-use iced::{Background, Color, Element, Task};
+use iced::widget::{Column, Grid, checkbox, column, container, row, text, tooltip};
+use iced::{Background, Color, Element, Length, Task};
 use std::time::Duration;
 use tcgui_shared::NetworkBandwidthStats;
 use tcgui_shared::presets::PresetList;
 
-use super::slider_input::{self, SliderInputConfig};
 use super::state::InterfaceState;
+use super::value_input;
 use crate::bandwidth_chart::bandwidth_chart_view;
 use crate::bandwidth_history::BandwidthHistory;
 use crate::icons::Icon;
@@ -949,341 +949,199 @@ impl TcInterface {
             .into()
     }
 
-    /// Render expandable feature rows with parameter sliders
+    /// Render expandable feature cards in a grid layout
     fn render_expandable_features<'a>(
         &'a self,
         theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
-        let mut feature_rows = Vec::new();
+        let mut grid = Grid::new().spacing(scaled_spacing(8, zoom));
 
-        // Loss feature controls
+        // Loss feature card
         if self.state.features.loss.enabled {
-            let loss_controls = self.render_loss_controls(theme, zoom);
-            feature_rows.push(loss_controls);
+            grid = grid.push(self.render_loss_card(theme, zoom));
         }
 
-        // Delay feature controls
+        // Delay feature card
         if self.state.features.delay.enabled {
-            let delay_controls = self.render_delay_controls(theme, zoom);
-            feature_rows.push(delay_controls);
+            grid = grid.push(self.render_delay_card(theme, zoom));
         }
 
-        // Duplicate feature controls
+        // Duplicate feature card
         if self.state.features.duplicate.enabled {
-            let duplicate_controls = self.render_duplicate_controls(theme, zoom);
-            feature_rows.push(duplicate_controls);
+            grid = grid.push(self.render_duplicate_card(theme, zoom));
         }
 
-        // Reorder feature controls
+        // Reorder feature card
         if self.state.features.reorder.enabled {
-            let reorder_controls = self.render_reorder_controls(theme, zoom);
-            feature_rows.push(reorder_controls);
+            grid = grid.push(self.render_reorder_card(theme, zoom));
         }
 
-        // Corrupt feature controls
+        // Corrupt feature card
         if self.state.features.corrupt.enabled {
-            let corrupt_controls = self.render_corrupt_controls(theme, zoom);
-            feature_rows.push(corrupt_controls);
+            grid = grid.push(self.render_corrupt_card(theme, zoom));
         }
 
-        // Rate limit feature controls
+        // Rate limit feature card
         if self.state.features.rate_limit.enabled {
-            let rate_limit_controls = self.render_rate_limit_controls(theme, zoom);
-            feature_rows.push(rate_limit_controls);
+            grid = grid.push(self.render_rate_limit_card(theme, zoom));
         }
 
-        column(feature_rows)
-            .spacing(scaled_spacing(8, zoom))
+        container(grid)
             .padding(scaled_spacing(4, zoom))
+            .width(Length::Fill)
             .into()
     }
 
-    /// Render loss feature controls with dual-control widgets (slider + NumberInput)
-    fn render_loss_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    /// Render loss feature as a card
+    fn render_loss_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let loss_config = &self.state.features.loss.config;
-        let text_color = theme.colors.text_primary;
-        let tooltip_delay = Duration::from_millis(500);
-        let tooltip_style = theme.tooltip_style();
 
-        row![
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::percentage("Loss:"),
-                    loss_config.percentage,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::LossChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Percentage of packets to drop randomly"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::correlation(),
-                    loss_config.correlation,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::CorrelationChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("How much loss depends on previous packet (burst loss)"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-        ]
-        .spacing(scaled_spacing(8, zoom))
-        .align_y(iced::Alignment::Center)
-        .into()
+        let content: Column<'_, TcInterfaceMessage> = Column::new()
+            .spacing(scaled_spacing(4, zoom))
+            .push(value_input::card_row_percent(
+                "Amount:",
+                loss_config.percentage,
+                TcInterfaceMessage::LossChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_percent(
+                "Burst:",
+                loss_config.correlation,
+                TcInterfaceMessage::CorrelationChanged,
+                theme,
+                zoom,
+            ));
+
+        value_input::feature_card("Loss", content, theme, zoom)
     }
 
-    /// Render duplicate feature controls with dual-control widgets (slider + NumberInput)
-    fn render_duplicate_controls(
-        &self,
-        theme: &Theme,
-        zoom: f32,
-    ) -> Element<'_, TcInterfaceMessage> {
+    /// Render duplicate feature as a card
+    fn render_duplicate_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let duplicate_config = &self.state.features.duplicate.config;
-        let text_color = theme.colors.text_primary;
-        let tooltip_delay = Duration::from_millis(500);
-        let tooltip_style = theme.tooltip_style();
 
-        row![
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::percentage("Dup:").with_label_width(40.0),
-                    duplicate_config.percentage,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::DuplicatePercentageChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Percentage of packets to duplicate"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::correlation(),
-                    duplicate_config.correlation,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::DuplicateCorrelationChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("How much duplication depends on previous packet"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-        ]
-        .spacing(scaled_spacing(8, zoom))
-        .align_y(iced::Alignment::Center)
-        .into()
+        let content: Column<'_, TcInterfaceMessage> = Column::new()
+            .spacing(scaled_spacing(4, zoom))
+            .push(value_input::card_row_percent(
+                "Amount:",
+                duplicate_config.percentage,
+                TcInterfaceMessage::DuplicatePercentageChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_percent(
+                "Burst:",
+                duplicate_config.correlation,
+                TcInterfaceMessage::DuplicateCorrelationChanged,
+                theme,
+                zoom,
+            ));
+
+        value_input::feature_card("Duplicate", content, theme, zoom)
     }
 
-    /// Render reorder feature controls with dual-control widgets (slider + NumberInput)
-    fn render_reorder_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    /// Render reorder feature as a card
+    fn render_reorder_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let reorder_config = &self.state.features.reorder.config;
-        let text_color = theme.colors.text_primary;
-        let tooltip_delay = Duration::from_millis(500);
-        let tooltip_style = theme.tooltip_style();
 
-        row![
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::percentage("Reorder:").with_label_width(60.0),
-                    reorder_config.percentage,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::ReorderPercentageChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Percentage of packets to reorder"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_u32(
-                    &SliderInputConfig::gap(),
-                    reorder_config.gap,
-                    1..=10,
-                    1,
-                    TcInterfaceMessage::ReorderGapChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Number of packets to delay before sending"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::correlation().with_slider_width(80.0),
-                    reorder_config.correlation,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::ReorderCorrelationChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("How much reordering depends on previous packet"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-        ]
-        .spacing(scaled_spacing(8, zoom))
-        .align_y(iced::Alignment::Center)
-        .into()
+        let content: Column<'_, TcInterfaceMessage> = Column::new()
+            .spacing(scaled_spacing(4, zoom))
+            .push(value_input::card_row_percent(
+                "Amount:",
+                reorder_config.percentage,
+                TcInterfaceMessage::ReorderPercentageChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_gap(
+                "Gap:",
+                reorder_config.gap,
+                TcInterfaceMessage::ReorderGapChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_percent(
+                "Burst:",
+                reorder_config.correlation,
+                TcInterfaceMessage::ReorderCorrelationChanged,
+                theme,
+                zoom,
+            ));
+
+        value_input::feature_card("Reorder", content, theme, zoom)
     }
 
-    /// Render corrupt feature controls with dual-control widgets (slider + NumberInput)
-    fn render_corrupt_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    /// Render corrupt feature as a card
+    fn render_corrupt_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let corrupt_config = &self.state.features.corrupt.config;
-        let text_color = theme.colors.text_primary;
-        let tooltip_delay = Duration::from_millis(500);
-        let tooltip_style = theme.tooltip_style();
 
-        row![
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::percentage("Corrupt:").with_label_width(60.0),
-                    corrupt_config.percentage,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::CorruptPercentageChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Percentage of packets with random bit errors"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::correlation(),
-                    corrupt_config.correlation,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::CorruptCorrelationChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("How much corruption depends on previous packet"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-        ]
-        .spacing(scaled_spacing(8, zoom))
-        .align_y(iced::Alignment::Center)
-        .into()
+        let content: Column<'_, TcInterfaceMessage> = Column::new()
+            .spacing(scaled_spacing(4, zoom))
+            .push(value_input::card_row_percent(
+                "Amount:",
+                corrupt_config.percentage,
+                TcInterfaceMessage::CorruptPercentageChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_percent(
+                "Burst:",
+                corrupt_config.correlation,
+                TcInterfaceMessage::CorruptCorrelationChanged,
+                theme,
+                zoom,
+            ));
+
+        value_input::feature_card("Corrupt", content, theme, zoom)
     }
 
-    /// Render rate limit feature controls with dual-control widgets (slider + NumberInput)
-    fn render_rate_limit_controls(
-        &self,
-        theme: &Theme,
-        zoom: f32,
-    ) -> Element<'_, TcInterfaceMessage> {
+    /// Render rate limit feature as a card
+    fn render_rate_limit_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let rate_config = &self.state.features.rate_limit.config;
-        let text_color = theme.colors.text_primary;
-        let tooltip_delay = Duration::from_millis(500);
-        let tooltip_style = theme.tooltip_style();
 
-        row![
-            tooltip(
-                slider_input::slider_input_u32(
-                    &SliderInputConfig::rate_limit().with_label_width(70.0),
-                    rate_config.rate_kbps,
-                    1..=1000000,
-                    1,
-                    TcInterfaceMessage::RateLimitChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Maximum bandwidth in kilobits per second"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-        ]
-        .spacing(scaled_spacing(8, zoom))
-        .align_y(iced::Alignment::Center)
-        .into()
+        let content: Column<'_, TcInterfaceMessage> = Column::new()
+            .spacing(scaled_spacing(4, zoom))
+            .push(value_input::card_row_rate(
+                "Limit:",
+                rate_config.rate_kbps,
+                TcInterfaceMessage::RateLimitChanged,
+                theme,
+                zoom,
+            ));
+
+        value_input::feature_card("Rate Limit", content, theme, zoom)
     }
 
-    /// Render delay feature controls with dual-control widgets (slider + NumberInput)
-    fn render_delay_controls(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+    /// Render delay feature as a card
+    fn render_delay_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
         let delay_config = &self.state.features.delay.config;
-        let text_color = theme.colors.text_primary;
-        let tooltip_delay = Duration::from_millis(500);
-        let tooltip_style = theme.tooltip_style();
 
-        row![
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::milliseconds("Delay:"),
-                    delay_config.base_ms,
-                    0.0..=5000.0,
-                    1.0,
-                    TcInterfaceMessage::DelayChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Base latency added to each packet in milliseconds"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::milliseconds("Jitter:"),
-                    delay_config.jitter_ms,
-                    0.0..=1000.0,
-                    1.0,
-                    TcInterfaceMessage::DelayJitterChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("Random variation added to delay (delay +/- jitter)"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-            tooltip(
-                slider_input::slider_input_f32(
-                    &SliderInputConfig::correlation().with_slider_width(80.0),
-                    delay_config.correlation,
-                    0.0..=100.0,
-                    0.1,
-                    TcInterfaceMessage::DelayCorrelationChanged,
-                    text_color,
-                    zoom,
-                ),
-                text("How much delay depends on previous packet"),
-                tooltip::Position::Top
-            )
-            .delay(tooltip_delay)
-            .style(move |_| tooltip_style),
-        ]
-        .spacing(scaled_spacing(8, zoom))
-        .align_y(iced::Alignment::Center)
-        .into()
+        let content: Column<'_, TcInterfaceMessage> = Column::new()
+            .spacing(scaled_spacing(4, zoom))
+            .push(value_input::card_row_delay(
+                "Base:",
+                delay_config.base_ms,
+                TcInterfaceMessage::DelayChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_jitter(
+                "Jitter:",
+                delay_config.jitter_ms,
+                TcInterfaceMessage::DelayJitterChanged,
+                theme,
+                zoom,
+            ))
+            .push(value_input::card_row_percent(
+                "Burst:",
+                delay_config.correlation,
+                TcInterfaceMessage::DelayCorrelationChanged,
+                theme,
+                zoom,
+            ));
+
+        value_input::feature_card("Delay", content, theme, zoom)
     }
 
     // Public API methods to maintain compatibility
