@@ -1,13 +1,13 @@
 //! TC parameter input controls with research-based presets.
 //!
 //! This module provides input controls optimized for each TC parameter type:
-//! - **Chips + Dropdown**: For percentages and timing with common presets
-//! - **Chips only**: For small discrete values (gap, correlation)
+//! - **Chips**: Quick selection of common values (expanded presets)
+//! - **Slider**: For continuous values like correlation
 //! - **NumberInput only**: For rate limit (wide range, needs precision)
 //!
 //! Preset values are based on real-world network conditions research.
 
-use iced::widget::{Column, Row, button, container, pick_list, row, text};
+use iced::widget::{Column, Row, button, container, row, slider, text};
 use iced::{Alignment, Background, Border, Element, Length, Shadow};
 use iced_aw::NumberInput;
 
@@ -16,85 +16,55 @@ use crate::theme::Theme;
 use crate::view::{scaled, scaled_spacing};
 
 // ============================================================================
-// Research-based preset values
+// Research-based preset values (expanded chip sets)
 // ============================================================================
 
 /// Loss percentage presets (based on network quality thresholds)
-/// - 0.5%: Good 4G/WiFi
-/// - 1%: Acceptable threshold (causes 70% throughput drop!)
-/// - 5%: Poor connection
-const LOSS_CHIP_PRESETS: &[(&str, f32)] = &[("0.5", 0.5), ("1", 1.0), ("5", 5.0)];
-const LOSS_DROPDOWN_OPTIONS: &[(&str, f32)] = &[
-    ("0.1%", 0.1),
-    ("0.5%", 0.5),
-    ("1%", 1.0),
-    ("2%", 2.0),
-    ("5%", 5.0),
-    ("10%", 10.0),
-    ("20%", 20.0),
+const LOSS_CHIPS: &[(&str, f32)] = &[
+    ("0.1", 0.1),
+    ("0.5", 0.5),
+    ("1", 1.0),
+    ("2", 2.0),
+    ("5", 5.0),
+    ("10", 10.0),
 ];
 
 /// Delay presets in ms (based on network types)
-/// - 20ms: Good broadband/5G
-/// - 100ms: 4G LTE
-/// - 500ms: Satellite (LEO)
-const DELAY_CHIP_PRESETS: &[(&str, f32)] = &[("20", 20.0), ("100", 100.0), ("500", 500.0)];
-const DELAY_DROPDOWN_OPTIONS: &[(&str, f32)] = &[
-    ("5ms", 5.0),
-    ("20ms", 20.0),
-    ("50ms", 50.0),
-    ("100ms", 100.0),
-    ("200ms", 200.0),
-    ("500ms", 500.0),
-    ("1000ms", 1000.0),
-    ("2000ms", 2000.0),
+const DELAY_CHIPS: &[(&str, f32)] = &[
+    ("5", 5.0),
+    ("20", 20.0),
+    ("50", 50.0),
+    ("100", 100.0),
+    ("200", 200.0),
+    ("500", 500.0),
+    ("1s", 1000.0),
 ];
 
 /// Jitter presets in ms (based on VoIP/video quality thresholds)
-/// - 10ms: Good quality
-/// - 30ms: VoIP acceptable limit
-/// - 100ms: Poor/mobile
-const JITTER_CHIP_PRESETS: &[(&str, f32)] = &[("10", 10.0), ("30", 30.0), ("100", 100.0)];
-const JITTER_DROPDOWN_OPTIONS: &[(&str, f32)] = &[
-    ("5ms", 5.0),
-    ("10ms", 10.0),
-    ("20ms", 20.0),
-    ("30ms", 30.0),
-    ("50ms", 50.0),
-    ("100ms", 100.0),
-    ("200ms", 200.0),
+const JITTER_CHIPS: &[(&str, f32)] = &[
+    ("5", 5.0),
+    ("10", 10.0),
+    ("20", 20.0),
+    ("30", 30.0),
+    ("50", 50.0),
+    ("100", 100.0),
 ];
 
-/// Correlation (burst) presets
-/// - 0%: Fully random
-/// - 25%: Slight bursting (typical recommendation)
-/// - 50%: Moderate bursting
-const CORRELATION_CHIP_PRESETS: &[(&str, f32)] = &[("0", 0.0), ("25", 25.0), ("50", 50.0)];
-
 /// Duplicate/Corrupt percentage presets
-/// - 0.1%: Realistic
-/// - 1%: Testing
-/// - 5%: Stress test
-const SMALL_PERCENT_CHIP_PRESETS: &[(&str, f32)] = &[("0.1", 0.1), ("1", 1.0), ("5", 5.0)];
-const SMALL_PERCENT_DROPDOWN_OPTIONS: &[(&str, f32)] = &[
-    ("0.1%", 0.1),
-    ("0.5%", 0.5),
-    ("1%", 1.0),
-    ("2%", 2.0),
-    ("5%", 5.0),
-    ("10%", 10.0),
+const SMALL_PERCENT_CHIPS: &[(&str, f32)] = &[
+    ("0.1", 0.1),
+    ("0.5", 0.5),
+    ("1", 1.0),
+    ("2", 2.0),
+    ("5", 5.0),
+    ("10", 10.0),
 ];
 
 /// Reorder percentage presets
-/// - 5%: Slight reordering
-/// - 10%: Moderate
-/// - 25%: Heavy
-const REORDER_CHIP_PRESETS: &[(&str, f32)] = &[("5", 5.0), ("10", 10.0), ("25", 25.0)];
-const REORDER_DROPDOWN_OPTIONS: &[(&str, f32)] =
-    &[("5%", 5.0), ("10%", 10.0), ("25%", 25.0), ("50%", 50.0)];
+const REORDER_CHIPS: &[(&str, f32)] = &[("5", 5.0), ("10", 10.0), ("25", 25.0), ("50", 50.0)];
 
 /// Gap presets (packets between reordered packets)
-const GAP_CHIP_PRESETS: &[(&str, u32)] = &[("1", 1), ("3", 3), ("5", 5)];
+const GAP_CHIPS: &[(&str, u32)] = &[("1", 1), ("2", 2), ("3", 3), ("5", 5)];
 
 // ============================================================================
 // Theme color extraction (avoids lifetime issues with closures)
@@ -260,55 +230,10 @@ fn chips_u32<'a>(
 }
 
 // ============================================================================
-// Dropdown wrapper for f32 values
-// ============================================================================
-
-/// A selectable dropdown option for f32 values
-#[derive(Debug, Clone, PartialEq)]
-pub struct DropdownOption {
-    pub label: String,
-    pub value: f32,
-}
-
-impl std::fmt::Display for DropdownOption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.label)
-    }
-}
-
-fn dropdown_f32<'a>(
-    options: &[(&str, f32)],
-    current_value: f32,
-    on_select: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
-    zoom: f32,
-) -> Element<'a, TcInterfaceMessage> {
-    let dropdown_options: Vec<DropdownOption> = options
-        .iter()
-        .map(|(label, value)| DropdownOption {
-            label: label.to_string(),
-            value: *value,
-        })
-        .collect();
-
-    let selected = dropdown_options
-        .iter()
-        .find(|o| (o.value - current_value).abs() < 0.01)
-        .cloned();
-
-    pick_list(dropdown_options, selected, move |opt: DropdownOption| {
-        on_select(opt.value)
-    })
-    .text_size(scaled(10, zoom))
-    .padding(scaled_spacing(2, zoom))
-    .width(Length::Shrink)
-    .into()
-}
-
-// ============================================================================
 // PUBLIC API: Input components for each parameter type
 // ============================================================================
 
-/// Loss percentage: chips [0.5] [1] [5] + dropdown + custom input
+/// Loss percentage: expanded chips [0.1] [0.5] [1] [2] [5] [10] + NumberInput
 pub fn loss_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -325,8 +250,7 @@ pub fn loss_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(LOSS_CHIP_PRESETS, value, on_change.clone(), colors, zoom),
-        dropdown_f32(LOSS_DROPDOWN_OPTIONS, value, on_change.clone(), zoom),
+        chips_f32(LOSS_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
             .width(45.0 * zoom),
@@ -341,7 +265,7 @@ pub fn loss_input<'a>(
     .into()
 }
 
-/// Delay in ms: chips [20] [100] [500] + dropdown + custom input
+/// Delay in ms: expanded chips + NumberInput
 pub fn delay_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -358,8 +282,7 @@ pub fn delay_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(DELAY_CHIP_PRESETS, value, on_change.clone(), colors, zoom),
-        dropdown_f32(DELAY_DROPDOWN_OPTIONS, value, on_change.clone(), zoom),
+        chips_f32(DELAY_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=10000.0, on_change)
             .step(1.0)
             .width(50.0 * zoom),
@@ -374,7 +297,7 @@ pub fn delay_input<'a>(
     .into()
 }
 
-/// Jitter in ms: chips [10] [30] [100] + dropdown + custom input
+/// Jitter in ms: expanded chips + NumberInput
 pub fn jitter_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -391,8 +314,7 @@ pub fn jitter_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(JITTER_CHIP_PRESETS, value, on_change.clone(), colors, zoom),
-        dropdown_f32(JITTER_DROPDOWN_OPTIONS, value, on_change.clone(), zoom),
+        chips_f32(JITTER_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=5000.0, on_change)
             .step(1.0)
             .width(45.0 * zoom),
@@ -407,7 +329,7 @@ pub fn jitter_input<'a>(
     .into()
 }
 
-/// Correlation (burst): chips only [0] [25] [50] - small fixed set
+/// Correlation (burst): Slider 0-100% with value display
 pub fn correlation_input<'a>(
     label: &'static str,
     value: f32,
@@ -416,7 +338,6 @@ pub fn correlation_input<'a>(
     zoom: f32,
 ) -> Element<'a, TcInterfaceMessage> {
     let text_color = theme.colors.text_secondary;
-    let colors = ChipColors::from_theme(theme);
 
     row![
         text(label)
@@ -425,18 +346,10 @@ pub fn correlation_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(
-            CORRELATION_CHIP_PRESETS,
-            value,
-            on_change.clone(),
-            colors,
-            zoom
-        ),
-        NumberInput::new(&value, 0.0..=100.0, on_change)
-            .step(1.0)
-            .width(40.0 * zoom),
-        text("%")
+        slider(0.0..=100.0, value, on_change).width(100.0 * zoom),
+        text(format!("{}%", value as u32))
             .size(scaled(10, zoom))
+            .width(30.0 * zoom)
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -446,7 +359,7 @@ pub fn correlation_input<'a>(
     .into()
 }
 
-/// Duplicate percentage: chips [0.1] [1] [5] + dropdown + custom
+/// Duplicate percentage: expanded chips + NumberInput
 pub fn duplicate_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -463,19 +376,7 @@ pub fn duplicate_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(
-            SMALL_PERCENT_CHIP_PRESETS,
-            value,
-            on_change.clone(),
-            colors,
-            zoom
-        ),
-        dropdown_f32(
-            SMALL_PERCENT_DROPDOWN_OPTIONS,
-            value,
-            on_change.clone(),
-            zoom
-        ),
+        chips_f32(SMALL_PERCENT_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
             .width(45.0 * zoom),
@@ -490,7 +391,7 @@ pub fn duplicate_input<'a>(
     .into()
 }
 
-/// Corrupt percentage: chips [0.1] [1] [5] + dropdown + custom
+/// Corrupt percentage: expanded chips + NumberInput
 pub fn corrupt_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -507,19 +408,7 @@ pub fn corrupt_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(
-            SMALL_PERCENT_CHIP_PRESETS,
-            value,
-            on_change.clone(),
-            colors,
-            zoom
-        ),
-        dropdown_f32(
-            SMALL_PERCENT_DROPDOWN_OPTIONS,
-            value,
-            on_change.clone(),
-            zoom
-        ),
+        chips_f32(SMALL_PERCENT_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
             .width(45.0 * zoom),
@@ -534,7 +423,7 @@ pub fn corrupt_input<'a>(
     .into()
 }
 
-/// Reorder percentage: chips [5] [10] [25] + dropdown + custom
+/// Reorder percentage: expanded chips + NumberInput
 pub fn reorder_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -551,8 +440,7 @@ pub fn reorder_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_f32(REORDER_CHIP_PRESETS, value, on_change.clone(), colors, zoom),
-        dropdown_f32(REORDER_DROPDOWN_OPTIONS, value, on_change.clone(), zoom),
+        chips_f32(REORDER_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
             .width(45.0 * zoom),
@@ -567,7 +455,7 @@ pub fn reorder_input<'a>(
     .into()
 }
 
-/// Gap (packets): chips only [1] [3] [5] - small discrete set
+/// Gap (packets): chips [1] [2] [3] [5] + NumberInput
 pub fn gap_input<'a>(
     value: u32,
     on_change: impl Fn(u32) -> TcInterfaceMessage + Clone + 'static,
@@ -584,7 +472,7 @@ pub fn gap_input<'a>(
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        chips_u32(GAP_CHIP_PRESETS, value, on_change.clone(), colors, zoom),
+        chips_u32(GAP_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 1..=10, on_change)
             .step(1)
             .width(35.0 * zoom),
@@ -684,25 +572,16 @@ mod tests {
 
     #[test]
     fn test_matches_f32() {
-        assert_eq!(matches_f32(0.5, LOSS_CHIP_PRESETS), Some(0));
-        assert_eq!(matches_f32(1.0, LOSS_CHIP_PRESETS), Some(1));
-        assert_eq!(matches_f32(5.0, LOSS_CHIP_PRESETS), Some(2));
-        assert_eq!(matches_f32(3.7, LOSS_CHIP_PRESETS), None);
+        assert_eq!(matches_f32(0.1, LOSS_CHIPS), Some(0));
+        assert_eq!(matches_f32(0.5, LOSS_CHIPS), Some(1));
+        assert_eq!(matches_f32(1.0, LOSS_CHIPS), Some(2));
+        assert_eq!(matches_f32(3.7, LOSS_CHIPS), None);
     }
 
     #[test]
     fn test_matches_u32() {
-        assert_eq!(matches_u32(1, GAP_CHIP_PRESETS), Some(0));
-        assert_eq!(matches_u32(3, GAP_CHIP_PRESETS), Some(1));
-        assert_eq!(matches_u32(2, GAP_CHIP_PRESETS), None);
-    }
-
-    #[test]
-    fn test_dropdown_option_display() {
-        let opt = DropdownOption {
-            label: "5%".to_string(),
-            value: 5.0,
-        };
-        assert_eq!(format!("{}", opt), "5%");
+        assert_eq!(matches_u32(1, GAP_CHIPS), Some(0));
+        assert_eq!(matches_u32(3, GAP_CHIPS), Some(2));
+        assert_eq!(matches_u32(4, GAP_CHIPS), None);
     }
 }
