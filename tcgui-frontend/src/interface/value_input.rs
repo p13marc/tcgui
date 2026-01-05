@@ -16,7 +16,7 @@ use crate::theme::Theme;
 use crate::view::{scaled, scaled_spacing};
 
 // ============================================================================
-// Research-based preset values (expanded chip sets)
+// Research-based preset values
 // ============================================================================
 
 /// Loss percentage presets (meaningful thresholds)
@@ -60,6 +60,12 @@ const REORDER_CHIPS: &[(&str, f32)] = &[("5", 5.0), ("25", 25.0), ("50", 50.0)];
 
 /// Gap presets (packets between reordered packets)
 const GAP_CHIPS: &[(&str, u32)] = &[("1", 1), ("3", 3), ("5", 5)];
+
+// ============================================================================
+// Common text size for consistency
+// ============================================================================
+
+const TEXT_SIZE: u16 = 11;
 
 // ============================================================================
 // Theme color extraction (avoids lifetime issues with closures)
@@ -175,10 +181,10 @@ fn chips_f32<'a>(
 
             button(
                 text(*label)
-                    .size(scaled(10, zoom))
+                    .size(scaled(TEXT_SIZE, zoom))
                     .align_x(iced::alignment::Horizontal::Center),
             )
-            .padding([scaled_spacing(1, zoom), scaled_spacing(4, zoom)])
+            .padding([scaled_spacing(2, zoom), scaled_spacing(6, zoom)])
             .style(chip_style(is_selected, colors))
             .on_press(on_select(v))
             .into()
@@ -209,10 +215,10 @@ fn chips_u32<'a>(
 
             button(
                 text(*label)
-                    .size(scaled(10, zoom))
+                    .size(scaled(TEXT_SIZE, zoom))
                     .align_x(iced::alignment::Horizontal::Center),
             )
-            .padding([scaled_spacing(1, zoom), scaled_spacing(4, zoom)])
+            .padding([scaled_spacing(2, zoom), scaled_spacing(6, zoom)])
             .style(chip_style(is_selected, colors))
             .on_press(on_select(v))
             .into()
@@ -228,7 +234,7 @@ fn chips_u32<'a>(
 // PUBLIC API: Input components for each parameter type
 // ============================================================================
 
-/// Loss percentage: expanded chips [0.1] [0.5] [1] [2] [5] [10] + NumberInput
+/// Loss percentage: chips [1] [5] [10] [25] [50] + NumberInput
 pub fn loss_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -240,17 +246,17 @@ pub fn loss_input<'a>(
 
     row![
         text("Loss:")
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_f32(LOSS_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(45.0 * zoom),
+            .width(scaled(38, zoom)),
         text("%")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -260,7 +266,7 @@ pub fn loss_input<'a>(
     .into()
 }
 
-/// Delay in ms: expanded chips + NumberInput
+/// Delay in ms: chips + NumberInput
 pub fn delay_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -272,17 +278,17 @@ pub fn delay_input<'a>(
 
     row![
         text("Delay:")
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_f32(DELAY_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=10000.0, on_change)
             .step(1.0)
-            .width(50.0 * zoom),
+            .width(scaled(50, zoom)),
         text("ms")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -292,7 +298,7 @@ pub fn delay_input<'a>(
     .into()
 }
 
-/// Jitter in ms: expanded chips + NumberInput
+/// Jitter in ms: chips + NumberInput
 pub fn jitter_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -304,17 +310,17 @@ pub fn jitter_input<'a>(
 
     row![
         text("Jitter:")
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_f32(JITTER_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=5000.0, on_change)
             .step(1.0)
-            .width(45.0 * zoom),
+            .width(scaled(45, zoom)),
         text("ms")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -336,15 +342,15 @@ pub fn correlation_input<'a>(
 
     row![
         text(label)
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
-        slider(0.0..=100.0, value, on_change).width(100.0 * zoom),
+        slider(0.0..=100.0, value, on_change).width(scaled(80, zoom)),
         text(format!("{}%", value as u32))
-            .size(scaled(10, zoom))
-            .width(30.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(32, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -354,7 +360,7 @@ pub fn correlation_input<'a>(
     .into()
 }
 
-/// Duplicate percentage: expanded chips + NumberInput
+/// Duplicate percentage: chips + NumberInput
 pub fn duplicate_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -366,17 +372,17 @@ pub fn duplicate_input<'a>(
 
     row![
         text("Dup:")
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_f32(SMALL_PERCENT_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(45.0 * zoom),
+            .width(scaled(38, zoom)),
         text("%")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -386,7 +392,7 @@ pub fn duplicate_input<'a>(
     .into()
 }
 
-/// Corrupt percentage: expanded chips + NumberInput
+/// Corrupt percentage: chips + NumberInput
 pub fn corrupt_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -398,17 +404,17 @@ pub fn corrupt_input<'a>(
 
     row![
         text("Corrupt:")
-            .size(scaled(10, zoom))
-            .width(50.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(52, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_f32(SMALL_PERCENT_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(45.0 * zoom),
+            .width(scaled(38, zoom)),
         text("%")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -418,7 +424,7 @@ pub fn corrupt_input<'a>(
     .into()
 }
 
-/// Reorder percentage: expanded chips + NumberInput
+/// Reorder percentage: chips + NumberInput
 pub fn reorder_input<'a>(
     value: f32,
     on_change: impl Fn(f32) -> TcInterfaceMessage + Clone + 'static,
@@ -430,17 +436,17 @@ pub fn reorder_input<'a>(
 
     row![
         text("Reorder:")
-            .size(scaled(10, zoom))
-            .width(50.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(52, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_f32(REORDER_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(45.0 * zoom),
+            .width(scaled(38, zoom)),
         text("%")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -450,7 +456,7 @@ pub fn reorder_input<'a>(
     .into()
 }
 
-/// Gap (packets): chips [1] [2] [3] [5] + NumberInput
+/// Gap (packets): chips [1] [3] [5] + NumberInput
 pub fn gap_input<'a>(
     value: u32,
     on_change: impl Fn(u32) -> TcInterfaceMessage + Clone + 'static,
@@ -462,17 +468,17 @@ pub fn gap_input<'a>(
 
     row![
         text("Gap:")
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         chips_u32(GAP_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 1..=10, on_change)
             .step(1)
-            .width(35.0 * zoom),
+            .width(scaled(32, zoom)),
         text("pkts")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -493,16 +499,16 @@ pub fn rate_input<'a>(
 
     row![
         text("Rate:")
-            .size(scaled(10, zoom))
-            .width(40.0 * zoom)
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
         NumberInput::new(&value, 1..=1_000_000, on_change)
             .step(1)
-            .width(80.0 * zoom),
+            .width(scaled(70, zoom)),
         text("kbps")
-            .size(scaled(10, zoom))
+            .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
                 color: Some(text_color)
             }),
@@ -545,7 +551,7 @@ pub fn feature_card<'a>(
     let card_colors = CardColors::from_theme(theme);
 
     let header = text(title)
-        .size(scaled(11, zoom))
+        .size(scaled(12, zoom))
         .style(move |_| iced::widget::text::Style {
             color: Some(text_color),
         });
@@ -567,16 +573,16 @@ mod tests {
 
     #[test]
     fn test_matches_f32() {
-        assert_eq!(matches_f32(0.1, LOSS_CHIPS), Some(0));
-        assert_eq!(matches_f32(0.5, LOSS_CHIPS), Some(1));
-        assert_eq!(matches_f32(1.0, LOSS_CHIPS), Some(2));
+        assert_eq!(matches_f32(1.0, LOSS_CHIPS), Some(0));
+        assert_eq!(matches_f32(5.0, LOSS_CHIPS), Some(1));
+        assert_eq!(matches_f32(10.0, LOSS_CHIPS), Some(2));
         assert_eq!(matches_f32(3.7, LOSS_CHIPS), None);
     }
 
     #[test]
     fn test_matches_u32() {
         assert_eq!(matches_u32(1, GAP_CHIPS), Some(0));
-        assert_eq!(matches_u32(3, GAP_CHIPS), Some(2));
+        assert_eq!(matches_u32(3, GAP_CHIPS), Some(1));
         assert_eq!(matches_u32(4, GAP_CHIPS), None);
     }
 }
