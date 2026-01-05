@@ -583,7 +583,6 @@ pub fn feature_card<'a>(
     container(iced::widget::column![header, content].spacing(scaled_spacing(2, zoom)))
         .padding(scaled_spacing(4, zoom))
         .width(Length::Fill)
-        .height(Length::Fill)
         .style(card_style(card_colors))
         .into()
 }
