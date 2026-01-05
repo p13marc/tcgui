@@ -949,49 +949,68 @@ impl TcInterface {
             .into()
     }
 
-    /// Render expandable feature cards in a flowing row layout
+    /// Render expandable feature cards in a grid layout for proper alignment
     fn render_expandable_features<'a>(
         &'a self,
         theme: &'a Theme,
         zoom: f32,
     ) -> Element<'a, TcInterfaceMessage> {
+        // Collect enabled feature cards
         let mut cards: Vec<Element<'a, TcInterfaceMessage>> = Vec::new();
 
-        // Loss feature card
         if self.state.features.loss.enabled {
             cards.push(self.render_loss_card(theme, zoom));
         }
-
-        // Delay feature card
         if self.state.features.delay.enabled {
             cards.push(self.render_delay_card(theme, zoom));
         }
-
-        // Duplicate feature card
         if self.state.features.duplicate.enabled {
             cards.push(self.render_duplicate_card(theme, zoom));
         }
-
-        // Reorder feature card
         if self.state.features.reorder.enabled {
             cards.push(self.render_reorder_card(theme, zoom));
         }
-
-        // Corrupt feature card
         if self.state.features.corrupt.enabled {
             cards.push(self.render_corrupt_card(theme, zoom));
         }
-
-        // Rate limit feature card
         if self.state.features.rate_limit.enabled {
             cards.push(self.render_rate_limit_card(theme, zoom));
         }
 
-        Row::with_children(cards)
-            .spacing(scaled_spacing(4, zoom))
-            .align_y(iced::Alignment::Start)
-            .wrap()
-            .into()
+        if cards.is_empty() {
+            return column![].into();
+        }
+
+        // Build grid with 3 columns using FillPortion for equal widths
+        let num_cols = 3;
+        let spacing = scaled_spacing(4, zoom);
+        let mut grid_rows: Vec<Element<'a, TcInterfaceMessage>> = Vec::new();
+        let mut cards_iter = cards.into_iter().peekable();
+
+        while cards_iter.peek().is_some() {
+            let mut row_cards: Vec<Element<'a, TcInterfaceMessage>> = Vec::new();
+            for _ in 0..num_cols {
+                if let Some(card) = cards_iter.next() {
+                    row_cards.push(container(card).width(iced::Length::FillPortion(1)).into());
+                } else {
+                    // Empty placeholder for alignment
+                    row_cards.push(
+                        container(text(""))
+                            .width(iced::Length::FillPortion(1))
+                            .into(),
+                    );
+                }
+            }
+
+            grid_rows.push(
+                Row::with_children(row_cards)
+                    .spacing(spacing)
+                    .align_y(iced::Alignment::Start)
+                    .into(),
+            );
+        }
+
+        Column::with_children(grid_rows).spacing(spacing).into()
     }
 
     /// Render loss feature as a card
