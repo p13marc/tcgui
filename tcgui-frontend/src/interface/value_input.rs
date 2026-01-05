@@ -254,7 +254,10 @@ pub fn loss_input<'a>(
         chips_f32(LOSS_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(scaled(28, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(40, zoom)),
         text("%")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -286,7 +289,10 @@ pub fn delay_input<'a>(
         chips_f32(DELAY_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=10000.0, on_change)
             .step(1.0)
-            .width(scaled(38, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(50, zoom)),
         text("ms")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -318,7 +324,10 @@ pub fn jitter_input<'a>(
         chips_f32(JITTER_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=5000.0, on_change)
             .step(1.0)
-            .width(scaled(35, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(45, zoom)),
         text("ms")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -380,7 +389,10 @@ pub fn duplicate_input<'a>(
         chips_f32(SMALL_PERCENT_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(scaled(28, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(40, zoom)),
         text("%")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -412,7 +424,10 @@ pub fn corrupt_input<'a>(
         chips_f32(SMALL_PERCENT_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(scaled(28, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(40, zoom)),
         text("%")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -444,7 +459,10 @@ pub fn reorder_input<'a>(
         chips_f32(REORDER_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 0.0..=100.0, on_change)
             .step(0.1)
-            .width(scaled(28, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(40, zoom)),
         text("%")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -476,7 +494,10 @@ pub fn gap_input<'a>(
         chips_u32(GAP_CHIPS, value, on_change.clone(), colors, zoom),
         NumberInput::new(&value, 1..=10, on_change)
             .step(1)
-            .width(scaled(24, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(32, zoom)),
         text("pkts")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
@@ -506,7 +527,10 @@ pub fn rate_input<'a>(
             }),
         NumberInput::new(&value, 1..=1_000_000, on_change)
             .step(1)
-            .width(scaled(50, zoom)),
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(60, zoom)),
         text("kbps")
             .size(scaled(TEXT_SIZE, zoom))
             .style(move |_| iced::widget::text::Style {
