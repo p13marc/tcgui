@@ -21,12 +21,13 @@ use crate::view::{scaled, scaled_spacing};
 
 /// Loss percentage presets (based on network quality thresholds)
 const LOSS_CHIPS: &[(&str, f32)] = &[
-    ("0.1", 0.1),
     ("0.5", 0.5),
     ("1", 1.0),
     ("2", 2.0),
     ("5", 5.0),
     ("10", 10.0),
+    ("20", 20.0),
+    ("50", 50.0),
 ];
 
 /// Delay presets in ms (based on network types)
