@@ -998,15 +998,14 @@ impl TcInterface {
         let loss_config = &self.state.features.loss.config;
 
         let content: Column<'_, TcInterfaceMessage> = Column::new()
-            .spacing(scaled_spacing(4, zoom))
-            .push(value_input::card_row_percent(
-                "Amount:",
+            .spacing(scaled_spacing(2, zoom))
+            .push(value_input::loss_input(
                 loss_config.percentage,
                 TcInterfaceMessage::LossChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_percent(
+            .push(value_input::correlation_input(
                 "Burst:",
                 loss_config.correlation,
                 TcInterfaceMessage::CorrelationChanged,
@@ -1022,15 +1021,14 @@ impl TcInterface {
         let duplicate_config = &self.state.features.duplicate.config;
 
         let content: Column<'_, TcInterfaceMessage> = Column::new()
-            .spacing(scaled_spacing(4, zoom))
-            .push(value_input::card_row_percent(
-                "Amount:",
+            .spacing(scaled_spacing(2, zoom))
+            .push(value_input::duplicate_input(
                 duplicate_config.percentage,
                 TcInterfaceMessage::DuplicatePercentageChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_percent(
+            .push(value_input::correlation_input(
                 "Burst:",
                 duplicate_config.correlation,
                 TcInterfaceMessage::DuplicateCorrelationChanged,
@@ -1046,22 +1044,20 @@ impl TcInterface {
         let reorder_config = &self.state.features.reorder.config;
 
         let content: Column<'_, TcInterfaceMessage> = Column::new()
-            .spacing(scaled_spacing(4, zoom))
-            .push(value_input::card_row_percent(
-                "Amount:",
+            .spacing(scaled_spacing(2, zoom))
+            .push(value_input::reorder_input(
                 reorder_config.percentage,
                 TcInterfaceMessage::ReorderPercentageChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_gap(
-                "Gap:",
+            .push(value_input::gap_input(
                 reorder_config.gap,
                 TcInterfaceMessage::ReorderGapChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_percent(
+            .push(value_input::correlation_input(
                 "Burst:",
                 reorder_config.correlation,
                 TcInterfaceMessage::ReorderCorrelationChanged,
@@ -1077,15 +1073,14 @@ impl TcInterface {
         let corrupt_config = &self.state.features.corrupt.config;
 
         let content: Column<'_, TcInterfaceMessage> = Column::new()
-            .spacing(scaled_spacing(4, zoom))
-            .push(value_input::card_row_percent(
-                "Amount:",
+            .spacing(scaled_spacing(2, zoom))
+            .push(value_input::corrupt_input(
                 corrupt_config.percentage,
                 TcInterfaceMessage::CorruptPercentageChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_percent(
+            .push(value_input::correlation_input(
                 "Burst:",
                 corrupt_config.correlation,
                 TcInterfaceMessage::CorruptCorrelationChanged,
@@ -1101,9 +1096,8 @@ impl TcInterface {
         let rate_config = &self.state.features.rate_limit.config;
 
         let content: Column<'_, TcInterfaceMessage> = Column::new()
-            .spacing(scaled_spacing(4, zoom))
-            .push(value_input::card_row_rate(
-                "Limit:",
+            .spacing(scaled_spacing(2, zoom))
+            .push(value_input::rate_input(
                 rate_config.rate_kbps,
                 TcInterfaceMessage::RateLimitChanged,
                 theme,
@@ -1118,22 +1112,20 @@ impl TcInterface {
         let delay_config = &self.state.features.delay.config;
 
         let content: Column<'_, TcInterfaceMessage> = Column::new()
-            .spacing(scaled_spacing(4, zoom))
-            .push(value_input::card_row_delay(
-                "Base:",
+            .spacing(scaled_spacing(2, zoom))
+            .push(value_input::delay_input(
                 delay_config.base_ms,
                 TcInterfaceMessage::DelayChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_jitter(
-                "Jitter:",
+            .push(value_input::jitter_input(
                 delay_config.jitter_ms,
                 TcInterfaceMessage::DelayJitterChanged,
                 theme,
                 zoom,
             ))
-            .push(value_input::card_row_percent(
+            .push(value_input::correlation_input(
                 "Burst:",
                 delay_config.correlation,
                 TcInterfaceMessage::DelayCorrelationChanged,
