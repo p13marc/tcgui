@@ -370,6 +370,7 @@ pub fn handle_tc_interface_message(
 
         // Handle messages that need to be sent to backend
         let backend_task = match tc_message {
+            // Slider and NumberInput changes trigger backend apply
             TcInterfaceMessage::LossChanged(_)
             | TcInterfaceMessage::CorrelationChanged(_)
             | TcInterfaceMessage::DelayChanged(_)

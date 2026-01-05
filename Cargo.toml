@@ -26,6 +26,7 @@ nlink = { version = "0.6.0", features = ["full"] }
 
 # Frontend-specific dependencies
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }
+iced_aw = { version = "0.13", default-features = false, features = ["number_input"] }
 
 [workspace.package]
 version = "0.6.0"

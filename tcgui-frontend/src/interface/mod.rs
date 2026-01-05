@@ -24,6 +24,7 @@
 
 pub mod base;
 pub mod messages;
+pub mod slider_input;
 pub mod state;
 
 // Feature-specific control modules (removed as unused)
