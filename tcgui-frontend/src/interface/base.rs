@@ -989,6 +989,7 @@ impl TcInterface {
 
         Row::with_children(cards)
             .spacing(scaled_spacing(4, zoom))
+            .align_y(iced::Alignment::Start)
             .wrap()
             .into()
     }
