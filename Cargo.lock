@@ -5164,7 +5164,7 @@ dependencies = [
 
 [[package]]
 name = "tcgui-backend"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bollard",
@@ -5190,7 +5190,7 @@ dependencies = [
 
 [[package]]
 name = "tcgui-frontend"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -5210,7 +5210,7 @@ dependencies = [
 
 [[package]]
 name = "tcgui-shared"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "duration-string",

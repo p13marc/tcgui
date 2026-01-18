@@ -29,7 +29,7 @@ iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advance
 iced_aw = { version = "0.13", default-features = false, features = ["number_input"] }
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Marc Pardo <p13marc@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/p13marc/tcgui"
