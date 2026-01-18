@@ -114,7 +114,7 @@ impl TcCommandManager {
         let conn = Self::create_connection(namespace, namespace_path)?;
 
         let qdiscs =
-            conn.get_qdiscs_for(interface)
+            conn.get_qdiscs_by_name(interface)
                 .await
                 .map_err(|e| TcguiError::TcCommandError {
                     message: format!("Failed to get qdiscs for {}: {}", interface, e),
@@ -156,7 +156,7 @@ impl TcCommandManager {
         let conn = Self::create_connection(namespace, namespace_path)?;
 
         let qdiscs =
-            conn.get_qdiscs_for(interface)
+            conn.get_qdiscs_by_name(interface)
                 .await
                 .map_err(|e| TcguiError::TcCommandError {
                     message: format!("Failed to get qdiscs for {}: {}", interface, e),
@@ -208,7 +208,7 @@ impl TcCommandManager {
         let conn = Self::create_connection(namespace, namespace_path)?;
 
         let qdiscs =
-            conn.get_qdiscs_for(interface)
+            conn.get_qdiscs_by_name(interface)
                 .await
                 .map_err(|e| TcguiError::TcCommandError {
                     message: format!("Failed to get qdiscs for {}: {}", interface, e),

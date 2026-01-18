@@ -334,7 +334,7 @@ impl NetworkManager {
         interface: &str,
     ) -> Result<bool> {
         let qdiscs = conn
-            .get_qdiscs_for(interface)
+            .get_qdiscs_by_name(interface)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get qdiscs for {}: {}", interface, e))?;
 
