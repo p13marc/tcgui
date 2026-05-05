@@ -542,6 +542,7 @@ impl TcBackend {
                         NamespaceEvent::DirectoryDeleted => {
                             info!("/var/run/netns directory deleted");
                         }
+                        _ => {}
                     }
                     // Trigger a full interface refresh on namespace change
                     match self.network_manager.discover_all_interfaces().await {

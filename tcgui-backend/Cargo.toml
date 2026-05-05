@@ -41,22 +41,22 @@ tracing-subscriber = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-thiserror = "1.0"
+thiserror = { workspace = true }
 
 # CLI
 clap = { workspace = true }
 
 # Filesystem utilities
-dirs = "5"
+dirs = "6"
 
 # Regex for pattern matching
 regex = { workspace = true }
 
 # Container runtime API (Docker/Podman compatible)
-bollard = "0.18"
+bollard = "0.21"
 
 # Linux system calls (namespace operations)
-nix = { version = "0.30", features = ["sched", "fs"] }
+nix = { version = "0.31", features = ["sched", "fs"] }
 
 [dev-dependencies]
 rand = "0.8"

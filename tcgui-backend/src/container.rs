@@ -9,8 +9,8 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use bollard::Docker;
-use bollard::container::{InspectContainerOptions, ListContainersOptions};
 use bollard::models::ContainerInspectResponse;
+use bollard::query_parameters::{ListContainersOptionsBuilder, InspectContainerOptions};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
@@ -288,10 +288,7 @@ impl ContainerManager {
         client: &Docker,
         runtime: ContainerRuntime,
     ) -> Result<Vec<Container>> {
-        let options = ListContainersOptions::<String> {
-            all: false, // Only running containers
-            ..Default::default()
-        };
+        let options = ListContainersOptionsBuilder::default().all(false).build();
 
         let container_summaries = client
             .list_containers(Some(options))

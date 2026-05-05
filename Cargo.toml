@@ -8,8 +8,8 @@ members = [
 
 [workspace.dependencies]
 # Shared dependencies
-zenoh = { version = "1.5.1", features = ["unstable"] }
-zenoh-ext = { version = "1.5.1", features = ["unstable"] }
+zenoh = { version = "1.9", features = ["unstable"] }
+zenoh-ext = { version = "1.9", features = ["unstable"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.47.1", features = ["full"] }
@@ -22,11 +22,11 @@ regex = "1.10"
 
 # Backend-specific dependencies
 futures-util = "0.3"
-nlink = { version = "0.8.0", features = ["full"] }
+nlink = { version = "0.15", features = ["full"] }
 
 # Frontend-specific dependencies
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }
-iced_aw = { version = "0.13", default-features = false, features = ["number_input"] }
+iced_aw = { version = "0.14", default-features = false, features = ["number_input"] }
 
 [workspace.package]
 version = "0.7.0"

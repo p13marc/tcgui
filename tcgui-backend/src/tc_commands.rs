@@ -19,7 +19,8 @@ use nlink::netlink::Route;
 use nlink::netlink::namespace::NamespaceSpec;
 use nlink::netlink::tc::NetemConfig;
 use nlink::netlink::tc_options::{NetemOptions, QdiscOptions};
-use nlink::util::rate;
+use nlink::TcHandle;
+use nlink::util::{Percent, Rate};
 use std::path::Path;
 use std::time::Duration;
 use tracing::{info, instrument, warn};
@@ -123,8 +124,7 @@ impl TcCommandManager {
         // Look for a root qdisc
         for qdisc in qdiscs {
             // Check if this is the root qdisc by examining the parent
-            if qdisc.parent() == 0xFFFFFFFF {
-                // TC_H_ROOT
+            if qdisc.parent().is_root() {
                 let kind = qdisc.kind().unwrap_or("unknown");
                 return Ok(format!("qdisc {} root", kind));
             }
@@ -165,20 +165,19 @@ impl TcCommandManager {
         // Look for a root netem qdisc
         for qdisc in qdiscs {
             // Check if this is the root qdisc by examining the parent
-            if qdisc.parent() == 0xFFFFFFFF {
-                // TC_H_ROOT
-                if let Some(QdiscOptions::Netem(netem_opts)) = qdisc.options() {
-                    let loss_pct = netem_opts.loss().unwrap_or(0.0);
-                    let delay_ms = netem_opts
-                        .delay()
-                        .map(|d| d.as_secs_f64() * 1000.0)
-                        .unwrap_or(0.0);
-                    info!(
-                        "Found netem qdisc on {}:{} with loss={:.1}%, delay={:.2}ms",
-                        namespace, interface, loss_pct, delay_ms
-                    );
-                    return Ok(Some(netem_opts));
-                }
+            if qdisc.parent().is_root()
+                && let Some(QdiscOptions::Netem(netem_opts)) = qdisc.options()
+            {
+                let loss_pct = netem_opts.loss().unwrap_or(0.0);
+                let delay_ms = netem_opts
+                    .delay()
+                    .map(|d| d.as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0);
+                info!(
+                    "Found netem qdisc on {}:{} with loss={:.1}%, delay={:.2}ms",
+                    namespace, interface, loss_pct, delay_ms
+                );
+                return Ok(Some(netem_opts));
             }
         }
 
@@ -216,8 +215,7 @@ impl TcCommandManager {
 
         // Look for the root qdisc and extract statistics
         for qdisc in qdiscs {
-            if qdisc.parent() == 0xFFFFFFFF {
-                // TC_H_ROOT
+            if qdisc.parent().is_root() {
                 // Only return stats if this is a netem qdisc
                 if qdisc.kind() == Some("netem") {
                     let basic = tcgui_shared::TcStatsBasic {
@@ -316,7 +314,7 @@ impl TcCommandManager {
                         "Recreating netem qdisc on {}/{} (removing parameters)",
                         namespace, interface
                     );
-                    let _ = conn.del_qdisc_by_index(ifindex, "root").await;
+                    let _ = conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await;
                     conn.add_qdisc_by_index(ifindex, netem_config)
                         .await
                         .map_err(|e| TcguiError::TcCommandError {
@@ -352,7 +350,7 @@ impl TcCommandManager {
                         "Removing existing qdisc and adding netem on {}/{}",
                         namespace, interface
                     );
-                    let _ = conn.del_qdisc_by_index(ifindex, "root").await;
+                    let _ = conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await;
                     conn.add_qdisc_by_index(ifindex, netem_config)
                         .await
                         .map_err(|e| TcguiError::TcCommandError {
@@ -374,9 +372,9 @@ impl TcCommandManager {
 
         // Add loss if enabled
         if config.loss.enabled && config.loss.percentage > 0.0 {
-            netem = netem.loss(config.loss.percentage as f64);
+            netem = netem.loss(Percent::new(config.loss.percentage as f64));
             if config.loss.correlation > 0.0 {
-                netem = netem.loss_correlation(config.loss.correlation as f64);
+                netem = netem.loss_correlation(Percent::new(config.loss.correlation as f64));
             }
         }
 
@@ -386,24 +384,26 @@ impl TcCommandManager {
             if config.delay.jitter_ms > 0.0 {
                 netem = netem.jitter(Duration::from_millis(config.delay.jitter_ms as u64));
                 if config.delay.correlation > 0.0 {
-                    netem = netem.delay_correlation(config.delay.correlation as f64);
+                    netem = netem.delay_correlation(Percent::new(config.delay.correlation as f64));
                 }
             }
         }
 
         // Add duplicate if enabled
         if config.duplicate.enabled && config.duplicate.percentage > 0.0 {
-            netem = netem.duplicate(config.duplicate.percentage as f64);
+            netem = netem.duplicate(Percent::new(config.duplicate.percentage as f64));
             if config.duplicate.correlation > 0.0 {
-                netem = netem.duplicate_correlation(config.duplicate.correlation as f64);
+                netem = netem
+                    .duplicate_correlation(Percent::new(config.duplicate.correlation as f64));
             }
         }
 
         // Add reorder if enabled
         if config.reorder.enabled && config.reorder.percentage > 0.0 {
-            netem = netem.reorder(config.reorder.percentage as f64);
+            netem = netem.reorder(Percent::new(config.reorder.percentage as f64));
             if config.reorder.correlation > 0.0 {
-                netem = netem.reorder_correlation(config.reorder.correlation as f64);
+                netem =
+                    netem.reorder_correlation(Percent::new(config.reorder.correlation as f64));
             }
             if config.reorder.gap > 0 {
                 netem = netem.gap(config.reorder.gap);
@@ -412,15 +412,16 @@ impl TcCommandManager {
 
         // Add corrupt if enabled
         if config.corrupt.enabled && config.corrupt.percentage > 0.0 {
-            netem = netem.corrupt(config.corrupt.percentage as f64);
+            netem = netem.corrupt(Percent::new(config.corrupt.percentage as f64));
             if config.corrupt.correlation > 0.0 {
-                netem = netem.corrupt_correlation(config.corrupt.correlation as f64);
+                netem =
+                    netem.corrupt_correlation(Percent::new(config.corrupt.correlation as f64));
             }
         }
 
         // Add rate limit if enabled
         if config.rate_limit.enabled && config.rate_limit.rate_kbps > 0 {
-            netem = netem.rate(rate::kbps_to_bytes(config.rate_limit.rate_kbps.into()));
+            netem = netem.rate(Rate::kbit(config.rate_limit.rate_kbps.into()));
         }
 
         netem.build()
@@ -551,11 +552,11 @@ impl TcCommandManager {
         let mut netem = NetemConfig::new();
 
         if loss > 0.0 {
-            netem = netem.loss(loss as f64);
+            netem = netem.loss(Percent::new(loss as f64));
             if let Some(corr) = correlation
                 && corr > 0.0
             {
-                netem = netem.loss_correlation(corr as f64);
+                netem = netem.loss_correlation(Percent::new(corr as f64));
             }
         }
 
@@ -570,7 +571,7 @@ impl TcCommandManager {
                 if let Some(corr) = delay_correlation
                     && corr > 0.0
                 {
-                    netem = netem.delay_correlation(corr as f64);
+                    netem = netem.delay_correlation(Percent::new(corr as f64));
                 }
             }
         }
@@ -578,11 +579,11 @@ impl TcCommandManager {
         if let Some(dup) = duplicate_percent
             && dup > 0.0
         {
-            netem = netem.duplicate(dup as f64);
+            netem = netem.duplicate(Percent::new(dup as f64));
             if let Some(corr) = duplicate_correlation
                 && corr > 0.0
             {
-                netem = netem.duplicate_correlation(corr as f64);
+                netem = netem.duplicate_correlation(Percent::new(corr as f64));
             }
         }
 
@@ -593,11 +594,11 @@ impl TcCommandManager {
             if delay_ms.is_none_or(|d| d <= 0.0) {
                 netem = netem.delay(Duration::from_millis(1));
             }
-            netem = netem.reorder(reorder as f64);
+            netem = netem.reorder(Percent::new(reorder as f64));
             if let Some(corr) = reorder_correlation
                 && corr > 0.0
             {
-                netem = netem.reorder_correlation(corr as f64);
+                netem = netem.reorder_correlation(Percent::new(corr as f64));
             }
             if let Some(gap) = reorder_gap
                 && gap > 0
@@ -609,18 +610,18 @@ impl TcCommandManager {
         if let Some(corrupt) = corrupt_percent
             && corrupt > 0.0
         {
-            netem = netem.corrupt(corrupt as f64);
+            netem = netem.corrupt(Percent::new(corrupt as f64));
             if let Some(corr) = corrupt_correlation
                 && corr > 0.0
             {
-                netem = netem.corrupt_correlation(corr as f64);
+                netem = netem.corrupt_correlation(Percent::new(corr as f64));
             }
         }
 
         if let Some(rate_kbps) = rate_limit_kbps
             && rate_kbps > 0
         {
-            netem = netem.rate(rate::kbps_to_bytes(rate_kbps.into()));
+            netem = netem.rate(Rate::kbit(rate_kbps.into()));
         }
 
         let netem_config = netem.build();
@@ -659,7 +660,7 @@ impl TcCommandManager {
 
             if needs_recreation {
                 info!("Recreating netem qdisc on {}/{}", namespace, interface);
-                let _ = conn.del_qdisc_by_index(ifindex, "root").await;
+                let _ = conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await;
                 conn.add_qdisc_by_index(ifindex, netem_config)
                     .await
                     .map_err(|e| TcguiError::TcCommandError {
@@ -678,7 +679,7 @@ impl TcCommandManager {
                 "Removing existing qdisc and adding netem on {}/{}",
                 namespace, interface
             );
-            let _ = conn.del_qdisc_by_index(ifindex, "root").await;
+            let _ = conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await;
             conn.add_qdisc_by_index(ifindex, netem_config)
                 .await
                 .map_err(|e| TcguiError::TcCommandError {
@@ -738,7 +739,7 @@ impl TcCommandManager {
 
         let ifindex = link.ifindex();
 
-        match conn.del_qdisc_by_index(ifindex, "root").await {
+        match conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await {
             Ok(()) => Ok("TC config removed successfully".to_string()),
             Err(e) => {
                 let err_str = e.to_string();

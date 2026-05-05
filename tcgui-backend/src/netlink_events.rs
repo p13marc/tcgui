@@ -75,8 +75,8 @@ impl TcInfo {
     fn from_tc_message(msg: &TcMessage) -> Self {
         Self {
             ifindex: msg.ifindex(),
-            handle: msg.handle(),
-            parent: msg.parent(),
+            handle: msg.handle().as_raw(),
+            parent: msg.parent().as_raw(),
             kind: msg.kind().map(|s| s.to_string()),
         }
     }

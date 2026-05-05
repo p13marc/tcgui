@@ -138,7 +138,7 @@ impl ScenarioManager {
                 });
             }
             ScenarioSortOption::StepCount => {
-                scenarios.sort_by(|a, b| a.steps.len().cmp(&b.steps.len()));
+                scenarios.sort_by_key(|a| a.steps.len());
             }
         }
 

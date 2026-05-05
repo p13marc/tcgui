@@ -1391,29 +1391,24 @@ impl ZenohConfig {
 
                 // Additional protocol-specific validations
                 match protocol {
-                    "tcp" | "tls" => {
-                        // TCP and TLS should not use multicast addresses
-                        if socket_addr.ip().is_multicast() {
-                            return Err(ZenohConfigError::InvalidAddress {
-                                address: addr.to_string(),
-                                protocol: protocol.to_string(),
-                                reason:
-                                    "Multicast addresses are not supported for TCP/TLS protocols"
-                                        .to_string(),
-                            });
-                        }
+                    "tcp" | "tls" if socket_addr.ip().is_multicast() => {
+                        return Err(ZenohConfigError::InvalidAddress {
+                            address: addr.to_string(),
+                            protocol: protocol.to_string(),
+                            reason: "Multicast addresses are not supported for TCP/TLS protocols"
+                                .to_string(),
+                        });
                     }
-                    "udp" | "quic" => {
-                        // UDP and QUIC are more flexible but still validate basic constraints
-                        if socket_addr.ip().is_unspecified() && port < 1024 {
-                            return Err(ZenohConfigError::InvalidAddress {
-                                address: addr.to_string(),
-                                protocol: protocol.to_string(),
-                                reason: "Well-known ports (< 1024) with unspecified address may require special privileges".to_string(),
-                            });
-                        }
+                    "udp" | "quic"
+                        if socket_addr.ip().is_unspecified() && port < 1024 =>
+                    {
+                        return Err(ZenohConfigError::InvalidAddress {
+                            address: addr.to_string(),
+                            protocol: protocol.to_string(),
+                            reason: "Well-known ports (< 1024) with unspecified address may require special privileges".to_string(),
+                        });
                     }
-                    _ => {} // Unknown protocols pass through
+                    _ => {}
                 }
 
                 Ok(())
@@ -1456,15 +1451,14 @@ impl ZenohConfig {
                         });
                     }
                 }
-                "scouting/multicast/enabled" => {
-                    // Validate boolean values
-                    if !matches!(value.as_str(), "true" | "false") {
-                        return Err(ZenohConfigError::PropertyError {
-                            key: key.clone(),
-                            value: value.clone(),
-                            reason: "Boolean property must be 'true' or 'false'".to_string(),
-                        });
-                    }
+                "scouting/multicast/enabled"
+                    if !matches!(value.as_str(), "true" | "false") =>
+                {
+                    return Err(ZenohConfigError::PropertyError {
+                        key: key.clone(),
+                        value: value.clone(),
+                        reason: "Boolean property must be 'true' or 'false'".to_string(),
+                    });
                 }
                 // Add more property validations as needed
                 _ => {} // Unknown properties are allowed
