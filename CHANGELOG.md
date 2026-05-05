@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-05-05
+
+### Changed
+- Upgraded nlink from 0.8.0 to 0.15.1 (typed-units rollout: `TcHandle`, `Percent`, `Rate` at TC API boundaries)
+- Upgraded zenoh / zenoh-ext from 1.5.1 to 1.9
+- Upgraded bollard from 0.18 to 0.21 (`query_parameters` module + builder pattern for list/inspect options)
+- Upgraded iced_aw from 0.13 to 0.14
+- Upgraded dirs from 5 to 6
+- Upgraded nix from 0.30 to 0.31
+- Unified `thiserror` on workspace 2.0 (backend was on 1.0)
+- `qdisc.parent()` / `qdisc.handle()` now use `TcHandle` instead of raw `u32` (root check via `is_root()`)
+- Netem rate construction uses `Rate::kbit(...)` instead of `rate::kbps_to_bytes`
+
+### Fixed
+- Pre-existing clippy patterns flagged by newer toolchain (`collapsible_match`, `collapsible_if`, `unnecessary_sort_by`)
+
 ## [0.7.0] - 2026-01-18
 
 ### Changed

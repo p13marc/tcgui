@@ -1,3 +1,11 @@
+tcgui (0.8.0) stable; urgency=medium
+
+  * Upgrade nlink to 0.15.1 (typed TcHandle/Percent/Rate API)
+  * Upgrade zenoh to 1.9, bollard to 0.21, iced_aw to 0.14
+  * Upgrade dirs to 6, nix to 0.31, unify thiserror on 2.0
+
+ -- Marc Pardo <p13marc@gmail.com>  Tue, 05 May 2026 12:00:00 +0000
+
 tcgui (0.2.0) stable; urgency=medium
 
   * First public release with Flatpak and Docker packaging
