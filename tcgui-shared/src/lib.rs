@@ -1399,9 +1399,7 @@ impl ZenohConfig {
                                 .to_string(),
                         });
                     }
-                    "udp" | "quic"
-                        if socket_addr.ip().is_unspecified() && port < 1024 =>
-                    {
+                    "udp" | "quic" if socket_addr.ip().is_unspecified() && port < 1024 => {
                         return Err(ZenohConfigError::InvalidAddress {
                             address: addr.to_string(),
                             protocol: protocol.to_string(),
@@ -1451,9 +1449,7 @@ impl ZenohConfig {
                         });
                     }
                 }
-                "scouting/multicast/enabled"
-                    if !matches!(value.as_str(), "true" | "false") =>
-                {
+                "scouting/multicast/enabled" if !matches!(value.as_str(), "true" | "false") => {
                     return Err(ZenohConfigError::PropertyError {
                         key: key.clone(),
                         value: value.clone(),
