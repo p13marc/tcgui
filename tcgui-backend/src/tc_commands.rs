@@ -14,18 +14,35 @@
 //! * **Robust error handling**: Graceful handling of common TC command failures
 
 use anyhow::Result;
+use nlink::TcHandle;
 use nlink::netlink::Connection;
 use nlink::netlink::Route;
 use nlink::netlink::namespace::NamespaceSpec;
 use nlink::netlink::tc::NetemConfig;
 use nlink::netlink::tc_options::{NetemOptions, QdiscOptions};
-use nlink::TcHandle;
 use nlink::util::{Percent, Rate};
 use std::path::Path;
 use std::time::Duration;
 use tracing::{info, instrument, warn};
 
 use tcgui_shared::{TcNetemConfig, TcValidate, errors::TcguiError};
+
+/// Build a `TcCommandError` from a failed kernel TC operation.
+///
+/// Logs the kernel's `NETLINK_EXT_ACK` explanation at `warn` so failed applies
+/// are visible in backend logs with the precise reason (e.g. an out-of-range
+/// netem parameter), using nlink's `ext_ack()` accessor (added in 0.18). The
+/// returned message uses the full error Display, which folds the same ext_ack
+/// text in automatically since nlink 0.16 — so the frontend sees it too.
+fn tc_kernel_err(context: &str, e: &nlink::netlink::Error) -> TcguiError {
+    match e.ext_ack() {
+        Some(detail) => warn!("{context}: kernel rejected request: {detail}"),
+        None => warn!("{context}: {e}"),
+    }
+    TcguiError::TcCommandError {
+        message: format!("{context}: {e}"),
+    }
+}
 
 /// TC statistics result containing basic, queue, and rate estimator stats.
 #[derive(Debug, Clone)]
@@ -317,16 +334,12 @@ impl TcCommandManager {
                     let _ = conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await;
                     conn.add_qdisc_by_index(ifindex, netem_config)
                         .await
-                        .map_err(|e| TcguiError::TcCommandError {
-                            message: format!("Failed to add netem qdisc after delete: {}", e),
-                        })?;
+                        .map_err(|e| tc_kernel_err("Failed to add netem qdisc after delete", &e))?;
                 } else {
                     info!("Replacing netem qdisc on {}/{}", namespace, interface);
                     conn.replace_qdisc_by_index(ifindex, netem_config)
                         .await
-                        .map_err(|e| TcguiError::TcCommandError {
-                            message: format!("Failed to replace netem qdisc: {}", e),
-                        })?;
+                        .map_err(|e| tc_kernel_err("Failed to replace netem qdisc", &e))?;
                 }
             }
             None => {
@@ -341,9 +354,7 @@ impl TcCommandManager {
                     info!("Adding new netem qdisc to {}/{}", namespace, interface);
                     conn.add_qdisc_by_index(ifindex, netem_config)
                         .await
-                        .map_err(|e| TcguiError::TcCommandError {
-                            message: format!("Failed to add netem qdisc: {}", e),
-                        })?;
+                        .map_err(|e| tc_kernel_err("Failed to add netem qdisc", &e))?;
                 } else {
                     // Other qdisc type - delete and add
                     info!(
@@ -353,9 +364,7 @@ impl TcCommandManager {
                     let _ = conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await;
                     conn.add_qdisc_by_index(ifindex, netem_config)
                         .await
-                        .map_err(|e| TcguiError::TcCommandError {
-                            message: format!("Failed to add netem qdisc after delete: {}", e),
-                        })?;
+                        .map_err(|e| tc_kernel_err("Failed to add netem qdisc after delete", &e))?;
                 }
             }
         }
@@ -393,8 +402,8 @@ impl TcCommandManager {
         if config.duplicate.enabled && config.duplicate.percentage > 0.0 {
             netem = netem.duplicate(Percent::new(config.duplicate.percentage as f64));
             if config.duplicate.correlation > 0.0 {
-                netem = netem
-                    .duplicate_correlation(Percent::new(config.duplicate.correlation as f64));
+                netem =
+                    netem.duplicate_correlation(Percent::new(config.duplicate.correlation as f64));
             }
         }
 
@@ -402,8 +411,7 @@ impl TcCommandManager {
         if config.reorder.enabled && config.reorder.percentage > 0.0 {
             netem = netem.reorder(Percent::new(config.reorder.percentage as f64));
             if config.reorder.correlation > 0.0 {
-                netem =
-                    netem.reorder_correlation(Percent::new(config.reorder.correlation as f64));
+                netem = netem.reorder_correlation(Percent::new(config.reorder.correlation as f64));
             }
             if config.reorder.gap > 0 {
                 netem = netem.gap(config.reorder.gap);
@@ -414,8 +422,7 @@ impl TcCommandManager {
         if config.corrupt.enabled && config.corrupt.percentage > 0.0 {
             netem = netem.corrupt(Percent::new(config.corrupt.percentage as f64));
             if config.corrupt.correlation > 0.0 {
-                netem =
-                    netem.corrupt_correlation(Percent::new(config.corrupt.correlation as f64));
+                netem = netem.corrupt_correlation(Percent::new(config.corrupt.correlation as f64));
             }
         }
 
@@ -741,18 +748,14 @@ impl TcCommandManager {
 
         match conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await {
             Ok(()) => Ok("TC config removed successfully".to_string()),
-            Err(e) => {
-                let err_str = e.to_string();
-                // "No such file or directory" means no qdisc to remove - that's fine
-                if err_str.contains("No such file") || err_str.contains("ENOENT") {
-                    Ok("No TC config to remove".to_string())
-                } else {
-                    Err(TcguiError::TcCommandError {
-                        message: format!("TC command failed: {}", e),
-                    }
-                    .into())
-                }
+            // A missing qdisc means there was nothing to remove - that's fine.
+            // Use nlink's typed predicate (matches both Error::Kernel(ENOENT)
+            // and the Error::Io(ENOENT/ENODEV) shape) instead of string matching.
+            Err(e) if e.is_not_found() => Ok("No TC config to remove".to_string()),
+            Err(e) => Err(TcguiError::TcCommandError {
+                message: format!("TC command failed: {}", e),
             }
+            .into()),
         }
     }
 

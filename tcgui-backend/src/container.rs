@@ -10,7 +10,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use bollard::Docker;
 use bollard::models::ContainerInspectResponse;
-use bollard::query_parameters::{ListContainersOptionsBuilder, InspectContainerOptions};
+use bollard::query_parameters::{InspectContainerOptions, ListContainersOptionsBuilder};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
