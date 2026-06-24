@@ -657,21 +657,23 @@ impl TcInterface {
         let error_color = theme.colors.error;
         let info_color = theme.colors.info;
 
-        // Get queue stats (drops) and rate estimator (throughput)
+        // Compact integer formatter (e.g. 12345 -> "12K").
+        let compact = |n: u32| -> String {
+            if n >= 1_000_000 {
+                format!("{}M", n / 1_000_000)
+            } else if n >= 1_000 {
+                format!("{}K", n / 1_000)
+            } else {
+                format!("{}", n)
+            }
+        };
+
+        // Get queue stats (drops/overlimits) and rate estimator (throughput)
         if let Some(queue_stats) = &self.state.tc_stats_queue {
             let drops = queue_stats.drops;
 
             // Show drops in error color if > 0, otherwise muted
             let drops_color = if drops > 0 { error_color } else { text_muted };
-
-            // Format with compact display
-            let drops_text = if drops >= 1_000_000 {
-                format!("{}M", drops / 1_000_000)
-            } else if drops >= 1_000 {
-                format!("{}K", drops / 1_000)
-            } else {
-                format!("{}", drops)
-            };
 
             // Get rate estimator if available (kernel-computed throughput)
             let rate_text = if let Some(rate_est) = &self.state.tc_stats_rate_est {
@@ -680,24 +682,43 @@ impl TcInterface {
                 "--".to_string()
             };
 
-            row![
+            let mut stats_row = row![
                 Icon::XCircle.svg_sized_colored(scaled(10, zoom), drops_color),
-                text(drops_text)
+                text(compact(drops))
                     .size(scaled(10, zoom))
                     .style(move |_| text::Style {
                         color: Some(drops_color)
                     }),
-                text(" ").size(scaled(10, zoom)),
-                Icon::Zap.svg_sized_colored(scaled(10, zoom), info_color),
-                text(rate_text)
-                    .size(scaled(10, zoom))
-                    .style(move |_| text::Style {
-                        color: Some(info_color)
-                    }),
             ]
             .spacing(scaled_spacing(2, zoom))
-            .align_y(iced::Alignment::Center)
-            .into()
+            .align_y(iced::Alignment::Center);
+
+            // Overlimits: packets the shaper held back. Informational (expected
+            // to be non-zero for a rate limiter), so shown in info color and
+            // only when present — keeps the fixed-width cell uncluttered.
+            if queue_stats.overlimits > 0 {
+                stats_row = stats_row
+                    .push(Icon::AlertTriangle.svg_sized_colored(scaled(10, zoom), info_color))
+                    .push(
+                        text(compact(queue_stats.overlimits))
+                            .size(scaled(10, zoom))
+                            .style(move |_| text::Style {
+                                color: Some(info_color),
+                            }),
+                    );
+            }
+
+            stats_row
+                .push(text(" ").size(scaled(10, zoom)))
+                .push(Icon::Zap.svg_sized_colored(scaled(10, zoom), info_color))
+                .push(
+                    text(rate_text)
+                        .size(scaled(10, zoom))
+                        .style(move |_| text::Style {
+                            color: Some(info_color),
+                        }),
+                )
+                .into()
         } else {
             // TC active but no stats yet - show waiting indicator
             row![
