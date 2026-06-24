@@ -14,12 +14,13 @@
 //! Use `NamespaceEventManager` to manage event streams for multiple namespaces.
 
 use futures_util::StreamExt;
-use nlink::RtnetlinkGroup;
 use nlink::netlink::events::NetworkEvent;
 use nlink::netlink::messages::{LinkMessage, TcMessage};
+use nlink::netlink::resync::{ConnectionFactory, ResyncedEvent};
 use nlink::netlink::{Connection, Route};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -34,6 +35,16 @@ pub enum NetlinkEvent {
     QdiscAdded(TcInfo),
     /// A qdisc was removed
     QdiscRemoved(TcInfo),
+}
+
+impl NetlinkEvent {
+    /// Whether this event is a qdisc (TC) event rather than a link event.
+    fn is_qdisc(&self) -> bool {
+        matches!(
+            self,
+            NetlinkEvent::QdiscAdded(_) | NetlinkEvent::QdiscRemoved(_)
+        )
+    }
 }
 
 /// Basic information about a link from netlink messages
@@ -146,41 +157,53 @@ impl NetlinkEventListener {
     ///
     /// Ok(()) if the listener started successfully, Err on failure
     pub async fn start(self) -> Result<(), String> {
-        // Create a connection and subscribe to events
-        let mut conn = Connection::<Route>::new()
+        // Create a connection for the default namespace.
+        let conn = Connection::<Route>::new()
             .map_err(|e| format!("Failed to create connection: {}", e))?;
 
-        // Subscribe to link events, and optionally TC events
-        let groups = if self.subscribe_tc {
-            vec![RtnetlinkGroup::Link, RtnetlinkGroup::Tc]
-        } else {
-            vec![RtnetlinkGroup::Link]
-        };
+        // Build an ENOBUFS-resilient event stream. On overflow the wrapper
+        // re-dumps full state on a fresh (default-namespace) connection and
+        // replays it as `Resynced` items, so we never silently miss link/qdisc
+        // changes under load. `into_events_with_resync` subscribes to every
+        // rtnetlink multicast group internally; `parse_network_event` filters
+        // down to the link/qdisc events we care about.
+        let factory: ConnectionFactory<Route> =
+            Arc::new(|| Box::pin(async { Connection::<Route>::new() }));
 
-        conn.subscribe(&groups)
-            .map_err(|e| format!("Failed to subscribe to events: {}", e))?;
+        let mut events = conn
+            .into_events_with_resync(factory)
+            .await
+            .map_err(|e| format!("Failed to start resync event stream: {}", e))?;
 
         info!(
-            "Netlink event listener started (links: true, tc: {})",
+            "Netlink event listener started (links: true, tc: {}, resync: true)",
             self.subscribe_tc
         );
 
-        // Spawn the message processing task - consume conn with into_events()
+        // Spawn the message processing task.
         let event_tx = self.event_tx;
+        let subscribe_tc = self.subscribe_tc;
         tokio::spawn(async move {
-            let mut events = conn.into_events();
             while let Some(result) = events.next().await {
                 match result {
-                    Ok(event) => {
-                        let netlink_events = parse_network_event(event);
-
-                        for evt in netlink_events {
+                    Ok(ResyncedEvent::Event(event)) | Ok(ResyncedEvent::Resynced(event)) => {
+                        for evt in parse_network_event(event) {
+                            // Honor the no-TC mode: drop qdisc events when the
+                            // caller only asked for link events.
+                            if !subscribe_tc && evt.is_qdisc() {
+                                continue;
+                            }
                             if event_tx.send(evt).await.is_err() {
                                 warn!("Netlink event receiver dropped, stopping listener");
                                 return;
                             }
                         }
                     }
+                    Ok(ResyncedEvent::Marker(marker)) => {
+                        debug!("Netlink resync marker: {:?}", marker);
+                    }
+                    // ResyncedEvent is #[non_exhaustive]; ignore future variants.
+                    Ok(_) => {}
                     Err(e) => {
                         error!("Error receiving netlink event: {}", e);
                         // Continue listening despite errors
@@ -314,7 +337,7 @@ impl NamespaceEventManager {
     /// # Returns
     ///
     /// Ok(()) if the stream was started successfully, Err on failure
-    pub fn add_namespace(&mut self, target: NamespaceTarget) -> Result<(), String> {
+    pub async fn add_namespace(&mut self, target: NamespaceTarget) -> Result<(), String> {
         let namespace_name = target.name().to_string();
 
         // Don't add duplicate namespaces
@@ -323,29 +346,45 @@ impl NamespaceEventManager {
             return Ok(());
         }
 
-        // Create connection for this namespace
-        let mut conn = match &target {
-            NamespaceTarget::Default => Connection::<Route>::new(),
-            NamespaceTarget::Named(name) => {
-                // Named namespaces are at /var/run/netns/<name>
-                let path = PathBuf::from(format!("/var/run/netns/{}", name));
-                Connection::<Route>::new_in_namespace_path(&path)
-            }
-            NamespaceTarget::Path { path, .. } => Connection::<Route>::new_in_namespace_path(path),
+        // Resolve the namespace path (if any) once, so both the initial
+        // connection and the resync factory open a connection on the same netns.
+        let ns_path: Option<PathBuf> = match &target {
+            NamespaceTarget::Default => None,
+            NamespaceTarget::Named(name) => Some(PathBuf::from(format!("/var/run/netns/{}", name))),
+            NamespaceTarget::Path { path, .. } => Some(path.clone()),
+        };
+
+        // Create the initial connection for this namespace.
+        let conn = match &ns_path {
+            None => Connection::<Route>::new(),
+            Some(path) => Connection::<Route>::new_in_namespace_path(path),
         }
         .map_err(|e| format!("Failed to create connection for {}: {}", namespace_name, e))?;
 
-        // Subscribe to link and TC events
-        conn.subscribe(&[RtnetlinkGroup::Link, RtnetlinkGroup::Tc])
-            .map_err(|e| {
-                format!(
-                    "Failed to subscribe to events for {}: {}",
-                    namespace_name, e
-                )
-            })?;
+        // Factory used by the resync wrapper to re-dump state on a fresh
+        // connection (on the same netns) after an ENOBUFS overflow.
+        let factory_path = ns_path.clone();
+        let factory: ConnectionFactory<Route> = Arc::new(move || {
+            let factory_path = factory_path.clone();
+            Box::pin(async move {
+                match factory_path {
+                    None => Connection::<Route>::new(),
+                    Some(path) => Connection::<Route>::new_in_namespace_path(&path),
+                }
+            })
+        });
+
+        // Build the ENOBUFS-resilient stream (subscribes to all rtnetlink
+        // groups internally; we filter in `parse_network_event`).
+        let events = conn.into_events_with_resync(factory).await.map_err(|e| {
+            format!(
+                "Failed to start resync event stream for {}: {}",
+                namespace_name, e
+            )
+        })?;
 
         info!(
-            "Started event stream for namespace: {} (links: true, tc: true)",
+            "Started event stream for namespace: {} (links: true, tc: true, resync: true)",
             namespace_name
         );
 
@@ -353,7 +392,7 @@ impl NamespaceEventManager {
         let event_tx = self.event_tx.clone();
         let ns_name = namespace_name.clone();
         let handle = tokio::spawn(async move {
-            Self::process_namespace_events(conn, ns_name, event_tx).await;
+            Self::process_namespace_events(events, ns_name, event_tx).await;
         });
 
         self.active_namespaces.insert(namespace_name, handle);
@@ -381,19 +420,23 @@ impl NamespaceEventManager {
         self.active_namespaces.keys().cloned().collect()
     }
 
-    /// Process events from a namespace's event stream
-    async fn process_namespace_events(
-        conn: Connection<Route>,
+    /// Process events from a namespace's ENOBUFS-resilient event stream.
+    ///
+    /// Generic over the stream so we don't have to name nlink's concrete
+    /// resync-stream type. `Resynced` items (replayed after an overflow) are
+    /// forwarded exactly like live `Event` items — the frontend treats them as
+    /// upserts, so state reconverges after a drop.
+    async fn process_namespace_events<S>(
+        mut events: S,
         namespace: String,
         event_tx: mpsc::Sender<NamespacedEvent>,
-    ) {
-        let mut events = conn.into_events();
+    ) where
+        S: futures_util::Stream<Item = nlink::Result<ResyncedEvent<NetworkEvent>>> + Unpin,
+    {
         while let Some(result) = events.next().await {
             match result {
-                Ok(event) => {
-                    let netlink_events = parse_network_event(event);
-
-                    for evt in netlink_events {
+                Ok(ResyncedEvent::Event(event)) | Ok(ResyncedEvent::Resynced(event)) => {
+                    for evt in parse_network_event(event) {
                         let namespaced_event = NamespacedEvent {
                             namespace: namespace.clone(),
                             event: evt,
@@ -408,6 +451,14 @@ impl NamespaceEventManager {
                         }
                     }
                 }
+                Ok(ResyncedEvent::Marker(marker)) => {
+                    debug!(
+                        "Netlink resync marker for namespace {}: {:?}",
+                        namespace, marker
+                    );
+                }
+                // ResyncedEvent is #[non_exhaustive]; ignore future variants.
+                Ok(_) => {}
                 Err(e) => {
                     error!("Error receiving event from namespace {}: {}", namespace, e);
                     // Continue listening despite errors

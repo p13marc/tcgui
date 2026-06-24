@@ -792,7 +792,7 @@ impl TcBackend {
                     path: ns_path.clone(),
                 };
 
-                match manager.add_namespace(target) {
+                match manager.add_namespace(target).await {
                     Ok(()) => {
                         info!(
                             "Started event monitoring for container namespace: {}",

@@ -30,6 +30,18 @@ use tcgui_shared::{
     BandwidthUpdate, NetworkBandwidthStats, NetworkInterface, errors::TcguiError, topics,
 };
 
+/// Returns true if the error chain contains an nlink permission-denied error.
+///
+/// Walks the `anyhow` source chain looking for a typed `nlink::netlink::Error`
+/// and asks it via `is_permission_denied()` (which, as of nlink 0.19, matches
+/// both the `Error::Kernel(EPERM/EACCES)` and `Error::Io(EPERM)` shapes) rather
+/// than matching on the Display string.
+fn is_permission_denied(err: &anyhow::Error) -> bool {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<nlink::netlink::Error>())
+        .any(|e| e.is_permission_denied())
+}
+
 /// Per-namespace statistics tracker
 struct NamespaceStatsTracker {
     /// nlink StatsTracker for automatic rate calculation
@@ -148,11 +160,10 @@ impl BandwidthMonitor {
         let (snapshot, interface_stats) = match stats_result {
             Ok(result) => result,
             Err(e) => {
-                let err_str = e.to_string();
-                if err_str.contains("EPERM")
-                    || err_str.contains("Operation not permitted")
-                    || err_str.contains("Permission denied")
-                {
+                // Use nlink's typed predicate (downcast through the anyhow chain)
+                // instead of matching on the Display string. is_permission_denied()
+                // also catches the Error::Io(EPERM) shape as of nlink 0.19.
+                if is_permission_denied(&e) {
                     warn!(
                         "Cannot access namespace {}: insufficient permissions",
                         namespace
@@ -274,26 +285,26 @@ impl BandwidthMonitor {
             // Use cached connection for default namespace
             if !self.namespace_connections.contains_key("default") {
                 let conn = Connection::<Route>::new()
-                    .map_err(|e| anyhow::anyhow!("Failed to create connection: {}", e))?;
+                    .map_err(|e| anyhow::Error::new(e).context("Failed to create connection"))?;
                 self.namespace_connections
                     .insert("default".to_string(), conn);
             }
             let conn = self.namespace_connections.get("default").unwrap();
             conn.get_links()
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to get links: {}", e))?
+                .map_err(|e| anyhow::Error::new(e).context("Failed to get links"))?
         } else {
             // Named namespace - create connection in namespace
             let ns_path = format!("/var/run/netns/{}", namespace);
             let conn = Connection::<Route>::new_in_namespace_path(&ns_path).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to create connection for namespace {}: {}",
-                    namespace,
-                    e
-                )
+                anyhow::Error::new(e).context(format!(
+                    "Failed to create connection for namespace {}",
+                    namespace
+                ))
             })?;
             conn.get_links().await.map_err(|e| {
-                anyhow::anyhow!("Failed to get links in namespace {}: {}", namespace, e)
+                anyhow::Error::new(e)
+                    .context(format!("Failed to get links in namespace {}", namespace))
             })?
         };
 
@@ -323,15 +334,14 @@ impl BandwidthMonitor {
             })?;
 
         let conn = Connection::<Route>::new_in_namespace_path(&ns_path).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to create connection for container {}: {}",
-                namespace,
-                e
-            )
+            anyhow::Error::new(e).context(format!(
+                "Failed to create connection for container {}",
+                namespace
+            ))
         })?;
 
         let links = conn.get_links().await.map_err(|e| {
-            anyhow::anyhow!("Failed to get links in container {}: {}", namespace, e)
+            anyhow::Error::new(e).context(format!("Failed to get links in container {}", namespace))
         })?;
 
         let snapshot = StatsSnapshot::from_links(&links);
