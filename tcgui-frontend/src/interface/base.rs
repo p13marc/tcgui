@@ -24,6 +24,13 @@ use super::preset::PresetManagerComponent;
 
 /// Main network interface component for traffic control management.
 ///
+/// Whether a rate-limit cap (kbit/s) exceeds the link's physical speed
+/// (Mbit/s), in which case the cap can't actually take effect. Returns false
+/// when the link speed is unknown (`None`) or zero.
+fn rate_cap_exceeds_link(rate_kbps: u32, link_mbps: Option<u32>) -> bool {
+    matches!(link_mbps, Some(mbps) if mbps > 0 && rate_kbps > mbps.saturating_mul(1000))
+}
+
 /// This is the refactored version of the original TcInterface that coordinates
 /// multiple feature-specific components while maintaining the same external API.
 #[derive(Clone)]
@@ -427,6 +434,16 @@ impl TcInterface {
         }
         if let Some(kind) = &self.state.qdisc_kind {
             tip_lines.push(format!("qdisc: {kind}"));
+        }
+        // Warn when a configured rate cap can't actually take effect because it
+        // exceeds the physical link speed.
+        if self.state.features.rate_limit.enabled
+            && rate_cap_exceeds_link(
+                self.state.features.rate_limit.config.rate_kbps,
+                self.state.link_speed_mbps,
+            )
+        {
+            tip_lines.push("⚠ rate cap exceeds link speed (no effect)".to_string());
         }
         tip_lines.extend(self.state.addresses.iter().cloned());
 
@@ -1351,6 +1368,19 @@ impl TcInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rate_cap_exceeds_link() {
+        // 2 Gbit/s cap on a 1 Gbit/s link → exceeds.
+        assert!(rate_cap_exceeds_link(2_000_000, Some(1000)));
+        // 500 Mbit/s cap on a 1 Gbit/s link → fine.
+        assert!(!rate_cap_exceeds_link(500_000, Some(1000)));
+        // Exactly at link speed → not exceeding.
+        assert!(!rate_cap_exceeds_link(1_000_000, Some(1000)));
+        // Unknown or zero link speed → never warns.
+        assert!(!rate_cap_exceeds_link(10_000_000, None));
+        assert!(!rate_cap_exceeds_link(10_000_000, Some(0)));
+    }
 
     #[test]
     fn test_interface_creation() {
