@@ -43,9 +43,21 @@ use crate::zenoh_manager::ZenohManager;
 ///       ↓           ↓            ↓               ↓         ↓
 ///   Raw Events   Routing    Processing      State     View
 /// ```
+/// A transient, user-dismissable notification (currently TC operation failures).
+#[derive(Debug, Clone)]
+pub struct UiNotification {
+    /// The message to show.
+    pub message: String,
+}
+
+/// Maximum notifications retained at once (oldest dropped beyond this).
+const MAX_NOTIFICATIONS: usize = 5;
+
 pub struct TcGui {
     /// Backend management and state
     backend_manager: BackendManager,
+    /// Transient user notifications (e.g. failed TC operations)
+    notifications: Vec<UiNotification>,
     /// Bandwidth history for time-series charts
     bandwidth_history: BandwidthHistoryManager,
     /// Query channel management for TC and interface operations
@@ -69,6 +81,7 @@ impl TcGui {
 
         let app = Self {
             backend_manager: BackendManager::new(),
+            notifications: Vec::new(),
             bandwidth_history: BandwidthHistoryManager::default(),
             query_manager: QueryManager::new(),
             scenario_manager: ScenarioManager::new(),
@@ -89,6 +102,7 @@ impl TcGui {
 
         let app = Self {
             backend_manager: BackendManager::new(),
+            notifications: Vec::new(),
             bandwidth_history: BandwidthHistoryManager::default(),
             query_manager: QueryManager::new(),
             scenario_manager: ScenarioManager::new(),
@@ -150,6 +164,34 @@ impl TcGui {
             }
             TcGuiMessage::TcStatisticsUpdate(tc_stats_update) => {
                 handle_tc_statistics_update(&mut self.backend_manager, tc_stats_update)
+            }
+            TcGuiMessage::TcOperationResult {
+                backend_name,
+                response,
+            } => {
+                // Only surface failures — successes are already reflected by the
+                // Tc config update that follows.
+                if !response.success {
+                    tracing::warn!(
+                        "TC operation failed on '{}': {}",
+                        backend_name,
+                        response.message
+                    );
+                    self.notifications.push(UiNotification {
+                        message: response.message,
+                    });
+                    if self.notifications.len() > MAX_NOTIFICATIONS {
+                        let overflow = self.notifications.len() - MAX_NOTIFICATIONS;
+                        self.notifications.drain(0..overflow);
+                    }
+                }
+                Task::none()
+            }
+            TcGuiMessage::DismissNotification(index) => {
+                if index < self.notifications.len() {
+                    self.notifications.remove(index);
+                }
+                Task::none()
             }
             TcGuiMessage::BackendConnectionStatus {
                 backend_name,
@@ -609,12 +651,47 @@ impl TcGui {
 
     /// Renders the application view using the modular view system.
     pub fn view(&self) -> Element<'_, TcGuiMessage> {
-        render_main_view(
+        let main = render_main_view(
             &self.backend_manager,
             &self.bandwidth_history,
             &self.ui_state,
             &self.scenario_manager,
-        )
+        );
+
+        if self.notifications.is_empty() {
+            return main;
+        }
+
+        // Stack dismissable error banners above the main view.
+        use iced::widget::{Column, button, container, row, text};
+        use iced::{Color, Length};
+
+        let mut banners = Column::new().spacing(4).padding(6).width(Length::Fill);
+        for (i, n) in self.notifications.iter().enumerate() {
+            let banner = container(
+                row![
+                    text(format!("⚠ {}", n.message))
+                        .size(13)
+                        .width(Length::Fill)
+                        .style(|_| text::Style {
+                            color: Some(Color::WHITE),
+                        }),
+                    button(text("✕").size(13)).on_press(TcGuiMessage::DismissNotification(i)),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(Color::from_rgb(0.55, 0.12, 0.12).into()),
+                text_color: Some(Color::WHITE),
+                ..Default::default()
+            });
+            banners = banners.push(banner);
+        }
+
+        Column::new().push(banners).push(main).into()
     }
 
     /// Sets up subscriptions for Zenoh events and periodic cleanup.
@@ -687,6 +764,13 @@ impl TcGui {
                     backend_name,
                     namespace,
                     interface,
+                    response,
+                },
+                ZenohEvent::TcOperationResult {
+                    backend_name,
+                    response,
+                } => TcGuiMessage::TcOperationResult {
+                    backend_name,
                     response,
                 },
                 ZenohEvent::PresetListUpdate {

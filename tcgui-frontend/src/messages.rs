@@ -200,6 +200,14 @@ pub enum TcGuiMessage {
         response: DiagnosticsResponse,
     },
 
+    /// Result of a TC apply/remove operation, used to surface failures.
+    TcOperationResult {
+        backend_name: String,
+        response: TcResponse,
+    },
+    /// Dismiss the notification at the given index.
+    DismissNotification(usize),
+
     // Backend cleanup
     CleanupStaleBackends,
 }
@@ -244,9 +252,11 @@ pub enum ZenohEvent {
         interface: String,
         response: tcgui_shared::DiagnosticsResponse,
     },
-    // Query responses (commented out until response handling is implemented)
-    // TcResponse { backend_name: String, request: TcRequest, response: TcResponse },
-    // InterfaceControlResponse { backend_name: String, request: InterfaceControlRequest, response: InterfaceControlResponse },
+    /// Result of a TC apply/remove query (used to surface failures in the UI).
+    TcOperationResult {
+        backend_name: String,
+        response: TcResponse,
+    },
     // Connection status
     ConnectionStatus(bool),
 }
