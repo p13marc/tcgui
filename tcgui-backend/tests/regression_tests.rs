@@ -593,6 +593,7 @@ mod zenoh_communication_regression_tests {
                 interface_type: tcgui_shared::InterfaceType::Virtual,
                 addresses: Vec::new(),
                 qdisc_kind: None,
+                link_speed_mbps: None,
             });
         }
 
@@ -627,6 +628,7 @@ mod zenoh_communication_regression_tests {
             interface_type: tcgui_shared::InterfaceType::Physical,
             addresses: Vec::new(),
             qdisc_kind: None,
+            link_speed_mbps: None,
         };
 
         // Should handle unicode correctly

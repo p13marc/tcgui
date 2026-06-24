@@ -29,6 +29,9 @@ pub struct InterfaceState {
     /// Root qdisc kind reported by the backend (e.g. "cake"), if non-default.
     pub qdisc_kind: Option<String>,
 
+    /// Physical link speed in Mbit/s (ethtool), if known.
+    pub link_speed_mbps: Option<u32>,
+
     /// User's desired interface enable state
     pub interface_enabled: bool,
 
@@ -80,6 +83,7 @@ impl InterfaceState {
             has_tc_qdisc: false,
             addresses: Vec::new(),
             qdisc_kind: None,
+            link_speed_mbps: None,
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,
