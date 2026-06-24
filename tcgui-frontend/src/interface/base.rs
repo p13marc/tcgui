@@ -415,6 +415,16 @@ impl TcInterface {
         // Show the root qdisc kind + the interface's IP addresses on hover (kept
         // out of the fixed-width row so the table layout is unaffected).
         let mut tip_lines: Vec<String> = Vec::new();
+        if let Some(mbps) = self.state.link_speed_mbps {
+            let speed = if mbps >= 1000 && mbps % 1000 == 0 {
+                format!("link: {} Gbit/s", mbps / 1000)
+            } else if mbps >= 1000 {
+                format!("link: {:.1} Gbit/s", mbps as f64 / 1000.0)
+            } else {
+                format!("link: {mbps} Mbit/s")
+            };
+            tip_lines.push(speed);
+        }
         if let Some(kind) = &self.state.qdisc_kind {
             tip_lines.push(format!("qdisc: {kind}"));
         }
@@ -1224,6 +1234,7 @@ impl TcInterface {
         );
         self.state.addresses = interface.addresses.clone();
         self.state.qdisc_kind = interface.qdisc_kind.clone();
+        self.state.link_speed_mbps = interface.link_speed_mbps;
     }
 
     /// Get bandwidth stats (compatibility method)

@@ -413,6 +413,7 @@ mod tests {
             interface_type: InterfaceType::Virtual,
             addresses: Vec::new(),
             qdisc_kind: None,
+            link_speed_mbps: None,
         }
     }
 

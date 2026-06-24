@@ -564,6 +564,7 @@ mod tests {
                 interface_type: InterfaceType::Physical,
                 addresses: Vec::new(),
                 qdisc_kind: None,
+                link_speed_mbps: None,
             },
         );
 
@@ -579,6 +580,7 @@ mod tests {
                 interface_type: InterfaceType::Physical,
                 addresses: Vec::new(),
                 qdisc_kind: None,
+                link_speed_mbps: None,
             },
         );
 

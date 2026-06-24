@@ -1702,6 +1702,11 @@ pub struct NetworkInterface {
     /// configured even when it isn't netem.
     #[serde(default)]
     pub qdisc_kind: Option<String>,
+    /// Physical link speed in Mbit/s reported by ethtool, when available
+    /// (`None` for virtual interfaces or namespaces we don't probe). Lets the
+    /// GUI show the link capacity and flag rate caps that exceed it.
+    #[serde(default)]
+    pub link_speed_mbps: Option<u32>,
 }
 
 /// Classification of network interface types.

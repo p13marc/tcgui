@@ -216,6 +216,11 @@ impl NetworkManager {
             })?;
 
         let addr_map = Self::address_map(conn).await;
+        let names: Vec<String> = links
+            .iter()
+            .map(|l| l.name_or(&format!("unknown{}", l.ifindex())).to_string())
+            .collect();
+        let speed_map = self.link_speed_map(&names).await;
 
         for link in links {
             let index = link.ifindex();
@@ -233,7 +238,7 @@ impl NetworkManager {
             discovered_interfaces.insert(
                 index,
                 NetworkInterface {
-                    name,
+                    name: name.clone(),
                     index,
                     namespace: namespace.to_string(),
                     is_up,
@@ -242,6 +247,7 @@ impl NetworkManager {
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                     qdisc_kind,
+                    link_speed_mbps: speed_map.get(&name).copied(),
                 },
             );
         }
@@ -295,6 +301,7 @@ impl NetworkManager {
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                     qdisc_kind,
+                    link_speed_mbps: None,
                 },
             );
         }
@@ -327,6 +334,36 @@ impl NetworkManager {
                 HashMap::new()
             }
         }
+    }
+
+    /// Best-effort map of interface name -> physical link speed (Mbit/s) via
+    /// the ethtool GENL family, for the namespace this process runs in.
+    ///
+    /// Read-only and graceful: if the ethtool family is unavailable (older
+    /// kernel) the map is empty; interfaces without a link speed (loopback,
+    /// veth, bridges) are simply absent. Only queried for the default namespace
+    /// — ethtool connections are netns-bound and virtual interfaces in other
+    /// namespaces rarely report a meaningful speed.
+    async fn link_speed_map(&self, names: &[String]) -> HashMap<String, u32> {
+        use nlink::netlink::Ethtool;
+
+        let mut map = HashMap::new();
+        let conn = match Connection::<Ethtool>::new_async().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                debug!("ethtool link-speed probe unavailable: {}", e);
+                return map;
+            }
+        };
+        for name in names {
+            if let Ok(modes) = conn.get_link_modes_by_name(name).await
+                && let Some(speed) = modes.speed
+                && speed > 0
+            {
+                map.insert(name.clone(), speed);
+            }
+        }
+        map
     }
 
     /// Determine interface type from name and link message
@@ -698,6 +735,7 @@ impl NetworkManager {
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                     qdisc_kind,
+                    link_speed_mbps: None,
                 },
             );
         }
