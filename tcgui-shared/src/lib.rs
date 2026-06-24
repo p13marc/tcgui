@@ -1697,6 +1697,11 @@ pub struct NetworkInterface {
     /// (e.g. `"10.0.0.5/24"`, `"fe80::1/64"`). Empty when the interface has none.
     #[serde(default)]
     pub addresses: Vec<String>,
+    /// Kind of the root qdisc (e.g. `"netem"`, `"cake"`, `"tbf"`, `"htb"`),
+    /// or `None` for a plain kernel-default qdisc. Lets the GUI show what's
+    /// configured even when it isn't netem.
+    #[serde(default)]
+    pub qdisc_kind: Option<String>,
 }
 
 /// Classification of network interface types.

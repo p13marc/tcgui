@@ -29,6 +29,15 @@ use tcgui_shared::{
 
 use crate::container::{Container, ContainerManager};
 
+/// Drop kernel-default root qdiscs that carry no user intent, so the UI only
+/// surfaces a qdisc kind worth noting (netem, tbf, htb, cake, fq_codel, …).
+fn interesting_qdisc_kind(kind: Option<String>) -> Option<String> {
+    match kind.as_deref() {
+        None | Some("noqueue" | "pfifo_fast" | "mq" | "pfifo" | "bfifo") => None,
+        Some(_) => kind,
+    }
+}
+
 /// Network interface manager for multi-namespace operations.
 ///
 /// This struct provides comprehensive network interface management across
@@ -217,11 +226,9 @@ impl NetworkManager {
             // Determine interface type
             let interface_type = Self::determine_interface_type(&name, &link);
 
-            // Check if interface has TC qdisc
-            let has_tc_qdisc = self
-                .check_tc_qdisc_with_connection(conn, &name)
-                .await
-                .unwrap_or(false);
+            // Check TC qdisc + detect the root qdisc kind in one query
+            let (has_tc_qdisc, qdisc_kind) =
+                self.qdisc_info(conn, &name).await.unwrap_or((false, None));
 
             discovered_interfaces.insert(
                 index,
@@ -234,6 +241,7 @@ impl NetworkManager {
                     has_tc_qdisc,
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
+                    qdisc_kind,
                 },
             );
         }
@@ -271,11 +279,9 @@ impl NetworkManager {
             // Determine interface type
             let interface_type = Self::determine_interface_type(&name, &link);
 
-            // Check TC qdisc in this namespace
-            let has_tc_qdisc = self
-                .check_tc_qdisc_with_connection(&conn, &name)
-                .await
-                .unwrap_or(false);
+            // Check TC qdisc + detect the root qdisc kind in one query
+            let (has_tc_qdisc, qdisc_kind) =
+                self.qdisc_info(&conn, &name).await.unwrap_or((false, None));
 
             interfaces.insert(
                 index,
@@ -288,6 +294,7 @@ impl NetworkManager {
                     has_tc_qdisc,
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
+                    qdisc_kind,
                 },
             );
         }
@@ -380,6 +387,35 @@ impl NetworkManager {
         }
 
         Ok(false)
+    }
+
+    /// Inspect an interface's qdiscs in a single query, returning both whether a
+    /// netem qdisc is present (drives `has_tc_qdisc`, preserving its prior
+    /// meaning) and the root qdisc kind for display (filtered to drop plain
+    /// kernel-default qdiscs that carry no user intent).
+    async fn qdisc_info(
+        &self,
+        conn: &Connection<Route>,
+        interface: &str,
+    ) -> Result<(bool, Option<String>)> {
+        let qdiscs = conn
+            .get_qdiscs_by_name(interface)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get qdiscs for {}: {}", interface, e))?;
+
+        let mut is_netem = false;
+        let mut root_kind = None;
+        for qdisc in qdiscs {
+            let kind = qdisc.kind().map(|k| k.to_string());
+            if kind.as_deref() == Some("netem") {
+                is_netem = true;
+            }
+            if qdisc.parent().is_root() {
+                root_kind = kind;
+            }
+        }
+
+        Ok((is_netem, interesting_qdisc_kind(root_kind)))
     }
 
     /// Check if an interface has a netem qdisc configured.
@@ -646,11 +682,9 @@ impl NetworkManager {
                 InterfaceType::Virtual
             };
 
-            // Check TC qdisc
-            let has_tc_qdisc = self
-                .check_tc_qdisc_with_connection(&conn, &name)
-                .await
-                .unwrap_or(false);
+            // Check TC qdisc + detect the root qdisc kind in one query
+            let (has_tc_qdisc, qdisc_kind) =
+                self.qdisc_info(&conn, &name).await.unwrap_or((false, None));
 
             interfaces.insert(
                 index,
@@ -663,6 +697,7 @@ impl NetworkManager {
                     has_tc_qdisc,
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
+                    qdisc_kind,
                 },
             );
         }

@@ -330,6 +330,7 @@ impl NetworkService {
                 has_tc_qdisc: false,     // Will be updated by TC detection
                 interface_type: tcgui_shared::InterfaceType::Virtual, // Default type
                 addresses: Vec::new(),   // Populated by the primary discovery path
+                qdisc_kind: None,
             })
             .collect();
 
