@@ -412,6 +412,7 @@ mod tests {
             has_tc_qdisc: false,
             interface_type: InterfaceType::Virtual,
             addresses: Vec::new(),
+            qdisc_kind: None,
         }
     }
 

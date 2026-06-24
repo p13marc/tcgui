@@ -412,15 +412,21 @@ impl TcInterface {
         .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center);
 
-        // Show the interface's IP addresses on hover (kept out of the fixed-width
-        // row so the table layout is unaffected).
-        let interface_name: Element<'_, TcInterfaceMessage> = if self.state.addresses.is_empty() {
+        // Show the root qdisc kind + the interface's IP addresses on hover (kept
+        // out of the fixed-width row so the table layout is unaffected).
+        let mut tip_lines: Vec<String> = Vec::new();
+        if let Some(kind) = &self.state.qdisc_kind {
+            tip_lines.push(format!("qdisc: {kind}"));
+        }
+        tip_lines.extend(self.state.addresses.iter().cloned());
+
+        let interface_name: Element<'_, TcInterfaceMessage> = if tip_lines.is_empty() {
             name_row.into()
         } else {
             let tooltip_style = theme.tooltip_style();
             tooltip(
                 name_row,
-                text(self.state.addresses.join("\n")).size(scaled(11, zoom)),
+                text(tip_lines.join("\n")).size(scaled(11, zoom)),
                 tooltip::Position::Bottom,
             )
             .delay(Duration::from_millis(300))
@@ -1217,6 +1223,7 @@ impl TcInterface {
             interface.has_tc_qdisc,
         );
         self.state.addresses = interface.addresses.clone();
+        self.state.qdisc_kind = interface.qdisc_kind.clone();
     }
 
     /// Get bandwidth stats (compatibility method)

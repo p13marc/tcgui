@@ -26,6 +26,9 @@ pub struct InterfaceState {
     /// IP addresses assigned to the interface ("ip/prefix"), from the backend.
     pub addresses: Vec<String>,
 
+    /// Root qdisc kind reported by the backend (e.g. "cake"), if non-default.
+    pub qdisc_kind: Option<String>,
+
     /// User's desired interface enable state
     pub interface_enabled: bool,
 
@@ -76,6 +79,7 @@ impl InterfaceState {
             is_oper_up: false,
             has_tc_qdisc: false,
             addresses: Vec::new(),
+            qdisc_kind: None,
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,
