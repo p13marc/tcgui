@@ -205,6 +205,11 @@ pub enum TcGuiMessage {
         backend_name: String,
         response: TcResponse,
     },
+    /// Result of an interface enable/disable operation, to surface failures.
+    InterfaceControlResult {
+        backend_name: String,
+        response: InterfaceControlResponse,
+    },
     /// Dismiss the notification at the given index.
     DismissNotification(usize),
 
@@ -256,6 +261,11 @@ pub enum ZenohEvent {
     TcOperationResult {
         backend_name: String,
         response: TcResponse,
+    },
+    /// Result of an interface enable/disable query (to surface failures).
+    InterfaceControlResult {
+        backend_name: String,
+        response: InterfaceControlResponse,
     },
     // Connection status
     ConnectionStatus(bool),

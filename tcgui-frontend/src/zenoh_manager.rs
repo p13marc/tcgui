@@ -743,6 +743,8 @@ impl ZenohManager {
                                 // Handle outgoing interface control queries
                                 Some(interface_query) = interface_control_receiver.recv() => {
                                     let topic = topics::interface_query_service(&interface_query.backend_name);
+                                    let mut output_clone = output.clone();
+                                    let backend_name = interface_query.backend_name.clone();
                                     match serde_json::to_string(&interface_query.request) {
                                         Ok(payload) => {
                                             match session.get(&topic).payload(payload).await {
@@ -754,10 +756,11 @@ impl ZenohManager {
                                                                     let payload_bytes = sample.payload().to_bytes();
                                                                     if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
                                                                             && let Ok(response) = serde_json::from_str::<InterfaceControlResponse>(payload_str) {
-                                                                                // Send response back via original response channel if available
-                                                                                if let Some(ref response_sender) = interface_query.response_sender {
-                                                                                    let _ = response_sender.send((interface_query.backend_name.clone(), response));
-                                                                                }
+                                                                                // Forward the result so the app can surface failures.
+                                                                                let _ = output_clone.send(ZenohEvent::InterfaceControlResult {
+                                                                                    backend_name: backend_name.clone(),
+                                                                                    response,
+                                                                                }).await;
                                                                             }
                                                                 }
                                                                 Err(e) => {

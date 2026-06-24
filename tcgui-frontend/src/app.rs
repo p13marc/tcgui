@@ -113,6 +113,15 @@ impl TcGui {
         (app, Task::none())
     }
 
+    /// Push a transient notification, dropping the oldest beyond the cap.
+    fn notify(&mut self, message: String) {
+        self.notifications.push(UiNotification { message });
+        if self.notifications.len() > MAX_NOTIFICATIONS {
+            let overflow = self.notifications.len() - MAX_NOTIFICATIONS;
+            self.notifications.drain(0..overflow);
+        }
+    }
+
     /// Saves current UI settings to disk.
     fn save_settings(&self) {
         let settings = self.ui_state.to_settings();
@@ -177,13 +186,21 @@ impl TcGui {
                         backend_name,
                         response.message
                     );
-                    self.notifications.push(UiNotification {
-                        message: response.message,
-                    });
-                    if self.notifications.len() > MAX_NOTIFICATIONS {
-                        let overflow = self.notifications.len() - MAX_NOTIFICATIONS;
-                        self.notifications.drain(0..overflow);
-                    }
+                    self.notify(response.message);
+                }
+                Task::none()
+            }
+            TcGuiMessage::InterfaceControlResult {
+                backend_name,
+                response,
+            } => {
+                if !response.success {
+                    tracing::warn!(
+                        "Interface control failed on '{}': {}",
+                        backend_name,
+                        response.message
+                    );
+                    self.notify(response.message);
                 }
                 Task::none()
             }
@@ -770,6 +787,13 @@ impl TcGui {
                     backend_name,
                     response,
                 } => TcGuiMessage::TcOperationResult {
+                    backend_name,
+                    response,
+                },
+                ZenohEvent::InterfaceControlResult {
+                    backend_name,
+                    response,
+                } => TcGuiMessage::InterfaceControlResult {
                     backend_name,
                     response,
                 },
