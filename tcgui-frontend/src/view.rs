@@ -12,7 +12,7 @@ use crate::scenario_view;
 use crate::table_view;
 use crate::theme::{Theme, ThemeMode};
 use crate::ui_state::{InterfaceViewMode, UiStateManager};
-use iced::widget::{button, checkbox, column, container, row, scrollable, space, text};
+use iced::widget::{button, checkbox, column, container, row, scrollable, space, text, text_input};
 use iced::{Color, Element, Length};
 use std::collections::HashMap;
 use tcgui_shared::NamespaceType;
@@ -372,7 +372,13 @@ fn render_header<'a>(
             }
         });
 
-    let filter_row = row![host_checkbox, ns_checkbox, container_checkbox,]
+    let search_input = text_input("search interfaces…", ui_state.interface_search())
+        .on_input(TcGuiMessage::SetInterfaceSearch)
+        .size(13)
+        .padding(scaled_padding(4, zoom))
+        .width(Length::Fixed(160.0 * zoom));
+
+    let filter_row = row![host_checkbox, ns_checkbox, container_checkbox, search_input,]
         .spacing(scaled_spacing(12, zoom))
         .align_y(iced::Alignment::Center);
 
@@ -866,6 +872,7 @@ fn render_backend_namespaces<'a>(
                 colors.clone(),
                 zoom,
                 theme,
+                ui_state.interface_search(),
             );
             sections.push(section);
         }
@@ -892,6 +899,7 @@ fn render_namespace_section<'a>(
     colors: ColorPalette,
     zoom: f32,
     theme: &'a Theme,
+    search: &'a str,
 ) -> Element<'a, TcGuiMessage> {
     let namespace_header = render_namespace_header(
         backend_name,
@@ -931,6 +939,7 @@ fn render_namespace_section<'a>(
             theme,
             zoom,
             bandwidth_history,
+            search,
         );
         // Use wrapping column to flow interface cards horizontally on wide screens
         let interfaces_column: Element<_> = column(interfaces)
@@ -1200,6 +1209,13 @@ fn render_namespace_bandwidth_summary<'a>(
 }
 
 /// Renders the interfaces within a namespace
+/// Case-insensitive substring match for the interface-name search filter.
+/// An empty filter matches every interface.
+fn interface_matches_search(name: &str, search: &str) -> bool {
+    search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_namespace_interfaces<'a>(
     backend_name: &'a str,
     namespace_name: &'a str,
@@ -1208,9 +1224,14 @@ fn render_namespace_interfaces<'a>(
     theme: &'a Theme,
     zoom: f32,
     bandwidth_history: &'a BandwidthHistoryManager,
+    search: &'a str,
 ) -> Vec<Element<'a, TcGuiMessage>> {
-    // Sort interfaces alphabetically for consistent order
-    let mut sorted_interfaces: Vec<_> = namespace_group.tc_interfaces.iter().collect();
+    // Sort interfaces alphabetically for consistent order, honoring the search filter.
+    let mut sorted_interfaces: Vec<_> = namespace_group
+        .tc_interfaces
+        .iter()
+        .filter(|(name, _)| interface_matches_search(name, search))
+        .collect();
     sorted_interfaces.sort_by_key(|(name, _)| (*name).clone());
 
     sorted_interfaces
@@ -1812,5 +1833,21 @@ fn render_interface_selection_dialog<'a>(
             ..container::Style::default()
         })
         .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::interface_matches_search;
+
+    #[test]
+    fn test_interface_matches_search() {
+        // Empty filter matches everything.
+        assert!(interface_matches_search("eth0", ""));
+        // Case-insensitive substring.
+        assert!(interface_matches_search("eth0", "ETH"));
+        assert!(interface_matches_search("wlan0", "lan"));
+        // Non-match.
+        assert!(!interface_matches_search("eth0", "wlan"));
     }
 }
