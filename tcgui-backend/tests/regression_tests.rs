@@ -592,6 +592,7 @@ mod zenoh_communication_regression_tests {
                 has_tc_qdisc: false,
                 interface_type: tcgui_shared::InterfaceType::Virtual,
                 addresses: Vec::new(),
+                qdisc_kind: None,
             });
         }
 
@@ -625,6 +626,7 @@ mod zenoh_communication_regression_tests {
             has_tc_qdisc: false,
             interface_type: tcgui_shared::InterfaceType::Physical,
             addresses: Vec::new(),
+            qdisc_kind: None,
         };
 
         // Should handle unicode correctly

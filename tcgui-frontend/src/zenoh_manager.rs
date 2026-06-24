@@ -964,6 +964,7 @@ mod tests {
             has_tc_qdisc: false,
             interface_type: InterfaceType::Physical,
             addresses: Vec::new(),
+            qdisc_kind: None,
         };
 
         let namespace = NetworkNamespace {
