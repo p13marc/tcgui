@@ -14,7 +14,10 @@ use tracing::{error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
-use tcgui_shared::{TcConfigUpdate, TcConfiguration, errors::TcguiError, topics};
+use tcgui_shared::{
+    TcConfigUpdate, TcConfiguration, TcCorruptConfig, TcDelayConfig, TcDuplicateConfig,
+    TcLossConfig, TcNetemConfig, TcRateLimitConfig, TcReorderConfig, errors::TcguiError, topics,
+};
 
 use super::ServiceHealth;
 use crate::tc_commands::TcCommandManager;
@@ -55,8 +58,7 @@ impl TcService {
     }
 
     /// Apply TC configuration to an interface
-    #[allow(clippy::too_many_arguments)] // Legacy API - will be refactored to use config struct
-    #[allow(deprecated)] // Uses deprecated apply_tc_config_in_namespace internally
+    #[allow(clippy::too_many_arguments)] // Loose-parameter API kept for the service-layer signature
     #[instrument(skip(self), fields(service = "tc", namespace, interface))]
     pub async fn apply_tc_config(
         &mut self,
@@ -91,6 +93,42 @@ impl TcService {
             return self.remove_tc_config(namespace, interface).await;
         }
 
+        // Build the structured config from the loose parameters, then apply via
+        // the typed path (the legacy positional API was removed in #18).
+        let netem_config = TcNetemConfig {
+            loss: TcLossConfig {
+                enabled: loss > 0.0,
+                percentage: loss,
+                correlation: correlation.unwrap_or(0.0),
+            },
+            delay: TcDelayConfig {
+                enabled: delay_ms.is_some_and(|d| d > 0.0),
+                base_ms: delay_ms.unwrap_or(0.0),
+                jitter_ms: delay_jitter_ms.unwrap_or(0.0),
+                correlation: delay_correlation.unwrap_or(0.0),
+            },
+            duplicate: TcDuplicateConfig {
+                enabled: duplicate_percent.is_some_and(|d| d > 0.0),
+                percentage: duplicate_percent.unwrap_or(0.0),
+                correlation: duplicate_correlation.unwrap_or(0.0),
+            },
+            reorder: TcReorderConfig {
+                enabled: reorder_percent.is_some_and(|r| r > 0.0),
+                percentage: reorder_percent.unwrap_or(0.0),
+                correlation: reorder_correlation.unwrap_or(0.0),
+                gap: reorder_gap.unwrap_or(5),
+            },
+            corrupt: TcCorruptConfig {
+                enabled: corrupt_percent.is_some_and(|c| c > 0.0),
+                percentage: corrupt_percent.unwrap_or(0.0),
+                correlation: corrupt_correlation.unwrap_or(0.0),
+            },
+            rate_limit: TcRateLimitConfig {
+                enabled: rate_limit_kbps.is_some_and(|r| r > 0),
+                rate_kbps: rate_limit_kbps.unwrap_or(0),
+            },
+        };
+
         // Apply TC configuration with resilience
         let tc_manager = self.tc_manager.clone();
         let namespace_str = namespace.to_string();
@@ -101,25 +139,10 @@ impl TcService {
                 let tc_manager = tc_manager.clone();
                 let namespace = namespace_str.clone();
                 let interface = interface_str.clone();
+                let netem_config = netem_config.clone();
                 async move {
                     tc_manager
-                        .apply_tc_config_in_namespace(
-                            &namespace,
-                            &interface,
-                            loss,
-                            correlation,
-                            delay_ms,
-                            delay_jitter_ms,
-                            delay_correlation,
-                            duplicate_percent,
-                            duplicate_correlation,
-                            reorder_percent,
-                            reorder_correlation,
-                            reorder_gap,
-                            corrupt_percent,
-                            corrupt_correlation,
-                            rate_limit_kbps,
-                        )
+                        .apply_tc_config_structured(&namespace, &interface, &netem_config)
                         .await
                 }
             },
