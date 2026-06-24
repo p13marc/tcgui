@@ -702,6 +702,8 @@ impl ZenohManager {
                                 // Handle outgoing TC queries
                                 Some(tc_query) = tc_query_receiver.recv() => {
                                     let topic = topics::tc_query_service(&tc_query.backend_name);
+                                    let mut output_clone = output.clone();
+                                    let backend_name = tc_query.backend_name.clone();
                                     match serde_json::to_string(&tc_query.request) {
                                         Ok(payload) => {
                                             match session.get(&topic).payload(payload).await {
@@ -713,10 +715,11 @@ impl ZenohManager {
                                                                     let payload_bytes = sample.payload().to_bytes();
                                                                     if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
                                                                             && let Ok(response) = serde_json::from_str::<TcResponse>(payload_str) {
-                                                                                // Send response back via original response channel if available
-                                                                                if let Some(ref response_sender) = tc_query.response_sender {
-                                                                                    let _ = response_sender.send((tc_query.backend_name.clone(), response));
-                                                                                }
+                                                                                // Forward the result so the app can surface failures.
+                                                                                let _ = output_clone.send(ZenohEvent::TcOperationResult {
+                                                                                    backend_name: backend_name.clone(),
+                                                                                    response,
+                                                                                }).await;
                                                                             }
                                                                 }
                                                                 Err(e) => {
