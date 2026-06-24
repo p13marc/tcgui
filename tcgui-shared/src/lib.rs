@@ -50,6 +50,7 @@ pub mod preset_json;
 pub mod presets;
 pub mod scenario;
 pub mod scenario_json;
+pub mod validation;
 
 /// Topic key expressions for the new communication architecture
 pub mod topics {

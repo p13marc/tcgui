@@ -405,6 +405,12 @@ impl TcValidate for NetworkScenario {
         if self.steps.is_empty() {
             return Err(ScenarioValidationError::EmptyField("steps".to_string()));
         }
+        if self.steps.len() > crate::validation::MAX_SCENARIO_STEPS {
+            return Err(ScenarioValidationError::TooManySteps {
+                count: self.steps.len(),
+                max: crate::validation::MAX_SCENARIO_STEPS,
+            });
+        }
 
         // Validate steps
         for (index, step) in self.steps.iter().enumerate() {
@@ -464,6 +470,10 @@ pub enum ScenarioValidationError {
         duration_ms: u64,
         max_duration_ms: u64,
     },
+    TooManySteps {
+        count: usize,
+        max: usize,
+    },
 }
 
 impl std::fmt::Display for ScenarioValidationError {
@@ -484,6 +494,9 @@ impl std::fmt::Display for ScenarioValidationError {
                     "Scenario duration {}ms exceeds maximum {}ms",
                     duration_ms, max_duration_ms
                 )
+            }
+            ScenarioValidationError::TooManySteps { count, max } => {
+                write!(f, "Scenario has too many steps ({} > {})", count, max)
             }
         }
     }
