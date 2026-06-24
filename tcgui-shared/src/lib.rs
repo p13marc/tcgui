@@ -1693,6 +1693,10 @@ pub struct NetworkInterface {
     pub has_tc_qdisc: bool,
     /// Type classification of the network interface
     pub interface_type: InterfaceType,
+    /// IP addresses assigned to the interface, formatted as `"ip/prefix"`
+    /// (e.g. `"10.0.0.5/24"`, `"fe80::1/64"`). Empty when the interface has none.
+    #[serde(default)]
+    pub addresses: Vec<String>,
 }
 
 /// Classification of network interface types.

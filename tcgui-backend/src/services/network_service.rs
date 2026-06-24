@@ -329,6 +329,7 @@ impl NetworkService {
                 is_oper_up: iface.is_up, // Assume oper_up matches is_up for this path
                 has_tc_qdisc: false,     // Will be updated by TC detection
                 interface_type: tcgui_shared::InterfaceType::Virtual, // Default type
+                addresses: Vec::new(),   // Populated by the primary discovery path
             })
             .collect();
 

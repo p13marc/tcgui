@@ -400,7 +400,7 @@ impl TcInterface {
         };
         let carrier_icon = Icon::Link.svg_sized_colored(scaled(10, zoom), carrier_color);
 
-        let interface_name = row![
+        let name_row = row![
             interface_icon.svg_sized_colored(scaled(14, zoom), text_primary),
             text(format!(" {}", self.state.name))
                 .size(scaled(14, zoom))
@@ -411,6 +411,22 @@ impl TcInterface {
         ]
         .spacing(scaled_spacing(4, zoom))
         .align_y(iced::Alignment::Center);
+
+        // Show the interface's IP addresses on hover (kept out of the fixed-width
+        // row so the table layout is unaffected).
+        let interface_name: Element<'_, TcInterfaceMessage> = if self.state.addresses.is_empty() {
+            name_row.into()
+        } else {
+            let tooltip_style = theme.tooltip_style();
+            tooltip(
+                name_row,
+                text(self.state.addresses.join("\n")).size(scaled(11, zoom)),
+                tooltip::Position::Bottom,
+            )
+            .delay(Duration::from_millis(300))
+            .style(move |_| tooltip_style)
+            .into()
+        };
 
         // Core checkboxes - use row with styled text for theme support
         let interface_checkbox = row![
@@ -1200,6 +1216,7 @@ impl TcInterface {
             interface.is_oper_up,
             interface.has_tc_qdisc,
         );
+        self.state.addresses = interface.addresses.clone();
     }
 
     /// Get bandwidth stats (compatibility method)

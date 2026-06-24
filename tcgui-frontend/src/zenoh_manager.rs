@@ -963,6 +963,7 @@ mod tests {
             is_oper_up: true,
             has_tc_qdisc: false,
             interface_type: InterfaceType::Physical,
+            addresses: Vec::new(),
         };
 
         let namespace = NetworkNamespace {

@@ -206,6 +206,8 @@ impl NetworkManager {
                 message: format!("Failed to get links: {}", e),
             })?;
 
+        let addr_map = Self::address_map(conn).await;
+
         for link in links {
             let index = link.ifindex();
             let name = link.name_or(&format!("unknown{}", index)).to_string();
@@ -231,6 +233,7 @@ impl NetworkManager {
                     is_oper_up,
                     has_tc_qdisc,
                     interface_type,
+                    addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                 },
             );
         }
@@ -257,6 +260,7 @@ impl NetworkManager {
             })?;
 
         let mut interfaces = HashMap::new();
+        let addr_map = Self::address_map(&conn).await;
 
         for link in links {
             let index = link.ifindex();
@@ -283,11 +287,39 @@ impl NetworkManager {
                     is_oper_up,
                     has_tc_qdisc,
                     interface_type,
+                    addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                 },
             );
         }
 
         Ok(interfaces)
+    }
+
+    /// Fetch every address in the namespace this connection is bound to,
+    /// grouped by ifindex and formatted as `"ip/prefix"`. Best-effort: a query
+    /// failure logs and yields an empty map rather than failing discovery.
+    async fn address_map(conn: &nlink::netlink::Connection<Route>) -> HashMap<u32, Vec<String>> {
+        match conn.get_addresses().await {
+            Ok(addrs) => {
+                let mut map: HashMap<u32, Vec<String>> = HashMap::new();
+                for a in &addrs {
+                    // Prefer the local address (correct on point-to-point links;
+                    // equal to `address` on broadcast links).
+                    if let Some(ip) = a.local().or_else(|| a.address()) {
+                        map.entry(a.ifindex()).or_default().push(format!(
+                            "{}/{}",
+                            ip,
+                            a.prefix_len()
+                        ));
+                    }
+                }
+                map
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get addresses: {}", e);
+                HashMap::new()
+            }
+        }
     }
 
     /// Determine interface type from name and link message
@@ -597,6 +629,7 @@ impl NetworkManager {
             })?;
 
         let mut interfaces = HashMap::new();
+        let addr_map = Self::address_map(&conn).await;
 
         for link in links {
             let index = link.ifindex();
@@ -629,6 +662,7 @@ impl NetworkManager {
                     is_oper_up,
                     has_tc_qdisc,
                     interface_type,
+                    addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                 },
             );
         }

@@ -411,6 +411,7 @@ mod tests {
             is_oper_up: true,
             has_tc_qdisc: false,
             interface_type: InterfaceType::Virtual,
+            addresses: Vec::new(),
         }
     }
 

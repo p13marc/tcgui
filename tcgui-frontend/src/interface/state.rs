@@ -23,6 +23,9 @@ pub struct InterfaceState {
     /// Whether TC qdisc is currently configured (from backend)
     pub has_tc_qdisc: bool,
 
+    /// IP addresses assigned to the interface ("ip/prefix"), from the backend.
+    pub addresses: Vec<String>,
+
     /// User's desired interface enable state
     pub interface_enabled: bool,
 
@@ -72,6 +75,7 @@ impl InterfaceState {
             is_up: false,
             is_oper_up: false,
             has_tc_qdisc: false,
+            addresses: Vec::new(),
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,
