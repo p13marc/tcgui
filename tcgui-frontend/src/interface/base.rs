@@ -445,6 +445,15 @@ impl TcInterface {
         {
             tip_lines.push("⚠ rate cap exceeds link speed (no effect)".to_string());
         }
+        // Surface interface-level error/drop counters (received but otherwise
+        // unshown) when something is actually going wrong.
+        if let Some(stats) = &self.state.bandwidth_stats {
+            let drops = stats.rx_dropped.saturating_add(stats.tx_dropped);
+            let errors = stats.rx_errors.saturating_add(stats.tx_errors);
+            if drops > 0 || errors > 0 {
+                tip_lines.push(format!("⚠ {drops} drops, {errors} errors"));
+            }
+        }
         tip_lines.extend(self.state.addresses.iter().cloned());
 
         let interface_name: Element<'_, TcInterfaceMessage> = if tip_lines.is_empty() {
