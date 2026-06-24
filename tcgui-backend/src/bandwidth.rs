@@ -13,6 +13,7 @@
 //! * **Permission handling**: Gracefully handles namespace access permission issues
 
 use anyhow::Result;
+use nlink::netlink::messages::LinkMessage;
 use nlink::netlink::stats::{LinkStats as NlinkLinkStats, StatsSnapshot, StatsTracker};
 use nlink::netlink::{Connection, Route};
 use std::collections::HashMap;
@@ -40,6 +41,21 @@ fn is_permission_denied(err: &anyhow::Error) -> bool {
     err.chain()
         .filter_map(|cause| cause.downcast_ref::<nlink::netlink::Error>())
         .any(|e| e.is_permission_denied())
+}
+
+/// A cached netlink connection bound to a specific network namespace.
+///
+/// Caching avoids rebuilding the connection (an `open(netns)` + `setns` dance
+/// that, since nlink 0.19's N1 fix, runs on a freshly spawned thread) on every
+/// poll cycle. Holding the connection across polls is only safe because that
+/// N1 fix stops namespace membership from bleeding into tokio worker threads.
+struct CachedConnection {
+    /// The live connection.
+    conn: Connection<Route>,
+    /// Namespace path this connection is bound to (`None` = default netns).
+    /// Compared on every poll so a container netns change (the `/proc/<pid>/`
+    /// path changes when a container restarts) forces a rebuild.
+    path: Option<PathBuf>,
 }
 
 /// Per-namespace statistics tracker
@@ -71,8 +87,9 @@ pub struct BandwidthMonitor {
     container_cache: Option<Arc<RwLock<HashMap<String, Container>>>>,
     /// Per-namespace stats trackers using nlink's StatsTracker
     namespace_trackers: HashMap<String, NamespaceStatsTracker>,
-    /// Cached connections per namespace to avoid recreation
-    namespace_connections: HashMap<String, Connection<Route>>,
+    /// Cached connections per namespace (keyed by namespace name) to avoid
+    /// rebuilding the netns-bound connection on every poll cycle.
+    namespace_connections: HashMap<String, CachedConnection>,
 }
 
 impl BandwidthMonitor {
@@ -270,49 +287,33 @@ impl BandwidthMonitor {
         Ok(())
     }
 
-    /// Get netlink statistics for a namespace
+    /// Get netlink statistics for a namespace.
     async fn get_netlink_stats(
         &mut self,
         namespace: &str,
     ) -> Result<(StatsSnapshot, HashMap<u32, NlinkLinkStats>)> {
-        // For container namespaces, we need special handling
-        if Self::is_container_namespace(namespace) {
-            return self.get_container_netlink_stats(namespace).await;
-        }
-
-        // Get links via netlink
-        let links = if namespace == "default" {
-            // Use cached connection for default namespace
-            if !self.namespace_connections.contains_key("default") {
-                let conn = Connection::<Route>::new()
-                    .map_err(|e| anyhow::Error::new(e).context("Failed to create connection"))?;
-                self.namespace_connections
-                    .insert("default".to_string(), conn);
-            }
-            let conn = self.namespace_connections.get("default").unwrap();
-            conn.get_links()
-                .await
-                .map_err(|e| anyhow::Error::new(e).context("Failed to get links"))?
+        // Resolve the netns path for this namespace. `None` = default netns.
+        let path = if Self::is_container_namespace(namespace) {
+            // Container path comes from the shared cache and changes on restart.
+            Some(
+                self.get_container_namespace_path(namespace)
+                    .await
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Container namespace {} has no path in cache", namespace)
+                    })?,
+            )
+        } else if namespace == "default" {
+            None
         } else {
-            // Named namespace - create connection in namespace
-            let ns_path = format!("/var/run/netns/{}", namespace);
-            let conn = Connection::<Route>::new_in_namespace_path(&ns_path).map_err(|e| {
-                anyhow::Error::new(e).context(format!(
-                    "Failed to create connection for namespace {}",
-                    namespace
-                ))
-            })?;
-            conn.get_links().await.map_err(|e| {
-                anyhow::Error::new(e)
-                    .context(format!("Failed to get links in namespace {}", namespace))
-            })?
+            Some(PathBuf::from(format!("/var/run/netns/{}", namespace)))
         };
+
+        let links = self.fetch_links(namespace, path).await?;
 
         // Create stats snapshot from links
         let snapshot = StatsSnapshot::from_links(&links);
 
-        // Build a map by interface index using LinkMessage convenience methods (nlink 0.5.0)
-        // These delegate to stats() internally for cleaner access
+        // Build a map by interface index using LinkMessage convenience methods.
         let interface_stats: HashMap<u32, NlinkLinkStats> = links
             .iter()
             .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
@@ -321,36 +322,59 @@ impl BandwidthMonitor {
         Ok((snapshot, interface_stats))
     }
 
-    /// Get netlink statistics for a container namespace
-    async fn get_container_netlink_stats(
+    /// Fetch the link list for a namespace, reusing a cached netns-bound
+    /// connection when possible.
+    ///
+    /// A cached connection is reused only when its bound `path` still matches
+    /// (so a restarted container with a new `/proc/<pid>/ns/net` path rebuilds).
+    /// On any fetch error the cached connection is dropped so the next poll
+    /// rebuilds it — this self-heals a deleted/recreated namespace or a dead
+    /// socket within one cycle.
+    async fn fetch_links(
         &mut self,
         namespace: &str,
-    ) -> Result<(StatsSnapshot, HashMap<u32, NlinkLinkStats>)> {
-        let ns_path = self
-            .get_container_namespace_path(namespace)
-            .await
-            .ok_or_else(|| {
-                anyhow::anyhow!("Container namespace {} has no path in cache", namespace)
-            })?;
+        path: Option<PathBuf>,
+    ) -> Result<Vec<LinkMessage>> {
+        // (Re)build the connection if missing or bound to a stale path.
+        let needs_new = self
+            .namespace_connections
+            .get(namespace)
+            .is_none_or(|cached| cached.path != path);
 
-        let conn = Connection::<Route>::new_in_namespace_path(&ns_path).map_err(|e| {
-            anyhow::Error::new(e).context(format!(
-                "Failed to create connection for container {}",
-                namespace
-            ))
-        })?;
+        if needs_new {
+            let conn = match &path {
+                None => Connection::<Route>::new()
+                    .map_err(|e| anyhow::Error::new(e).context("Failed to create connection"))?,
+                Some(p) => Connection::<Route>::new_in_namespace_path(p).map_err(|e| {
+                    anyhow::Error::new(e).context(format!(
+                        "Failed to create connection for namespace {}",
+                        namespace
+                    ))
+                })?,
+            };
+            self.namespace_connections.insert(
+                namespace.to_string(),
+                CachedConnection {
+                    conn,
+                    path: path.clone(),
+                },
+            );
+        }
 
-        let links = conn.get_links().await.map_err(|e| {
-            anyhow::Error::new(e).context(format!("Failed to get links in container {}", namespace))
-        })?;
+        // Scope the immutable borrow to the call so we can invalidate on error.
+        let result = {
+            let cached = self
+                .namespace_connections
+                .get(namespace)
+                .expect("just inserted");
+            cached.conn.get_links().await
+        };
 
-        let snapshot = StatsSnapshot::from_links(&links);
-        let interface_stats: HashMap<u32, NlinkLinkStats> = links
-            .iter()
-            .map(|link| (link.ifindex(), NlinkLinkStats::from_link_message(link)))
-            .collect();
-
-        Ok((snapshot, interface_stats))
+        result.map_err(|e| {
+            // Drop the stale/dead connection; the next poll rebuilds it.
+            self.namespace_connections.remove(namespace);
+            anyhow::Error::new(e).context(format!("Failed to get links in namespace {}", namespace))
+        })
     }
 
     /// Sends a bandwidth update message via Zenoh to the frontend.
