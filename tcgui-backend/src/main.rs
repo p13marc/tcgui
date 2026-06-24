@@ -934,6 +934,24 @@ impl TcBackend {
         }
     }
 
+    /// Reply to a TC query with a failure `TcResponse` (used for rejected input).
+    async fn reply_tc_error(&self, query: &zenoh::query::Query, message: String) -> Result<()> {
+        let response = TcResponse {
+            success: false,
+            message,
+            applied_config: None,
+            error_code: Some(22), // EINVAL
+        };
+        let response_payload = serde_json::to_string(&response)?;
+        query
+            .reply(query.key_expr(), response_payload)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to reply to TC query: {}", e),
+            })?;
+        Ok(())
+    }
+
     #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
     async fn handle_tc_query(&mut self, query: zenoh::query::Query) -> Result<()> {
         let payload = query.payload().ok_or_else(|| {
@@ -943,6 +961,17 @@ impl TcBackend {
             ))
         })?;
         let payload_bytes = payload.to_bytes();
+        if payload_bytes.len() > tcgui_shared::validation::MAX_REQUEST_PAYLOAD_BYTES {
+            return self
+                .reply_tc_error(
+                    &query,
+                    format!(
+                        "TC request payload too large ({} bytes)",
+                        payload_bytes.len()
+                    ),
+                )
+                .await;
+        }
         let payload_str = std::str::from_utf8(&payload_bytes).map_err(|e| {
             TcguiError::IoError(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -952,6 +981,19 @@ impl TcBackend {
 
         let request = serde_json::from_str::<TcRequest>(payload_str)?;
         info!("Received TC query: {:?}", request);
+
+        // Validate the request target before any privileged operation.
+        if let Err(reason) =
+            tcgui_shared::validation::validate_target(&request.namespace, &request.interface)
+        {
+            warn!(
+                "Rejecting TC request for {}/{}: {}",
+                request.namespace, request.interface, reason
+            );
+            return self
+                .reply_tc_error(&query, format!("Invalid request: {reason}"))
+                .await;
+        }
 
         let response = match &request.operation {
             TcOperation::ApplyConfig { config } => {
@@ -1241,6 +1283,30 @@ impl TcBackend {
         let request = serde_json::from_str::<InterfaceControlRequest>(payload_str)?;
         info!("Received Interface control query: {:?}", request);
 
+        // Validate the request target before any privileged operation.
+        if let Err(reason) =
+            tcgui_shared::validation::validate_target(&request.namespace, &request.interface)
+        {
+            warn!(
+                "Rejecting interface request for {}/{}: {}",
+                request.namespace, request.interface, reason
+            );
+            let response = InterfaceControlResponse {
+                success: false,
+                message: format!("Invalid request: {reason}"),
+                new_state: false,
+                error_code: Some(22), // EINVAL
+            };
+            let response_payload = serde_json::to_string(&response)?;
+            query
+                .reply(query.key_expr(), response_payload)
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to reply to interface query: {}", e),
+                })?;
+            return Ok(());
+        }
+
         let response = match &request.operation {
             InterfaceControlOperation::Enable => {
                 match self
@@ -1326,18 +1392,34 @@ impl TcBackend {
             request.namespace, request.interface
         );
 
-        // Create diagnostics service and run diagnostics
-        let diagnostics_service =
-            diagnostics::DiagnosticsService::new(&self.network_manager, &self.tc_manager);
-
-        let response = match diagnostics_service.run_diagnostics(&request).await {
-            Ok(result) => result,
-            Err(e) => DiagnosticsResponse {
+        // Validate the request target before touching the namespace/interface.
+        let response = if let Err(reason) =
+            tcgui_shared::validation::validate_target(&request.namespace, &request.interface)
+        {
+            warn!(
+                "Rejecting diagnostics request for {}/{}: {}",
+                request.namespace, request.interface, reason
+            );
+            DiagnosticsResponse {
                 success: false,
-                message: format!("Diagnostics failed: {}", e),
+                message: format!("Invalid request: {reason}"),
                 results: DiagnosticsResults::default(),
-                error_code: Some(-1),
-            },
+                error_code: Some(22), // EINVAL
+            }
+        } else {
+            // Create diagnostics service and run diagnostics
+            let diagnostics_service =
+                diagnostics::DiagnosticsService::new(&self.network_manager, &self.tc_manager);
+
+            match diagnostics_service.run_diagnostics(&request).await {
+                Ok(result) => result,
+                Err(e) => DiagnosticsResponse {
+                    success: false,
+                    message: format!("Diagnostics failed: {}", e),
+                    results: DiagnosticsResults::default(),
+                    error_code: Some(-1),
+                },
+            }
         };
 
         // Send response back to query

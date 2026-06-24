@@ -142,6 +142,12 @@ impl ScenarioManager {
 
     /// Store a new scenario
     pub async fn store_scenario(&self, scenario: NetworkScenario) -> Result<()> {
+        // Validate before persisting — rejects empty fields, over-long runs, and
+        // oversized step counts from untrusted callers (#17).
+        use tcgui_shared::TcValidate;
+        scenario
+            .validate()
+            .map_err(|e| anyhow::anyhow!("invalid scenario: {e}"))?;
         self.storage.put_scenario(&scenario).await
     }
 
