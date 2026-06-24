@@ -2,6 +2,7 @@ mod bandwidth;
 pub mod config;
 mod container;
 mod diagnostics;
+mod hw_shaping;
 mod interfaces;
 mod namespace_watcher;
 mod netlink_events;
@@ -318,6 +319,23 @@ impl TcBackend {
         self.network_manager
             .send_interface_list(&self.interfaces)
             .await?;
+
+        // One-time probe: can the kernel + NIC drivers offload rate limiting to
+        // hardware (net_shaper, kernel 6.13+)? Detection only — read-only and a
+        // no-op where unsupported. See docs/net-shaper-hw-shaping.md.
+        let default_ns_ifaces: Vec<(u32, String)> = self
+            .interfaces
+            .values()
+            .filter(|i| i.namespace == "default")
+            .map(|i| (i.index, i.name.clone()))
+            .collect();
+        let hw_shaping_capable = hw_shaping::probe(&default_ns_ifaces).await;
+        if !hw_shaping_capable.is_empty() {
+            info!(
+                "[BACKEND] Hardware TX shaping (net_shaper) available on: {}",
+                hw_shaping_capable.join(", ")
+            );
+        }
 
         // Publish initial TC configuration states for all discovered interfaces
         // This ensures frontend gets current state on initial connection
