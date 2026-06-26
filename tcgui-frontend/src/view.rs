@@ -1208,13 +1208,13 @@ fn render_namespace_bandwidth_summary<'a>(
     }
 }
 
-/// Renders the interfaces within a namespace
 /// Case-insensitive substring match for the interface-name search filter.
 /// An empty filter matches every interface.
 fn interface_matches_search(name: &str, search: &str) -> bool {
     search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
 }
 
+/// Renders the interfaces within a namespace
 #[allow(clippy::too_many_arguments)]
 fn render_namespace_interfaces<'a>(
     backend_name: &'a str,
