@@ -113,6 +113,8 @@ pub struct UiStateManager {
     namespace_filter: NamespaceFilter,
     /// View mode for interface display (Cards or Table)
     interface_view_mode: InterfaceViewMode,
+    /// Free-text filter applied to interface names (empty = show all)
+    interface_search: String,
 }
 
 impl Default for UiStateManager {
@@ -126,6 +128,7 @@ impl Default for UiStateManager {
             theme: Theme::default(),
             namespace_filter: NamespaceFilter::default(),
             interface_view_mode: InterfaceViewMode::default(),
+            interface_search: String::new(),
         }
     }
 }
@@ -153,6 +156,7 @@ impl UiStateManager {
             theme,
             namespace_filter: settings.namespace_filter.clone().into(),
             interface_view_mode: InterfaceViewMode::default(),
+            interface_search: String::new(),
         }
     }
 
@@ -317,6 +321,16 @@ impl UiStateManager {
     /// Get the current tab
     pub fn current_tab(&self) -> AppTab {
         self.current_tab
+    }
+
+    /// The current interface-name search filter (empty = show all).
+    pub fn interface_search(&self) -> &str {
+        &self.interface_search
+    }
+
+    /// Set the interface-name search filter.
+    pub fn set_interface_search(&mut self, search: String) {
+        self.interface_search = search;
     }
 
     /// Set the current tab

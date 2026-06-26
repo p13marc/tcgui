@@ -541,6 +541,10 @@ impl TcGui {
             TcGuiMessage::ShowAllNamespaces => handle_show_all_namespaces(&mut self.ui_state),
             TcGuiMessage::ResetUiState => handle_reset_ui_state(&mut self.ui_state),
             TcGuiMessage::ShowAllBackends => handle_show_all_backends(&mut self.ui_state),
+            TcGuiMessage::SetInterfaceSearch(search) => {
+                self.ui_state.set_interface_search(search);
+                Task::none()
+            }
             TcGuiMessage::SwitchTab(tab) => {
                 self.ui_state.set_current_tab(tab);
                 self.save_settings();
@@ -839,12 +843,13 @@ impl TcGui {
         }
     }
 
-    /// Handles keyboard shortcuts for zoom controls.
+    /// Handles keyboard shortcuts for zoom and tab switching.
     fn handle_keyboard_shortcut(key: Key, modifiers: Modifiers) -> Option<TcGuiMessage> {
         if !modifiers.control() {
             return None;
         }
 
+        use crate::ui_state::AppTab;
         match key {
             Key::Character(c) => {
                 let c_str = c.as_str();
@@ -852,6 +857,9 @@ impl TcGui {
                     "+" | "=" => Some(TcGuiMessage::ZoomIn),
                     "-" | "_" | ")" => Some(TcGuiMessage::ZoomOut),
                     "0" => Some(TcGuiMessage::ZoomReset),
+                    // Tab switching: Ctrl+1 = Interfaces, Ctrl+2 = Scenarios.
+                    "1" => Some(TcGuiMessage::SwitchTab(AppTab::Interfaces)),
+                    "2" => Some(TcGuiMessage::SwitchTab(AppTab::Scenarios)),
                     _ => None,
                 }
             }
