@@ -3082,9 +3082,9 @@ dependencies = [
 
 [[package]]
 name = "nlink"
-version = "0.21.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f099e46efe38894a499f1852f13e703eaf9145d39e775609b81cd2b4c41285c"
+checksum = "9895885cd06c3de65fef4cbb3e849f64108ed157bf9dc7d97d348aa7f2ec9d12"
 dependencies = [
  "bitflags 2.11.1",
  "bytes",
@@ -3092,6 +3092,7 @@ dependencies = [
  "libc",
  "netlink-sys",
  "nlink-macros",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3105,9 +3106,9 @@ dependencies = [
 
 [[package]]
 name = "nlink-macros"
-version = "0.21.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e046c51f9efb96ad848173530b244eea107254930650b466192cad1764820a9"
+checksum = "fcc14574564f2ca481992c447b243d6e8956a14876652dc3fb4645c7a15d6166"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4638,6 +4639,18 @@ dependencies = [
 
 [[package]]
 name = "schemars"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+dependencies = [
+ "dyn-clone",
+ "schemars_derive 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cd191f9397d57d581cddd31014772520aa448f65ef991055d7f61582c65165f"
@@ -4657,9 +4670,21 @@ dependencies = [
  "dyn-clone",
  "either",
  "ref-cast",
- "schemars_derive",
+ "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 2.0.117",
 ]
 
 [[package]]
