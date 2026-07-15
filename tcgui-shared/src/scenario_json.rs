@@ -198,45 +198,26 @@ impl RateLimitConfigJson {
     }
 }
 
-/// Parse a human-readable rate string (e.g., "10mbit", "1gbit") to kbps.
-/// Uses nlink's rate parsing utilities.
+/// Parse a human-readable TC rate string (e.g., `"10mbit"`, `"1gbit"`) to kbps
+/// (kilobits per second), using nlink's `get_rate`.
 ///
-/// Note: nlink's get_rate() returns bytes/sec for the TC rate limiter.
-/// The suffixes follow TC conventions where "bit" suffixes indicate bits:
-/// - "10mbit" = 10 megabits/sec
-/// - "1gbit" = 1 gigabit/sec
-/// - "500kbit" = 500 kilobits/sec
+/// `get_rate` returns **bytes per second** following `tc(8)`'s suffix grammar,
+/// so the conversion is simply `bytes_per_sec * 8 / 1000` regardless of suffix.
+/// Note the two suffix families mean different things — since nlink 0.25 fixed
+/// the `bps` family to match `tc(8)` (it used to alias them to bits):
+/// - `bit` suffixes are bits:  `"10mbit"` = 10 megabit/s  → 10_000 kbps
+/// - `bps` suffixes are bytes: `"10mbps"` = 10 megabyte/s → 80_000 kbps (8×)
+///
+/// Prefer the `bit` spellings in scenarios; they map cleanly to the kbps the
+/// rate limiter expects.
 fn parse_rate_string(rate_str: &str) -> Result<u32, String> {
     use nlink::util::parse::get_rate;
 
     let bytes_per_sec =
         get_rate(rate_str).map_err(|e| format!("Invalid rate '{}': {}", rate_str, e))?;
 
-    // nlink returns bytes/sec for TC. The rate limiter works in bytes.
-    // For "10mbit", TC interprets this as 10 megabits/sec = 1,250,000 bytes/sec
-    // We need to convert to kbps: bytes/sec * 8 / 1000
-    //
-    // However, nlink may return the raw byte rate that TC uses internally.
-    // TC's "10mbit" = 10,000,000 bits/sec = 1,250,000 bytes/sec
-    // So: 1,250,000 * 8 / 1000 = 10,000 kbps (correct)
-    //
-    // If we're getting 80,000 instead, nlink might be returning the value
-    // as if "mbit" means megabytes (10MB = 10,000,000 bytes).
-    // 10,000,000 * 8 / 1000 = 80,000 kbps
-    //
-    // Check if the input explicitly uses bit suffixes and adjust accordingly
-    let rate_lower = rate_str.to_lowercase();
-    if rate_lower.contains("bit") {
-        // For bit-based rates, nlink may return bytes that need no conversion
-        // since TC internally works with bytes derived from the bit rate
-        // The get_rate function returns bytes/sec, so we convert to kbps
-        let kbps = (bytes_per_sec * 8) / 1000;
-        Ok(kbps as u32)
-    } else {
-        // For byte-based rates (e.g., "10mbps" meaning megabytes/sec)
-        let kbps = (bytes_per_sec * 8) / 1000;
-        Ok(kbps as u32)
-    }
+    // get_rate yields bytes/sec; the scenario rate limiter works in kbps.
+    Ok(((bytes_per_sec * 8) / 1000) as u32)
 }
 
 impl TcConfigJson {
@@ -934,6 +915,17 @@ mod tests {
         assert!(rate_1g > 0, "1gbit should parse to a positive rate");
         // 1gbit should be 1000x 1mbit
         assert_eq!(rate_1g, rate_1m * 1000);
+    }
+
+    #[test]
+    fn test_parse_rate_string_mbps_is_bytes() {
+        // Since nlink 0.25, `bps` suffixes are BYTES/sec (tc(8)-correct), so
+        // "10mbps" (10 megabyte/s) is 8x "10mbit" (10 megabit/s).
+        let rate_mbit = parse_rate_string("10mbit").unwrap();
+        let rate_mbps = parse_rate_string("10mbps").unwrap();
+
+        assert!(rate_mbps > 0, "10mbps should parse to a positive rate");
+        assert_eq!(rate_mbps, rate_mbit * 8, "10mbps should be 8x 10mbit");
     }
 
     #[test]
