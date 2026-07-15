@@ -108,6 +108,24 @@ impl TcCommandManager {
         namespace: &str,
         namespace_path: Option<&Path>,
     ) -> Result<Connection<Route>, TcguiError> {
+        // Container namespaces are reached through a bind-mount path. A path
+        // left behind by an unclean container shutdown is a *stale marker*, not
+        // a live netns - nlink's `is_namespace_path` (0.25) tells the two apart
+        // via an nsfs `statfs` check. Reject a dead path up front with a clear
+        // message instead of surfacing a raw connection failure.
+        if Self::is_container_namespace(namespace)
+            && let Some(path) = namespace_path
+            && !nlink::netlink::namespace::is_namespace_path(path)
+        {
+            return Err(TcguiError::NetworkError {
+                message: format!(
+                    "Container namespace '{}' is no longer live (stale namespace path {})",
+                    namespace,
+                    path.display()
+                ),
+            });
+        }
+
         let spec = Self::namespace_spec(namespace, namespace_path)?;
         spec.connection().map_err(|e| TcguiError::NetworkError {
             message: format!("Failed to connect to namespace '{}': {}", namespace, e),
@@ -467,25 +485,15 @@ impl TcCommandManager {
 
         let conn = Self::create_connection(namespace, namespace_path)?;
 
-        // Get interface index
-        let link = conn
-            .get_link_by_name(interface)
-            .await
-            .map_err(|e| TcguiError::TcCommandError {
-                message: format!("Failed to get interface {}: {}", interface, e),
-            })?
-            .ok_or_else(|| TcguiError::TcCommandError {
-                message: format!("Interface {} not found", interface),
-            })?;
-
-        let ifindex = link.ifindex();
-
-        match conn.del_qdisc_by_index(ifindex, TcHandle::ROOT).await {
-            Ok(()) => Ok("TC config removed successfully".to_string()),
-            // A missing qdisc means there was nothing to remove - that's fine.
-            // Use nlink's typed predicate (matches both Error::Kernel(ENOENT)
-            // and the Error::Io(ENOENT/ENODEV) shape) instead of string matching.
-            Err(e) if e.is_not_found() => Ok("No TC config to remove".to_string()),
+        // The connection is already namespace-bound, so nlink resolves the
+        // interface name in the correct netns. `del_qdisc_if_exists` (nlink
+        // 0.25) returns Ok(false) when there's no root qdisc to remove - it
+        // folds the ENOENT/ENODEV "nothing there" cases (and the undeletable
+        // default-qdisc EINVAL) into a clean bool, so we no longer resolve the
+        // ifindex or match on error predicates by hand.
+        match conn.del_qdisc_if_exists(interface, TcHandle::ROOT).await {
+            Ok(true) => Ok("TC config removed successfully".to_string()),
+            Ok(false) => Ok("No TC config to remove".to_string()),
             Err(e) => Err(TcguiError::TcCommandError {
                 message: format!("TC command failed: {}", e),
             }
