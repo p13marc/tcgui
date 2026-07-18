@@ -1,233 +1,107 @@
-//! Zenoh-based scenario storage implementation.
+//! In-memory scenario store.
 //!
-//! This module provides persistent storage for network scenarios using Zenoh's
-//! key-value storage capabilities. Scenarios are stored with keys like:
-//! `tcgui/storage/scenarios/{scenario_id}`
+//! Holds user-created scenarios for the life of the backend process. It
+//! deliberately does **not** persist across restarts: the previous
+//! implementation published to a `tcgui/storage/{backend}/scenarios/{id}` Zenoh
+//! key, but nothing in the deployment configures a Zenoh storage plugin, so
+//! every put went to the void and every get returned nothing — a silent
+//! data-loss path sitting off-grammar in the identity chunk position (RFC
+//! keyspace-v2 03 §1.2, the Sparkplug mistake). Durable, on-grammar persistence
+//! moves to `state/tc/scenario/{id}` in the keyspace-v2 cutover; until then an
+//! in-memory map is honest about its lifetime and keeps scenario CRUD working
+//! within a session instead of silently discarding writes.
 
 use anyhow::Result;
-use std::sync::Arc;
-use tracing::{debug, error, info, warn};
-use zenoh::Session;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use tracing::{debug, info};
 
 use tcgui_shared::scenario::NetworkScenario;
 
-/// Zenoh-based storage for network scenarios
-pub struct ScenarioZenohStorage {
-    /// Zenoh session for storage operations
-    session: Arc<Session>,
-    /// Storage key prefix (e.g., "tcgui/storage/scenarios")
-    storage_prefix: String,
+/// Process-lifetime store for network scenarios, keyed by scenario id.
+#[derive(Default)]
+pub struct ScenarioStore {
+    scenarios: RwLock<HashMap<String, NetworkScenario>>,
 }
 
-impl ScenarioZenohStorage {
-    /// Create a new scenario storage with Zenoh session
-    pub fn new(session: Arc<Session>, storage_prefix: String) -> Self {
-        info!(
-            "Initializing scenario storage with prefix: {}",
-            storage_prefix
-        );
-
-        Self {
-            session,
-            storage_prefix,
-        }
+impl ScenarioStore {
+    /// Create an empty scenario store.
+    pub fn new() -> Self {
+        info!("Initializing in-memory scenario store");
+        Self::default()
     }
 
-    /// Store a scenario using Zenoh key-value storage
+    /// Store (insert or replace) a scenario.
     pub async fn put_scenario(&self, scenario: &NetworkScenario) -> Result<()> {
-        let key = self.scenario_key(&scenario.id);
-        let value = serde_json::to_vec(scenario).map_err(|e| {
-            anyhow::anyhow!("Failed to serialize scenario '{}': {}", scenario.id, e)
-        })?;
-
-        debug!(
-            "Storing scenario '{}' ({} bytes) at key: {}",
-            scenario.id,
-            value.len(),
-            key
-        );
-
-        self.session
-            .put(&key, value)
+        debug!("Storing scenario '{}'", scenario.id);
+        self.scenarios
+            .write()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to store scenario '{}': {}", scenario.id, e))?;
-
+            .insert(scenario.id.clone(), scenario.clone());
         info!("Successfully stored scenario '{}'", scenario.id);
         Ok(())
     }
 
-    /// Retrieve a scenario by ID from Zenoh storage
+    /// Retrieve a scenario by id.
     pub async fn get_scenario(&self, id: &str) -> Result<Option<NetworkScenario>> {
-        let key = self.scenario_key(id);
-
-        debug!("Retrieving scenario '{}' from key: {}", id, key);
-
-        // Use Zenoh's get operation to retrieve the scenario
-        let replies = self
-            .session
-            .get(&key)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to query scenario '{}': {}", id, e))?;
-
-        // Collect all replies (should be at most one for exact key match)
-        let mut scenarios = Vec::new();
-        while let Ok(reply) = replies.recv_async().await {
-            match reply.result() {
-                Ok(sample) => {
-                    match serde_json::from_slice::<NetworkScenario>(
-                        sample.payload().to_bytes().as_ref(),
-                    ) {
-                        Ok(scenario) => {
-                            debug!("Successfully deserialized scenario '{}'", id);
-                            scenarios.push(scenario);
-                        }
-                        Err(e) => {
-                            warn!("Failed to deserialize scenario '{}': {}", id, e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Error in get reply for scenario '{}': {}", id, e);
-                }
-            }
-        }
-
-        if scenarios.len() > 1 {
-            warn!(
-                "Found {} scenarios for key '{}', expected at most 1",
-                scenarios.len(),
-                key
-            );
-        }
-
-        Ok(scenarios.into_iter().next())
+        Ok(self.scenarios.read().await.get(id).cloned())
     }
 
-    /// List all available scenarios from Zenoh storage
+    /// List all stored scenarios.
     pub async fn list_scenarios(&self) -> Result<Vec<NetworkScenario>> {
-        let pattern = format!("{}/*", self.storage_prefix);
-
-        debug!("Listing all scenarios with pattern: {}", pattern);
-
-        let replies = self
-            .session
-            .get(&pattern)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list scenarios: {}", e))?;
-
-        let mut scenarios = Vec::new();
-        let mut count = 0;
-
-        while let Ok(reply) = replies.recv_async().await {
-            count += 1;
-            match reply.result() {
-                Ok(sample) => {
-                    match serde_json::from_slice::<NetworkScenario>(
-                        sample.payload().to_bytes().as_ref(),
-                    ) {
-                        Ok(scenario) => {
-                            debug!("Listed scenario '{}' ({})", scenario.id, scenario.name);
-                            scenarios.push(scenario);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to deserialize scenario from key '{}': {}",
-                                sample.key_expr(),
-                                e
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Error in list reply: {}", e);
-                }
-            }
-        }
-
-        info!(
-            "Listed {} scenarios (processed {} replies)",
-            scenarios.len(),
-            count
-        );
-        Ok(scenarios)
+        Ok(self.scenarios.read().await.values().cloned().collect())
     }
 
-    /// Delete a scenario by ID from Zenoh storage
+    /// Delete a scenario by id. Returns `true` if it existed.
     pub async fn delete_scenario(&self, id: &str) -> Result<bool> {
-        let key = self.scenario_key(id);
-
-        debug!("Deleting scenario '{}' from key: {}", id, key);
-
-        // Check if scenario exists first
-        let exists = self.get_scenario(id).await?.is_some();
-
-        if !exists {
+        let existed = self.scenarios.write().await.remove(id).is_some();
+        if existed {
+            info!("Successfully deleted scenario '{}'", id);
+        } else {
             debug!("Scenario '{}' does not exist, nothing to delete", id);
-            return Ok(false);
         }
-
-        // Delete the scenario
-        self.session
-            .delete(&key)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to delete scenario '{}': {}", id, e))?;
-
-        info!("Successfully deleted scenario '{}'", id);
-        Ok(true)
+        Ok(existed)
     }
 
-    /// Check if a scenario exists in storage
+    /// Check if a scenario exists.
     pub async fn scenario_exists(&self, id: &str) -> Result<bool> {
-        match self.get_scenario(id).await {
-            Ok(scenario) => Ok(scenario.is_some()),
-            Err(e) => {
-                error!("Error checking if scenario '{}' exists: {}", id, e);
-                Err(e)
-            }
-        }
+        Ok(self.scenarios.read().await.contains_key(id))
     }
 
-    /// Get storage statistics (number of scenarios, total size, etc.)
+    /// Compute aggregate statistics over the stored scenarios.
     pub async fn get_storage_stats(&self) -> Result<ScenarioStorageStats> {
-        let scenarios = self.list_scenarios().await?;
-
+        let scenarios = self.scenarios.read().await;
         let count = scenarios.len();
-        let total_steps = scenarios.iter().map(|s| s.steps.len()).sum();
-        let avg_steps = if count > 0 {
+        let total_steps = scenarios.values().map(|s| s.steps.len()).sum();
+        let average_steps_per_scenario = if count > 0 {
             total_steps as f64 / count as f64
         } else {
             0.0
         };
-
-        let total_duration_ms: u64 = scenarios
-            .iter()
+        let total_duration_ms = scenarios
+            .values()
             .map(|s| s.estimated_total_duration_ms())
             .sum();
 
         Ok(ScenarioStorageStats {
             total_scenarios: count,
             total_steps,
-            average_steps_per_scenario: avg_steps,
+            average_steps_per_scenario,
             total_duration_ms,
         })
     }
-
-    /// Generate Zenoh key for a scenario
-    fn scenario_key(&self, id: &str) -> String {
-        format!("{}/{}", self.storage_prefix, id)
-    }
 }
 
-/// Storage statistics for monitoring and debugging
+/// Storage statistics for monitoring and debugging.
 #[derive(Debug, Clone)]
 pub struct ScenarioStorageStats {
-    /// Total number of scenarios in storage
+    /// Total number of scenarios in the store.
     pub total_scenarios: usize,
-    /// Total number of steps across all scenarios
+    /// Total number of steps across all scenarios.
     pub total_steps: usize,
-    /// Average number of steps per scenario
+    /// Average number of steps per scenario.
     pub average_steps_per_scenario: f64,
-    /// Total duration of all scenarios combined (milliseconds)
+    /// Total duration of all scenarios combined (milliseconds).
     pub total_duration_ms: u64,
 }
 
@@ -237,69 +111,54 @@ mod tests {
     use tcgui_shared::TcNetemConfig;
     use tcgui_shared::scenario::ScenarioStep;
 
-    // Helper function to create a test scenario
     fn create_test_scenario(id: &str, name: &str) -> NetworkScenario {
         let mut scenario = NetworkScenario::new(
             id.to_string(),
             name.to_string(),
-            format!("Test scenario: {}", name),
+            format!("Test scenario: {name}"),
         );
-
         let mut tc_config = TcNetemConfig::new();
         tc_config.loss.enabled = true;
         tc_config.loss.percentage = 5.0;
-
-        let step = ScenarioStep::new(1000, "Test step".to_string(), tc_config);
-
-        scenario.add_step(step);
+        scenario.add_step(ScenarioStep::new(1000, "Test step".to_string(), tc_config));
         scenario
     }
 
-    #[test]
-    fn test_scenario_key_generation() {
-        let storage_prefix = "tcgui/storage/scenarios".to_string();
+    #[tokio::test]
+    async fn put_get_list_delete_roundtrip() {
+        let store = ScenarioStore::new();
+        assert!(store.list_scenarios().await.unwrap().is_empty());
 
-        // Test key generation logic directly without Session mock
-        let generate_key = |id: &str| format!("{}/{}", storage_prefix, id);
+        let s = create_test_scenario("test", "Test Scenario");
+        store.put_scenario(&s).await.unwrap();
 
+        assert!(store.scenario_exists("test").await.unwrap());
         assert_eq!(
-            generate_key("test-scenario"),
-            "tcgui/storage/scenarios/test-scenario"
+            store.get_scenario("test").await.unwrap().unwrap().id,
+            "test"
         );
+        assert_eq!(store.list_scenarios().await.unwrap().len(), 1);
 
-        assert_eq!(
-            generate_key("mobile-degradation"),
-            "tcgui/storage/scenarios/mobile-degradation"
-        );
+        assert!(store.delete_scenario("test").await.unwrap());
+        assert!(!store.delete_scenario("test").await.unwrap());
+        assert!(store.get_scenario("test").await.unwrap().is_none());
     }
 
-    #[test]
-    fn test_scenario_serialization() {
-        let scenario = create_test_scenario("test", "Test Scenario");
+    #[tokio::test]
+    async fn stats_reflect_contents() {
+        let store = ScenarioStore::new();
+        store
+            .put_scenario(&create_test_scenario("test1", "Scenario 1"))
+            .await
+            .unwrap();
+        store
+            .put_scenario(&create_test_scenario("test2", "Scenario 2"))
+            .await
+            .unwrap();
 
-        // Test that scenario can be serialized and deserialized
-        let serialized = serde_json::to_vec(&scenario).expect("Failed to serialize scenario");
-        let deserialized: NetworkScenario =
-            serde_json::from_slice(&serialized).expect("Failed to deserialize scenario");
-
-        assert_eq!(scenario.id, deserialized.id);
-        assert_eq!(scenario.name, deserialized.name);
-        assert_eq!(scenario.steps.len(), deserialized.steps.len());
-    }
-
-    #[test]
-    fn test_storage_stats_calculation() {
-        let scenarios = [
-            create_test_scenario("test1", "Scenario 1"),
-            create_test_scenario("test2", "Scenario 2"),
-        ];
-
-        let count = scenarios.len();
-        let total_steps: usize = scenarios.iter().map(|s| s.steps.len()).sum();
-        let avg_steps = total_steps as f64 / count as f64;
-
-        assert_eq!(count, 2);
-        assert_eq!(total_steps, 2); // Each test scenario has 1 step
-        assert_eq!(avg_steps, 1.0);
+        let stats = store.get_storage_stats().await.unwrap();
+        assert_eq!(stats.total_scenarios, 2);
+        assert_eq!(stats.total_steps, 2);
+        assert_eq!(stats.average_steps_per_scenario, 1.0);
     }
 }
