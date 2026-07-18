@@ -24,22 +24,49 @@ use crate::TcBackend;
 use crate::{diagnostics, tc_config};
 
 impl TcBackend {
-    /// Reply to a TC query with a failure `TcResponse` (used for rejected input).
-    async fn reply_tc_error(&self, query: &zenoh::query::Query, message: String) -> Result<()> {
-        let response = TcResponse {
-            success: false,
-            message,
-            applied_config: None,
-            error_code: Some(22), // EINVAL
-        };
-        let response_payload = serde_json::to_string(&response)?;
+    /// Reply to a query with a success value on the queryable's **own concrete
+    /// key** — never the echoed `query.key_expr()`, which for a `*`-origin
+    /// fan-in is the shared wildcard key that Zenoh consolidation collapses to a
+    /// single surviving reply (RFC keyspace-v2 05 §2.1). Passing the concrete
+    /// service key keeps every backend's reply distinct.
+    async fn reply_value(
+        &self,
+        query: &zenoh::query::Query,
+        concrete_key: zenoh::key_expr::OwnedKeyExpr,
+        payload: String,
+    ) -> Result<()> {
         query
-            .reply(query.key_expr(), response_payload)
+            .reply(concrete_key, payload)
             .await
             .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to TC query: {}", e),
+                message: format!("Failed to reply to query: {e}"),
             })?;
         Ok(())
+    }
+
+    /// Signal a failure on Zenoh's **reply-error channel** with a namespaced
+    /// error name (RFC keyspace-v2 05 §3: a value reply always means success; a
+    /// failure always rides `reply_err`). `error_name` is a stable
+    /// `error/<service>[/<kind>]` slug; `message` carries the human detail.
+    async fn reply_query_error(
+        &self,
+        query: &zenoh::query::Query,
+        error_name: &str,
+        message: &str,
+    ) -> Result<()> {
+        query
+            .reply_err(format!("{error_name}: {message}"))
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to reply_err to query: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Reject a TC query on the reply-error channel (used for invalid input).
+    async fn reply_tc_error(&self, query: &zenoh::query::Query, message: String) -> Result<()> {
+        self.reply_query_error(query, "error/tc/invalid-request", &message)
+            .await
     }
 
     #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
@@ -342,14 +369,20 @@ impl TcBackend {
             }
         };
 
-        // Send response back to query
-        let response_payload = serde_json::to_string(&response)?;
-        query
-            .reply(query.key_expr(), response_payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to TC query: {}", e),
-            })?;
+        // Success rides the value channel on our concrete key; failure rides
+        // reply_err (RFC 05 §2.1 / §3).
+        if response.success {
+            let payload = serde_json::to_string(&response)?;
+            self.reply_value(
+                &query,
+                topics::rpc_config(&self.local_origin, &request.namespace, &request.interface),
+                payload,
+            )
+            .await?;
+        } else {
+            self.reply_query_error(&query, "error/tc/apply", &response.message)
+                .await?;
+        }
 
         Ok(())
     }
@@ -384,20 +417,13 @@ impl TcBackend {
                 "Rejecting interface request for {}/{}: {}",
                 request.namespace, request.interface, reason
             );
-            let response = InterfaceControlResponse {
-                success: false,
-                message: format!("Invalid request: {reason}"),
-                new_state: false,
-                error_code: Some(22), // EINVAL
-            };
-            let response_payload = serde_json::to_string(&response)?;
-            query
-                .reply(query.key_expr(), response_payload)
-                .await
-                .map_err(|e| TcguiError::ZenohError {
-                    message: format!("Failed to reply to interface query: {}", e),
-                })?;
-            return Ok(());
+            return self
+                .reply_query_error(
+                    &query,
+                    "error/interface/invalid-request",
+                    &format!("Invalid request: {reason}"),
+                )
+                .await;
         }
 
         let response = match &request.operation {
@@ -449,14 +475,18 @@ impl TcBackend {
             }
         };
 
-        // Send response back to query
-        let response_payload = serde_json::to_string(&response)?;
-        query
-            .reply(query.key_expr(), response_payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to Interface query: {}", e),
-            })?;
+        if response.success {
+            let payload = serde_json::to_string(&response)?;
+            self.reply_value(
+                &query,
+                topics::rpc_interface(&self.local_origin, &request.namespace, &request.interface),
+                payload,
+            )
+            .await?;
+        } else {
+            self.reply_query_error(&query, "error/interface", &response.message)
+                .await?;
+        }
 
         Ok(())
     }
@@ -515,19 +545,18 @@ impl TcBackend {
             }
         };
 
-        // Send response back to query
-        let response_payload = serde_json::to_string(&response)?;
-        query
-            .reply(query.key_expr(), response_payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to Diagnostics query: {}", e),
-            })?;
-
-        info!(
-            "Diagnostics completed for {}/{}: {}",
-            request.namespace, request.interface, response.message
-        );
+        if response.success {
+            let payload = serde_json::to_string(&response)?;
+            self.reply_value(&query, topics::rpc_diagnostics(&self.local_origin), payload)
+                .await?;
+            info!(
+                "Diagnostics completed for {}/{}: {}",
+                request.namespace, request.interface, response.message
+            );
+        } else {
+            self.reply_query_error(&query, "error/diagnostics", &response.message)
+                .await?;
+        }
 
         Ok(())
     }
@@ -537,6 +566,7 @@ impl TcBackend {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         let health_status = BackendHealthStatus {
+            host_id: self.local_origin.as_str().to_string(),
             backend_name: self.backend_name.clone(),
             status: status.to_string(),
             timestamp,
@@ -546,7 +576,7 @@ impl TcBackend {
         };
 
         let payload = serde_json::to_string(&health_status)?;
-        let backend_health_topic = topics::backend_health(&self.backend_name);
+        let backend_health_topic = topics::state_health(&self.local_origin);
         self.session
             .put(&backend_health_topic, payload)
             .await
@@ -557,19 +587,25 @@ impl TcBackend {
         Ok(())
     }
 
-    /// Publish the preset list to the frontend
+    /// Publish each available preset as its own state document keyed by preset id.
     #[instrument(skip(self), fields(backend_name = %self.backend_name))]
     pub(crate) async fn publish_preset_list(&self) -> Result<()> {
-        let payload = serde_json::to_string(&self.preset_list)?;
-        self.preset_list_publisher
-            .put(payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to publish preset list: {}", e),
-            })?;
+        for preset in self.preset_list.all() {
+            let Some(publisher) = self.preset_publishers.get(&preset.id) else {
+                warn!("No publisher for preset '{}', skipping", preset.id);
+                continue;
+            };
+            let payload = serde_json::to_string(preset)?;
+            publisher
+                .put(payload)
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to publish preset '{}': {}", preset.id, e),
+                })?;
+        }
 
         info!(
-            "[BACKEND] Published preset list with {} presets",
+            "[BACKEND] Published {} preset(s) as state documents",
             self.preset_list.len()
         );
         Ok(())
@@ -585,7 +621,7 @@ impl TcBackend {
         let key = format!("{}/{}", namespace, interface);
 
         if !self.tc_config_publishers.contains_key(&key) {
-            let tc_config_topic = topics::tc_config(&self.backend_name, namespace, interface);
+            let tc_config_topic = topics::state_config(&self.local_origin, namespace, interface);
             info!(
                 "Creating TC config publisher for {}/{} on: {}",
                 namespace,

@@ -464,6 +464,28 @@ impl ScenarioManager {
         }
     }
 
+    /// Upsert a single scenario from a `state/tc/scenario/{id}` Put.
+    ///
+    /// Complements the bulk query/reply path ([`Self::handle_scenario_list_response`]):
+    /// the state plane streams per-entry deltas so the library stays live without
+    /// re-querying. `backend_name` carries the host origin.
+    pub fn upsert_scenario(&mut self, backend_name: String, scenario: NetworkScenario) {
+        let scenarios = self.available_scenarios.entry(backend_name).or_default();
+        if let Some(existing) = scenarios.iter_mut().find(|s| s.id == scenario.id) {
+            *existing = scenario;
+        } else {
+            scenarios.push(scenario);
+        }
+    }
+
+    /// Remove a single scenario in response to a Delete tombstone on
+    /// `state/tc/scenario/{id}`.
+    pub fn remove_scenario(&mut self, backend_name: &str, id: &str) {
+        if let Some(scenarios) = self.available_scenarios.get_mut(backend_name) {
+            scenarios.retain(|s| s.id != id);
+        }
+    }
+
     /// Get load errors for a specific backend
     pub fn get_load_errors(&self, backend_name: &str) -> Option<&Vec<ScenarioLoadError>> {
         self.load_errors.get(backend_name)

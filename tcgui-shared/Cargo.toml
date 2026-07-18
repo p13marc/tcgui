@@ -17,3 +17,4 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 nlink = { workspace = true }
 duration-string = "0.4"
+sha2 = "0.10"

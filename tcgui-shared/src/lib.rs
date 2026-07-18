@@ -41,188 +41,332 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zenoh::config::WhatAmI;
 use zenoh::key_expr::{
-    KeyExpr, OwnedKeyExpr,
+    OwnedKeyExpr,
     format::{kedefine, keformat},
 };
 
 pub mod errors;
+pub mod identity;
 pub mod preset_json;
 pub mod presets;
 pub mod scenario;
 pub mod scenario_json;
 pub mod validation;
 
-/// Topic key expressions for the new communication architecture
+/// keyspace-v2 key expressions: `tcgui/v1/<origin>/<class>/tc/<subject…>`.
+///
+/// `tcgui` is the session **namespace** (set in [`ZenohConfig::to_zenoh_config`])
+/// so it never appears in a declared key here — every pattern starts at `v1/`.
+/// The producer chunk is the literal `tc` (a single backend per host; multiple
+/// instances would become `tc-2` and record their netns binding in the sensor
+/// document, never a key chunk). Classes are fixed literal positions —
+/// `state` (LWW, delete = tombstone), `telemetry` (superseded), `events`
+/// (immutable), and the verbatim `@rpc` plane — so storage/QoS/ACL are static
+/// prefixes (RFC keyspace-v2 03/04).
 pub mod topics {
     use super::*;
-
-    // Define key expression patterns using kedefine! macro
-    kedefine!(
-        pub interface_list_keys: "tcgui/${backend:*}/interfaces/list",
-        pub interface_events_keys: "tcgui/${backend:*}/interfaces/events",
-        pub bandwidth_keys: "tcgui/${backend:*}/bandwidth/${namespace:*}/${interface:*}",
-        pub health_keys: "tcgui/${backend:*}/health",
-        pub tc_query_keys: "tcgui/${backend:*}/query/tc",
-        pub interface_query_keys: "tcgui/${backend:*}/query/interface",
-        pub tc_config_keys: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}",
-        pub tc_stats_keys: "tcgui/${backend:*}/tc/stats/${namespace:*}/${interface:*}",
-        pub scenario_query_keys: "tcgui/${backend:*}/query/scenario",
-        pub scenario_execution_query_keys: "tcgui/${backend:*}/query/scenario/execution",
-        pub scenario_execution_updates_keys: "tcgui/${backend:*}/scenario/execution/${namespace:*}/${interface:*}",
-        pub preset_list_keys: "tcgui/${backend:*}/presets/list",
-        pub diagnostics_query_keys: "tcgui/${backend:*}/query/diagnostics"
-    );
+    use crate::identity::{ConcreteOrigin, LocalOrigin};
+    use crate::validation::slug_key_chunk;
 
     kedefine!(
-        pub all_interface_lists: "tcgui/${backend:*}/interfaces/list",
-        pub all_interface_events: "tcgui/${backend:*}/interfaces/events",
-        pub all_bandwidth: "tcgui/${backend:*}/bandwidth/${namespace:*}/${interface:*}",
-        pub all_health: "tcgui/${backend:*}/health",
-        pub backend_bandwidth_keys: "tcgui/${backend:*}/bandwidth/${ns:*}/${iface:*}",
-        pub all_tc_configs: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}",
-        pub all_tc_stats: "tcgui/${backend:*}/tc/stats/${namespace:*}/${interface:*}"
+        pub k_state_health: "v1/${origin:*}/state/tc/health",
+        pub k_state_alive: "v1/${origin:*}/state/tc/alive",
+        pub k_state_sensor: "v1/${origin:*}/state/tc/sensor",
+        pub k_state_interface: "v1/${origin:*}/state/tc/interface/${ns:*}/${iface:*}",
+        pub k_state_config: "v1/${origin:*}/state/tc/config/${ns:*}/${iface:*}",
+        pub k_state_execution: "v1/${origin:*}/state/tc/execution/${ns:*}/${iface:*}",
+        pub k_state_scenario: "v1/${origin:*}/state/tc/scenario/${id:*}",
+        pub k_state_preset: "v1/${origin:*}/state/tc/preset/${id:*}",
+        pub k_tel_bandwidth: "v1/${origin:*}/telemetry/tc/bandwidth/${ns:*}/${iface:*}",
+        pub k_tel_qdisc: "v1/${origin:*}/telemetry/tc/qdisc/${ns:*}/${iface:*}",
+        pub k_evt_applied: "v1/${origin:*}/events/tc/applied/${ulid:*}",
+        pub k_rpc_config: "v1/${origin:*}/@rpc/tc/config/${ns:*}/${iface:*}/set",
+        pub k_rpc_interface: "v1/${origin:*}/@rpc/tc/interface/${ns:*}/${iface:*}/set",
+        pub k_rpc_scenario: "v1/${origin:*}/@rpc/tc/scenario/set",
+        pub k_rpc_execution: "v1/${origin:*}/@rpc/tc/execution/${ns:*}/${iface:*}/set",
+        pub k_rpc_diagnostics: "v1/${origin:*}/@rpc/tc/diagnostics",
+        pub k_rpc_introspect: "v1/${origin:*}/@rpc/tc/introspect"
     );
 
-    /// Get interface list topic key expression for a specific backend
-    pub fn interface_list(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(interface_list_keys::formatter(), backend = backend_name)
-            .expect("Failed to format interface list topic - this should never happen with valid backend name")
-    }
+    // ----- fleet selectors (frontend subscriptions; wildcards allowed) --------
 
-    /// Get interface events topic key expression for a specific backend
-    pub fn interface_events(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(interface_events_keys::formatter(), backend = backend_name)
-            .expect("Failed to format interface events topic - this should never happen with valid backend name")
-    }
+    /// All hosts' state plane — the drill-down and reconciliation feed.
+    pub const SEL_STATE: &str = "v1/*/state/**";
+    /// All hosts' telemetry plane.
+    pub const SEL_TELEMETRY: &str = "v1/*/telemetry/**";
+    /// The reserved liveliness leaf across the fleet — the whole presence
+    /// protocol, zero payload.
+    pub const SEL_ALIVE: &str = "v1/*/state/*/alive";
 
-    /// Get bandwidth updates topic key expression for a specific interface
-    pub fn bandwidth_updates(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
+    // ----- state plane (published by the owning host under its LocalOrigin) ---
+
+    /// Health document key (`{ host_id, name, … }`).
+    pub fn state_health(o: &LocalOrigin) -> OwnedKeyExpr {
+        keformat!(k_state_health::formatter(), origin = o.as_str()).expect("state/health key")
+    }
+    /// Reserved liveliness-token leaf — distinct from the health document so
+    /// presence and data selectors never collide (04 §5).
+    pub fn state_alive(o: &LocalOrigin) -> OwnedKeyExpr {
+        keformat!(k_state_alive::formatter(), origin = o.as_str()).expect("state/alive key")
+    }
+    /// Producer registration document (version, netns binding).
+    pub fn state_sensor(o: &LocalOrigin) -> OwnedKeyExpr {
+        keformat!(k_state_sensor::formatter(), origin = o.as_str()).expect("state/sensor key")
+    }
+    /// Per-interface record — replaces the old list + events split. Removal of
+    /// a NIC is a `SampleKind::Delete` on this key.
+    pub fn state_interface(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
         keformat!(
-            bandwidth_keys::formatter(),
-            backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            k_state_interface::formatter(),
+            origin = o.as_str(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
         )
-        .expect("Failed to format bandwidth topic - this should never happen with valid parameters")
+        .expect("state/interface key")
+    }
+    /// Applied-TC-config echo. Clearing config is a `Delete`, never a `None`
+    /// payload (04 §1.2).
+    pub fn state_config(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_state_config::formatter(),
+            origin = o.as_str(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
+        )
+        .expect("state/config key")
+    }
+    /// Scenario execution status, keyed by the interface (never a run-id — 03
+    /// §2 forbids per-message data in a key).
+    pub fn state_execution(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_state_execution::formatter(),
+            origin = o.as_str(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
+        )
+        .expect("state/execution key")
+    }
+    /// Scenario library entry; delete-on-removal tombstone.
+    pub fn state_scenario(o: &LocalOrigin, id: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_state_scenario::formatter(),
+            origin = o.as_str(),
+            id = slug_key_chunk(id)
+        )
+        .expect("state/scenario key")
+    }
+    /// Preset library entry; delete-on-removal tombstone.
+    pub fn state_preset(o: &LocalOrigin, id: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_state_preset::formatter(),
+            origin = o.as_str(),
+            id = slug_key_chunk(id)
+        )
+        .expect("state/preset key")
     }
 
-    /// Get bandwidth updates wildcard pattern for a specific backend
-    pub fn backend_bandwidth_pattern(backend_name: &str) -> OwnedKeyExpr {
+    // ----- telemetry plane ----------------------------------------------------
+
+    /// Real-time bandwidth samples (superseded; best-effort).
+    pub fn telemetry_bandwidth(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
         keformat!(
-            backend_bandwidth_keys::formatter(),
-            backend = backend_name,
+            k_tel_bandwidth::formatter(),
+            origin = o.as_str(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
+        )
+        .expect("telemetry/bandwidth key")
+    }
+    /// Real-time qdisc statistics (superseded; best-effort).
+    pub fn telemetry_qdisc(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_tel_qdisc::formatter(),
+            origin = o.as_str(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
+        )
+        .expect("telemetry/qdisc key")
+    }
+
+    // ----- events plane -------------------------------------------------------
+
+    /// Immutable audit record of a TC apply. `ulid` is lowercased already.
+    pub fn events_applied(o: &LocalOrigin, ulid: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_evt_applied::formatter(),
+            origin = o.as_str(),
+            ulid = slug_key_chunk(ulid)
+        )
+        .expect("events/applied key")
+    }
+
+    // ----- @rpc plane ---------------------------------------------------------
+    //
+    // Call keys are concrete (built from a ConcreteOrigin — Local when a backend
+    // reply-keys, Remote when the frontend calls). Serve keys wildcard the
+    // per-interface subject so one queryable per service covers every interface.
+
+    /// Concrete apply/clear-TC call key (write). Resource is in the path (G6).
+    pub fn rpc_config(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
+        keformat!(
+            k_rpc_config::formatter(),
+            origin = o.as_key_chunk(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
+        )
+        .expect("@rpc/config key")
+    }
+    /// Backend's config queryable key (`…/config/*/*/set`).
+    pub fn rpc_config_serve(o: &LocalOrigin) -> OwnedKeyExpr {
+        keformat!(
+            k_rpc_config::formatter(),
+            origin = o.as_str(),
             ns = "*",
             iface = "*"
         )
-        .expect("Failed to format backend bandwidth pattern - this should never happen")
+        .expect("@rpc/config serve key")
     }
-
-    /// Get backend health status topic key expression
-    pub fn backend_health(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(health_keys::formatter(), backend = backend_name).expect(
-            "Failed to format health topic - this should never happen with valid backend name",
-        )
-    }
-
-    /// Get TC operations query service key expression
-    pub fn tc_query_service(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(tc_query_keys::formatter(), backend = backend_name).expect(
-            "Failed to format TC query topic - this should never happen with valid backend name",
-        )
-    }
-
-    /// Get interface control query service key expression
-    pub fn interface_query_service(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(interface_query_keys::formatter(), backend = backend_name)
-            .expect("Failed to format interface query topic - this should never happen with valid backend name")
-    }
-
-    /// Get TC configuration topic key expression for a specific interface
-    pub fn tc_config(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
+    /// Concrete enable/disable call key (write).
+    pub fn rpc_interface(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
         keformat!(
-            tc_config_keys::formatter(),
-            backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            k_rpc_interface::formatter(),
+            origin = o.as_key_chunk(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
         )
-        .expect("Failed to format TC config topic - this should never happen with valid parameters")
+        .expect("@rpc/interface key")
     }
-
-    /// Get TC statistics topic key expression for a specific interface
-    pub fn tc_statistics(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
+    /// Backend's interface-control queryable key (`…/interface/*/*/set`).
+    pub fn rpc_interface_serve(o: &LocalOrigin) -> OwnedKeyExpr {
         keformat!(
-            tc_stats_keys::formatter(),
-            backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            k_rpc_interface::formatter(),
+            origin = o.as_str(),
+            ns = "*",
+            iface = "*"
         )
-        .expect("Failed to format TC stats topic - this should never happen with valid parameters")
+        .expect("@rpc/interface serve key")
     }
-
-    /// Get scenario management query service key expression
-    pub fn scenario_query_service(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(scenario_query_keys::formatter(), backend = backend_name)
-            .expect("Failed to format scenario query topic - this should never happen with valid backend name")
+    /// Scenario CRUD call/serve key (no per-interface subject).
+    pub fn rpc_scenario(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
+        keformat!(k_rpc_scenario::formatter(), origin = o.as_key_chunk())
+            .expect("@rpc/scenario key")
     }
-
-    /// Get scenario execution query service key expression
-    pub fn scenario_execution_query_service(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(scenario_execution_query_keys::formatter(), backend = backend_name)
-            .expect("Failed to format scenario execution query topic - this should never happen with valid backend name")
-    }
-
-    /// Get scenario execution updates topic key expression for a specific interface
-    pub fn scenario_execution_updates(
-        backend_name: &str,
-        namespace: &str,
-        interface: &str,
-    ) -> OwnedKeyExpr {
+    /// Concrete start/stop/pause/resume call key (write).
+    pub fn rpc_execution(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
         keformat!(
-            scenario_execution_updates_keys::formatter(),
-            backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            k_rpc_execution::formatter(),
+            origin = o.as_key_chunk(),
+            ns = slug_key_chunk(ns),
+            iface = slug_key_chunk(iface)
         )
-        .expect("Failed to format scenario execution updates topic - this should never happen with valid parameters")
+        .expect("@rpc/execution key")
+    }
+    /// Backend's execution-control queryable key (`…/execution/*/*/set`).
+    pub fn rpc_execution_serve(o: &LocalOrigin) -> OwnedKeyExpr {
+        keformat!(
+            k_rpc_execution::formatter(),
+            origin = o.as_str(),
+            ns = "*",
+            iface = "*"
+        )
+        .expect("@rpc/execution serve key")
+    }
+    /// Diagnostics call/serve key (read).
+    pub fn rpc_diagnostics(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
+        keformat!(k_rpc_diagnostics::formatter(), origin = o.as_key_chunk())
+            .expect("@rpc/diagnostics key")
+    }
+    /// Registry-slice introspect call/serve key (read) — consumed by `zenctl`.
+    pub fn rpc_introspect(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
+        keformat!(k_rpc_introspect::formatter(), origin = o.as_key_chunk())
+            .expect("@rpc/introspect key")
     }
 
-    /// Get preset list topic key expression for a specific backend
-    pub fn preset_list(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(preset_list_keys::formatter(), backend = backend_name).expect(
-            "Failed to format preset list topic - this should never happen with valid backend name",
-        )
+    // ----- parsing ------------------------------------------------------------
+
+    /// The state-plane subject families a key can name.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum StateFamily {
+        Health,
+        Alive,
+        Sensor,
+        Interface,
+        Config,
+        Execution,
+        Scenario,
+        Preset,
     }
 
-    /// Get diagnostics query service key expression
-    pub fn diagnostics_query_service(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(diagnostics_query_keys::formatter(), backend = backend_name).expect(
-            "Failed to format diagnostics query topic - this should never happen with valid backend name",
-        )
+    /// A parsed `state` key — enough to route a Put or a Delete without the
+    /// payload (a Delete carries none, so `ns`/`iface`/`id` come from the key).
+    #[derive(Debug, Clone)]
+    pub struct StateKey {
+        pub origin: String,
+        pub family: StateFamily,
+        pub ns: Option<String>,
+        pub iface: Option<String>,
+        pub id: Option<String>,
     }
 
-    /// Extract backend name from a topic key expression
-    pub fn extract_backend_name(key_expr: &KeyExpr) -> Option<String> {
-        let key_str = key_expr.as_str();
-        let parts: Vec<&str> = key_str.split('/').collect();
-        if parts.len() >= 2 && parts[0] == "tcgui" {
-            Some(parts[1].to_string())
-        } else {
-            None
+    /// Split a key into chunks, tolerating an optional leading `tcgui` base in
+    /// case the session namespace was not stripped (e.g. an external observer).
+    fn chunks(key: &str) -> Vec<&str> {
+        let mut parts: Vec<&str> = key.split('/').collect();
+        if parts.first() == Some(&"tcgui") {
+            parts.remove(0);
         }
+        parts
     }
 
-    /// Extract namespace and interface from bandwidth topic
-    pub fn extract_bandwidth_target(key_expr: &KeyExpr) -> Option<(String, String, String)> {
-        let key_str = key_expr.as_str();
-        let parts: Vec<&str> = key_str.split('/').collect();
-        if parts.len() >= 5 && parts[0] == "tcgui" && parts[2] == "bandwidth" {
-            Some((
-                parts[1].to_string(),
-                parts[3].to_string(),
-                parts[4].to_string(),
-            ))
-        } else {
-            None
+    /// Extract the origin chunk from any v1 key (accepts a `KeyExpr`'s `as_str`).
+    pub fn parse_origin(key: &str) -> Option<String> {
+        let p = chunks(key);
+        (p.len() >= 2 && p[0] == "v1").then(|| p[1].to_string())
+    }
+
+    /// Parse a `v1/<origin>/state/tc/<family>/…` key.
+    pub fn parse_state_key(key: &str) -> Option<StateKey> {
+        let p = chunks(key);
+        if p.len() < 5 || p[0] != "v1" || p[2] != "state" || p[3] != "tc" {
+            return None;
+        }
+        let origin = p[1].to_string();
+        let mk = |family, ns, iface, id| {
+            Some(StateKey {
+                origin: origin.clone(),
+                family,
+                ns,
+                iface,
+                id,
+            })
+        };
+        match p[4] {
+            "health" => mk(StateFamily::Health, None, None, None),
+            "alive" => mk(StateFamily::Alive, None, None, None),
+            "sensor" => mk(StateFamily::Sensor, None, None, None),
+            "interface" if p.len() >= 7 => mk(
+                StateFamily::Interface,
+                Some(p[5].to_string()),
+                Some(p[6].to_string()),
+                None,
+            ),
+            "config" if p.len() >= 7 => mk(
+                StateFamily::Config,
+                Some(p[5].to_string()),
+                Some(p[6].to_string()),
+                None,
+            ),
+            "execution" if p.len() >= 7 => mk(
+                StateFamily::Execution,
+                Some(p[5].to_string()),
+                Some(p[6].to_string()),
+                None,
+            ),
+            "scenario" if p.len() >= 6 => {
+                mk(StateFamily::Scenario, None, None, Some(p[5].to_string()))
+            }
+            "preset" if p.len() >= 6 => mk(StateFamily::Preset, None, None, Some(p[5].to_string())),
+            _ => None,
         }
     }
 }
@@ -277,7 +421,13 @@ pub struct InterfaceStateEvent {
 /// QoS: Reliable delivery, history depth=1
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendHealthStatus {
-    /// Backend identifier
+    /// The host origin (`h-<12hex>`) — THE identity. The frontend builds every
+    /// key from this and keys its backend table on it (identity bridge, RFC
+    /// keyspace-v2 06 §6). Defaults empty for backward-compatible deserialization.
+    #[serde(default)]
+    pub host_id: String,
+    /// Operator-chosen display label. NEVER used as a key or table key — a
+    /// collision here is cosmetic, not a misrouted command.
     pub backend_name: String,
     /// Current status description
     pub status: String,
@@ -1474,6 +1624,17 @@ impl ZenohConfig {
 
         let mut config = zenoh::Config::default();
 
+        // Set the deployment base as the session namespace (keyspace-v2): every
+        // key this process publishes/subscribes is transparently prefixed with
+        // `tcgui/`, so application code never spells the base and declared key
+        // expressions start at `v1/…` (RFC keyspace-v2 §2; their #466 conformance
+        // gap — set it from day one).
+        config.insert_json5("namespace", "\"tcgui\"").map_err(|e| {
+            ZenohConfigError::ZenohConfigCreationError {
+                reason: format!("Failed to set session namespace: {e:?}"),
+            }
+        })?;
+
         // Set mode
         match self.mode {
             ZenohMode::Peer => {
@@ -1784,6 +1945,54 @@ pub enum InterfaceEventType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostile_netlink_names_produce_safe_keys() {
+        // Names that Linux `dev_valid_name()` permits but that used to either
+        // panic the daemon (`?`/`#`/`$`/`**` -> keformat error -> .expect) or
+        // make it publish on a wildcard key (`*`). Every per-interface builder
+        // must now return a concrete, wildcard-free single-target key.
+        let o = crate::identity::LocalOrigin::from_seed("test");
+        for name in ["*", "**", "?", "#", "$x"] {
+            for key in [
+                topics::telemetry_bandwidth(&o, "myns", name),
+                topics::state_config(&o, "myns", name),
+                topics::telemetry_qdisc(&o, "myns", name),
+                topics::state_execution(&o, "myns", name),
+            ] {
+                let s = key.as_str();
+                assert!(
+                    !s.contains('*'),
+                    "wildcard leaked into key {s:?} for {name:?}"
+                );
+                assert!(!s.contains(['?', '#', '$']), "reserved char in key {s:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn clean_names_keep_their_wire_key() {
+        // The declared key starts at `v1/` (the `tcgui` base is the session
+        // namespace, prefixed transparently) and slugging is identity on clean
+        // names.
+        let o = crate::identity::LocalOrigin::from_seed("test");
+        let key = topics::state_config(&o, "myns", "eth0.100");
+        assert_eq!(
+            key.as_str(),
+            format!("v1/{}/state/tc/config/myns/eth0.100", o.as_str())
+        );
+    }
+
+    #[test]
+    fn state_key_roundtrips_through_parser() {
+        let o = crate::identity::LocalOrigin::from_seed("test");
+        let key = topics::state_interface(&o, "default", "eth0");
+        let parsed = topics::parse_state_key(key.as_str()).expect("parse");
+        assert_eq!(parsed.origin, o.as_str());
+        assert_eq!(parsed.family, topics::StateFamily::Interface);
+        assert_eq!(parsed.ns.as_deref(), Some("default"));
+        assert_eq!(parsed.iface.as_deref(), Some("eth0"));
+    }
 
     #[test]
     fn test_tc_loss_config_validation() {

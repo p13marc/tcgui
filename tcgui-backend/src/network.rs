@@ -21,9 +21,9 @@ use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::{
-    InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent, InterfaceType, NamespaceType,
-    NetworkInterface, NetworkNamespace,
+    InterfaceType, NetworkInterface,
     errors::{BackendError, TcguiError},
+    identity::LocalOrigin,
     topics,
 };
 
@@ -56,10 +56,12 @@ fn interesting_qdisc_kind(kind: Option<String>) -> Option<String> {
 ///
 /// ```rust,no_run
 /// use tcgui_backend::network::NetworkManager;
+/// use tcgui_shared::identity::LocalOrigin;
 /// use zenoh::Session;
 ///
 /// async fn setup_manager(session: Session) -> anyhow::Result<()> {
-///     let manager = NetworkManager::new(session, "test-backend".to_string()).await?;
+///     let origin = LocalOrigin::mint();
+///     let manager = NetworkManager::new(session, origin, "test-backend".to_string()).await?;
 ///     let interfaces = manager.discover_all_interfaces().await?;
 ///     Ok(())
 /// }
@@ -71,12 +73,17 @@ pub struct NetworkManager {
     /// Map: namespace_name -> (interface_index -> NetworkInterface)
     #[allow(dead_code)]
     namespace_interfaces: HashMap<String, HashMap<u32, NetworkInterface>>,
-    /// Backend name for topic routing in multi-backend scenarios
+    /// Zenoh session for declaring per-interface state publishers on demand.
+    session: Session,
+    /// This host's origin — every published state key is built from it.
+    local_origin: LocalOrigin,
+    /// Operator-chosen display label, used only for logging/instrumentation.
     backend_name: String,
-    /// Publisher for interface list updates
-    interface_list_publisher: AdvancedPublisher<'static>,
-    /// Publisher for interface state events
-    interface_events_publisher: AdvancedPublisher<'static>,
+    /// Per-interface state publishers keyed by (namespace, interface). The key
+    /// set doubles as the "currently published" set for delete diffing: an
+    /// interface that disappears from a rescan gets a Delete tombstone and is
+    /// dropped from the map.
+    interface_publishers: HashMap<(String, String), AdvancedPublisher<'static>>,
     /// Container runtime manager for Docker/Podman discovery
     container_manager: ContainerManager,
     /// Cache of last discovered containers for namespace type lookup
@@ -96,51 +103,19 @@ impl NetworkManager {
     ///
     /// A new `NetworkManager` ready to discover and monitor network interfaces
     /// across multiple namespaces with backend-specific topic routing.
-    #[instrument(skip(session), fields(backend_name = %backend_name))]
-    pub async fn new(session: Session, backend_name: String) -> Result<Self, TcguiError> {
+    #[instrument(skip(session, local_origin), fields(backend_name = %backend_name))]
+    pub async fn new(
+        session: Session,
+        local_origin: LocalOrigin,
+        backend_name: String,
+    ) -> Result<Self, TcguiError> {
         // Create nlink connection for default namespace
         let connection = Connection::<Route>::new().map_err(|e| TcguiError::NetworkError {
             message: format!("Failed to create nlink connection: {}", e),
         })?;
         info!("[BACKEND] nlink connection established for default namespace");
 
-        // Declare advanced publishers for interface communications with history
-        let interface_list_topic = topics::interface_list(&backend_name);
-        info!(
-            "Declaring interface list advanced publisher with history on: {}",
-            interface_list_topic.as_str()
-        );
-        let interface_list_publisher = session
-            .declare_publisher(interface_list_topic)
-            .cache(CacheConfig::default().max_samples(1))
-            .sample_miss_detection(
-                MissDetectionConfig::default().heartbeat(Duration::from_millis(500)),
-            )
-            .publisher_detection()
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to declare interface list advanced publisher: {}", e),
-            })?;
-
-        let interface_events_topic = topics::interface_events(&backend_name);
-        info!(
-            "Declaring interface events advanced publisher with history on: {}",
-            interface_events_topic.as_str()
-        );
-        let interface_events_publisher = session
-            .declare_publisher(interface_events_topic)
-            .cache(CacheConfig::default().max_samples(1))
-            .sample_miss_detection(
-                MissDetectionConfig::default().heartbeat(Duration::from_millis(500)),
-            )
-            .publisher_detection()
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!(
-                    "Failed to declare interface events advanced publisher: {}",
-                    e
-                ),
-            })?;
+        // Per-interface state publishers are declared lazily in send_interface_list.
 
         // Initialize container manager for Docker/Podman discovery
         let container_manager = ContainerManager::new().await;
@@ -158,9 +133,10 @@ impl NetworkManager {
         Ok(Self {
             connection,
             namespace_interfaces: HashMap::new(),
+            session,
+            local_origin,
             backend_name,
-            interface_list_publisher,
-            interface_events_publisher,
+            interface_publishers: HashMap::new(),
             container_manager,
             cached_containers,
         })
@@ -499,65 +475,6 @@ impl NetworkManager {
         }
     }
 
-    /// Monitor interfaces across all namespaces (future multi-namespace monitoring)
-    #[allow(dead_code)]
-    pub async fn monitor_all_namespaces(&mut self, namespaces: &[NetworkNamespace]) -> Result<()> {
-        for namespace in namespaces {
-            if let Err(e) = self.monitor_namespace_interfaces(&namespace.name).await {
-                error!(
-                    "Failed to monitor interfaces in namespace {}: {}",
-                    namespace.name, e
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Monitor interfaces in a specific namespace (future namespace-specific monitoring)
-    #[allow(dead_code)]
-    pub async fn monitor_namespace_interfaces(&mut self, namespace: &str) -> Result<()> {
-        match self.discover_interfaces_in_namespace(namespace).await {
-            Ok(discovered_interfaces) => {
-                let current_interfaces = self
-                    .namespace_interfaces
-                    .entry(namespace.to_string())
-                    .or_default();
-
-                // Check for new interfaces
-                let mut updates_to_send = Vec::new();
-                for (index, interface) in &discovered_interfaces {
-                    if !current_interfaces.contains_key(index) {
-                        updates_to_send.push((interface.clone(), InterfaceEventType::Added));
-                    }
-                }
-
-                // Check for removed interfaces
-                for (index, interface) in current_interfaces.iter() {
-                    if !discovered_interfaces.contains_key(index) {
-                        updates_to_send.push((interface.clone(), InterfaceEventType::Removed));
-                    }
-                }
-
-                *current_interfaces = discovered_interfaces;
-
-                // Send updates after we're done with the mutable borrow
-                for (interface, event_type) in updates_to_send {
-                    self.send_interface_update(namespace, interface, event_type)
-                        .await?;
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "Failed to monitor interfaces in namespace {}: {}",
-                    namespace, e
-                );
-                Err(e.into())
-            }
-        }
-    }
-
     /// Tests if a network namespace is accessible to the current process.
     async fn is_namespace_accessible(&self, namespace: &str) -> bool {
         if namespace == "default" {
@@ -818,120 +735,89 @@ impl NetworkManager {
         Ok(all_interfaces)
     }
 
-    /// Sends interface list to frontend organized by namespaces.
+    /// Reconciles the published per-interface state against `interfaces`.
+    ///
+    /// This is the single interface-state reconciliation feed (keyspace-v2): it
+    /// replaces the old `interfaces/list` snapshot + `interfaces/events` delta
+    /// split. Every present interface is (re)published as a `NetworkInterface`
+    /// Put on its own `state/tc/interface/{ns}/{if}` key; any interface that was
+    /// previously published but is now absent gets a Delete tombstone and is
+    /// dropped from the publisher set. A disabled NIC stays published (with
+    /// `is_up=false`) — only a NIC that has *gone away* is tombstoned.
     #[instrument(skip(self, interfaces), fields(backend_name = %self.backend_name, interface_count = interfaces.len()))]
     pub async fn send_interface_list(
-        &self,
+        &mut self,
         interfaces: &HashMap<u32, NetworkInterface>,
     ) -> Result<()> {
-        // Group interfaces by namespace
-        let mut namespace_map: HashMap<String, Vec<NetworkInterface>> = HashMap::new();
-
+        // Publish (or refresh) every present interface as its own state record.
+        // The payload is the bare `NetworkInterface` — it already carries its
+        // `namespace`/`name`/`is_up`; the host origin is in the key, not the body.
+        let mut present: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::with_capacity(interfaces.len());
         for interface in interfaces.values() {
-            namespace_map
-                .entry(interface.namespace.clone())
-                .or_default()
-                .push(interface.clone());
+            let ns = interface.namespace.clone();
+            let name = interface.name.clone();
+            present.insert((ns.clone(), name.clone()));
+
+            let payload =
+                serde_json::to_string(interface).map_err(TcguiError::SerializationError)?;
+
+            let publisher = self.get_interface_publisher(&ns, &name).await?;
+            publisher
+                .put(payload)
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to publish interface record: {}", e),
+                })?;
         }
 
-        // Get the container cache for namespace type lookup
-        let container_cache = self.cached_containers.read().await;
-
-        // Convert to NetworkNamespace structs with proper namespace types
-        let namespaces: Vec<NetworkNamespace> = namespace_map
-            .into_iter()
-            .map(|(name, interfaces)| {
-                let namespace_type = if name == "default" {
-                    NamespaceType::Default
-                } else if name.starts_with("container:") {
-                    if let Some(container) = container_cache.get(&name) {
-                        NamespaceType::Container {
-                            runtime: format!("{:?}", container.runtime),
-                            container_id: container.short_id.clone(),
-                            image: container.image.clone(),
-                        }
-                    } else {
-                        NamespaceType::Container {
-                            runtime: "unknown".to_string(),
-                            container_id: name
-                                .strip_prefix("container:")
-                                .unwrap_or(&name)
-                                .to_string(),
-                            image: "unknown".to_string(),
-                        }
-                    }
-                } else {
-                    NamespaceType::Traditional
-                };
-
-                NetworkNamespace {
-                    name: name.clone(),
-                    id: None,
-                    is_active: true,
-                    namespace_type,
-                    interfaces,
-                }
-            })
+        // Tombstone interfaces that were published before but are gone now.
+        let stale: Vec<(String, String)> = self
+            .interface_publishers
+            .keys()
+            .filter(|key| !present.contains(*key))
+            .cloned()
             .collect();
+        for key in stale {
+            if let Some(publisher) = self.interface_publishers.remove(&key) {
+                info!("Interface {}:{} gone — publishing tombstone", key.0, key.1);
+                publisher
+                    .delete()
+                    .await
+                    .map_err(|e| TcguiError::ZenohError {
+                        message: format!("Failed to publish interface tombstone: {}", e),
+                    })?;
+            }
+        }
 
-        let interface_list_update = InterfaceListUpdate {
-            namespaces,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            backend_name: self.backend_name.clone(),
-        };
-
-        let payload = serde_json::to_string(&interface_list_update)
-            .map_err(TcguiError::SerializationError)?;
-
-        self.interface_list_publisher
-            .put(payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to send interface list: {}", e),
-            })?;
-
-        info!(
-            "Sent interface list with {} namespaces via publisher",
-            interface_list_update.namespaces.len()
-        );
-
+        info!("Reconciled {} interface state record(s)", present.len());
         Ok(())
     }
 
-    async fn send_interface_update(
-        &self,
+    /// Get or create the per-interface state publisher for `(namespace, interface)`.
+    async fn get_interface_publisher(
+        &mut self,
         namespace: &str,
-        interface: NetworkInterface,
-        event_type: InterfaceEventType,
-    ) -> Result<()> {
-        let interface_event = InterfaceStateEvent {
-            namespace: namespace.to_string(),
-            interface,
-            event_type,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            backend_name: self.backend_name.clone(),
-        };
-
-        let payload =
-            serde_json::to_string(&interface_event).map_err(TcguiError::SerializationError)?;
-
-        self.interface_events_publisher
-            .put(payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to send interface event: {}", e),
-            })?;
-
-        info!(
-            "Sent interface event for {}:{} via publisher",
-            namespace, interface_event.interface.name
-        );
-
-        Ok(())
+        interface: &str,
+    ) -> Result<&AdvancedPublisher<'static>> {
+        let key = (namespace.to_string(), interface.to_string());
+        if !self.interface_publishers.contains_key(&key) {
+            let topic = topics::state_interface(&self.local_origin, namespace, interface);
+            let publisher = self
+                .session
+                .declare_publisher(topic)
+                .cache(CacheConfig::default().max_samples(1))
+                .sample_miss_detection(
+                    MissDetectionConfig::default().heartbeat(Duration::from_millis(500)),
+                )
+                .publisher_detection()
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to declare interface state publisher: {}", e),
+                })?;
+            self.interface_publishers.insert(key.clone(), publisher);
+        }
+        Ok(self.interface_publishers.get(&key).unwrap())
     }
 
     /// Enables a network interface by bringing it UP.

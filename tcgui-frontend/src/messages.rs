@@ -1,14 +1,19 @@
 use tcgui_shared::{
     BackendHealthStatus, BandwidthUpdate, DiagnosticsRequest, DiagnosticsResponse,
-    InterfaceControlRequest, InterfaceControlResponse, InterfaceListUpdate, InterfaceStateEvent,
-    TcConfigUpdate, TcRequest, TcResponse, TcStatisticsUpdate,
-    presets::{CustomPreset, PresetList},
+    InterfaceControlRequest, InterfaceControlResponse, NetworkInterface, TcConfigUpdate, TcRequest,
+    TcResponse, TcStatisticsUpdate,
+    presets::CustomPreset,
     scenario::{
         NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionResponse,
         ScenarioExecutionUpdate, ScenarioRequest, ScenarioResponse,
     },
 };
 use tokio::sync::mpsc;
+
+// NOTE (keyspace-v2): every `backend_name` field on the query-message structs
+// below now carries the **host origin** (`h-<12hex>`), not the operator-chosen
+// display label. The zenoh_manager parses it with `RemoteOrigin::parse` to build
+// the concrete `@rpc` call key; the display label lives only in `BackendGroup.name`.
 
 /// Message for scenario management query operations
 #[derive(Debug, Clone)]
@@ -55,11 +60,19 @@ pub struct DiagnosticsQueryMessage {
 /// Frontend application messages with new communication architecture
 #[derive(Debug, Clone)]
 pub enum TcGuiMessage {
-    TcInterfaceMessage(String, String, String, TcInterfaceMessage), // (backend_name, namespace_name, interface_name, message)
-    // New pub/sub messages
-    InterfaceListUpdate(InterfaceListUpdate),
+    TcInterfaceMessage(String, String, String, TcInterfaceMessage), // (origin, namespace_name, interface_name, message)
+    // State-plane per-interface upsert (Put on `state/tc/interface/{ns}/{if}`).
+    InterfaceUpsert {
+        backend_name: String,
+        interface: NetworkInterface,
+    },
+    // State-plane per-interface removal (Delete tombstone on the same key).
+    InterfaceRemoved {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     BandwidthUpdate(BandwidthUpdate),
-    InterfaceStateEvent(InterfaceStateEvent),
     BackendHealthUpdate(BackendHealthStatus),
     BackendLiveliness {
         backend_name: String,
@@ -67,10 +80,23 @@ pub enum TcGuiMessage {
     },
     TcConfigUpdate(TcConfigUpdate),
     TcStatisticsUpdate(TcStatisticsUpdate),
-    // Preset list update from backend
-    PresetListUpdate {
+    // State-plane per-preset upsert / removal (state/tc/preset/{id}).
+    PresetUpsert {
         backend_name: String,
-        preset_list: PresetList,
+        preset: CustomPreset,
+    },
+    PresetRemoved {
+        backend_name: String,
+        id: String,
+    },
+    // State-plane per-scenario upsert / removal (state/tc/scenario/{id}).
+    ScenarioUpsert {
+        backend_name: String,
+        scenario: Box<NetworkScenario>,
+    },
+    ScenarioRemoved {
+        backend_name: String,
+        id: String,
     },
     // Query/Reply responses (commented out until response handling is implemented)
     // TcResponse { backend_name: String, request: TcRequest, response: TcResponse },
@@ -82,6 +108,12 @@ pub enum TcGuiMessage {
     },
     // Scenario events
     ScenarioExecutionUpdate(Box<ScenarioExecutionUpdate>),
+    // State-plane execution removal (Delete tombstone on state/tc/execution/{ns}/{if}).
+    ScenarioExecutionRemoved {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     // Query channel setup
     SetupTcQueryChannel(mpsc::UnboundedSender<TcQueryMessage>),
     SetupInterfaceQueryChannel(mpsc::UnboundedSender<InterfaceControlQueryMessage>),
@@ -211,6 +243,11 @@ pub enum TcGuiMessage {
         backend_name: String,
         response: InterfaceControlResponse,
     },
+    /// A backend query failed on Zenoh's reply-error channel (RFC 05 §3).
+    QueryError {
+        backend_name: String,
+        error: String,
+    },
     /// Dismiss the notification at the given index.
     DismissNotification(usize),
 
@@ -221,10 +258,17 @@ pub enum TcGuiMessage {
 /// Internal message type for Zenoh communication with new architecture
 #[derive(Debug, Clone)]
 pub enum ZenohEvent {
-    // New pub/sub messages
-    InterfaceListUpdate(InterfaceListUpdate),
+    // State-plane per-interface upsert / removal.
+    InterfaceUpsert {
+        backend_name: String,
+        interface: NetworkInterface,
+    },
+    InterfaceRemoved {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     BandwidthUpdate(BandwidthUpdate),
-    InterfaceStateEvent(InterfaceStateEvent),
     BackendHealthUpdate(BackendHealthStatus),
     // Backend liveliness detection
     BackendLiveliness {
@@ -233,13 +277,32 @@ pub enum ZenohEvent {
     },
     TcConfigUpdate(TcConfigUpdate),
     TcStatisticsUpdate(TcStatisticsUpdate),
-    // Preset list update from backend
-    PresetListUpdate {
+    // State-plane per-preset upsert / removal.
+    PresetUpsert {
         backend_name: String,
-        preset_list: PresetList,
+        preset: CustomPreset,
+    },
+    PresetRemoved {
+        backend_name: String,
+        id: String,
+    },
+    // State-plane per-scenario upsert / removal.
+    ScenarioUpsert {
+        backend_name: String,
+        scenario: Box<NetworkScenario>,
+    },
+    ScenarioRemoved {
+        backend_name: String,
+        id: String,
     },
     // Scenario events
     ScenarioExecutionUpdate(Box<ScenarioExecutionUpdate>),
+    // State-plane execution removal (Delete tombstone).
+    ScenarioExecutionRemoved {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     // Query channels
     TcQueryChannelReady(mpsc::UnboundedSender<TcQueryMessage>),
     InterfaceQueryChannelReady(mpsc::UnboundedSender<InterfaceControlQueryMessage>),
@@ -267,6 +330,12 @@ pub enum ZenohEvent {
     InterfaceControlResult {
         backend_name: String,
         response: InterfaceControlResponse,
+    },
+    /// A query failed on Zenoh's reply-error channel (RFC keyspace-v2 05 §3).
+    /// `error` is the backend's namespaced `error/...: message` string.
+    QueryError {
+        backend_name: String,
+        error: String,
     },
     // Connection status
     ConnectionStatus(bool),

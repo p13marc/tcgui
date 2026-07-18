@@ -12,6 +12,7 @@ use tokio::time::{Duration, Instant, sleep};
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 
+use tcgui_shared::identity::LocalOrigin;
 use tcgui_shared::scenario::{
     ExecutionState, ExecutionStats, NetworkScenario, ScenarioError, ScenarioExecution,
 };
@@ -25,7 +26,9 @@ pub struct ScenarioExecutionEngine {
     active_executions: Arc<RwLock<HashMap<String, ScenarioExecutor>>>,
     /// Zenoh session for publishing updates and executing TC commands
     session: Arc<Session>,
-    /// Backend name for topic routing
+    /// This host's origin — every published/queried key is built from it.
+    local_origin: LocalOrigin,
+    /// Operator-chosen display label, carried in update payloads.
     backend_name: String,
     /// TC command manager for applying network configurations
     tc_manager: TcCommandManager,
@@ -69,17 +72,21 @@ impl ScenarioExecutor {
 
 impl ScenarioExecutionEngine {
     /// Create a new scenario execution engine
-    pub fn new(session: Arc<Session>, backend_name: String, tc_manager: TcCommandManager) -> Self {
+    pub fn new(
+        session: Arc<Session>,
+        local_origin: LocalOrigin,
+        backend_name: String,
+        tc_manager: TcCommandManager,
+    ) -> Self {
         let (update_sender, mut update_receiver) = mpsc::unbounded_channel();
         let session_clone = session.clone();
-        let backend_name_clone = backend_name.clone();
+        let origin_clone = local_origin.clone();
 
         // Spawn update publisher task
         tokio::spawn(async move {
             while let Some(update) = update_receiver.recv().await {
                 if let Err(e) =
-                    Self::publish_execution_update(&session_clone, &backend_name_clone, update)
-                        .await
+                    Self::publish_execution_update(&session_clone, &origin_clone, update).await
                 {
                     error!("Failed to publish execution update: {}", e);
                 }
@@ -89,6 +96,7 @@ impl ScenarioExecutionEngine {
         Self {
             active_executions: Arc::new(RwLock::new(HashMap::new())),
             session,
+            local_origin,
             backend_name,
             tc_manager,
             update_sender,
@@ -326,6 +334,7 @@ impl ScenarioExecutionEngine {
         execution_key: String,
     ) -> tokio::task::JoinHandle<()> {
         let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
         let session = self.session.clone();
         let active_executions = self.active_executions.clone();
 
@@ -375,7 +384,7 @@ impl ScenarioExecutionEngine {
                         },
                     };
 
-                    match Self::execute_tc_command(&session, &backend_name, &tc_request).await {
+                    match Self::execute_tc_command(&session, &local_origin, &tc_request).await {
                         Ok(response) if response.success => {
                             debug!("Successfully applied TC config for step {}", step_index + 1);
                             execution.stats.tc_operations += 1;
@@ -723,13 +732,15 @@ impl ScenarioExecutionEngine {
         }
     }
 
-    /// Execute a TC command via Zenoh query
+    /// Execute a TC command via Zenoh query on the backend's own concrete
+    /// `@rpc/config` key for the target interface.
     async fn execute_tc_command(
         session: &Session,
-        backend_name: &str,
+        local_origin: &LocalOrigin,
         tc_request: &TcRequest,
     ) -> Result<TcResponse> {
-        let tc_query_topic = topics::tc_query_service(backend_name);
+        let tc_query_topic =
+            topics::rpc_config(local_origin, &tc_request.namespace, &tc_request.interface);
         let request_payload = serde_json::to_vec(tc_request)?;
 
         debug!("Executing TC command via query: {:?}", tc_request);
@@ -756,14 +767,13 @@ impl ScenarioExecutionEngine {
         }
     }
 
-    /// Publish execution update to Zenoh
+    /// Publish execution update to Zenoh on the per-interface state key.
     async fn publish_execution_update(
         session: &Session,
-        backend_name: &str,
+        local_origin: &LocalOrigin,
         update: ScenarioExecutionUpdate,
     ) -> Result<()> {
-        let topic =
-            topics::scenario_execution_updates(backend_name, &update.namespace, &update.interface);
+        let topic = topics::state_execution(local_origin, &update.namespace, &update.interface);
 
         let payload = serde_json::to_vec(&tcgui_shared::scenario::ScenarioExecutionUpdate {
             namespace: update.namespace,
@@ -853,7 +863,12 @@ mod tests {
                 .expect("Failed to open Zenoh"),
         );
         let tc_manager = crate::tc_commands::TcCommandManager::new();
-        ScenarioExecutionEngine::new(session, "test-backend".to_string(), tc_manager)
+        ScenarioExecutionEngine::new(
+            session,
+            LocalOrigin::from_seed("test-backend"),
+            "test-backend".to_string(),
+            tc_manager,
+        )
     }
 
     #[test]

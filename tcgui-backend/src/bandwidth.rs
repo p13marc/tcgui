@@ -28,7 +28,8 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 
 use crate::container::Container;
 use tcgui_shared::{
-    BandwidthUpdate, NetworkBandwidthStats, NetworkInterface, errors::TcguiError, topics,
+    BandwidthUpdate, NetworkBandwidthStats, NetworkInterface, errors::TcguiError,
+    identity::LocalOrigin, topics,
 };
 
 /// Returns true if the error chain contains an nlink permission-denied error.
@@ -79,7 +80,9 @@ impl NamespaceStatsTracker {
 pub struct BandwidthMonitor {
     /// Zenoh session for sending bandwidth update messages
     session: Session,
-    /// Backend name for topic routing in multi-backend scenarios
+    /// This host's origin — every telemetry key is built from it.
+    local_origin: LocalOrigin,
+    /// Operator-chosen display label, carried in the payload and used for logging.
     backend_name: String,
     /// Publishers for bandwidth updates (one per interface)
     bandwidth_publishers: HashMap<String, AdvancedPublisher<'static>>,
@@ -94,9 +97,10 @@ pub struct BandwidthMonitor {
 
 impl BandwidthMonitor {
     /// Creates a new bandwidth monitor instance.
-    pub fn new(session: Session, backend_name: String) -> Self {
+    pub fn new(session: Session, local_origin: LocalOrigin, backend_name: String) -> Self {
         Self {
             session,
+            local_origin,
             backend_name,
             bandwidth_publishers: HashMap::new(),
             container_cache: None,
@@ -387,8 +391,11 @@ impl BandwidthMonitor {
 
         // Get or create publisher for this interface
         if !self.bandwidth_publishers.contains_key(&publisher_key) {
-            let bandwidth_topic =
-                topics::bandwidth_updates(&self.backend_name, &update.namespace, &update.interface);
+            let bandwidth_topic = topics::telemetry_bandwidth(
+                &self.local_origin,
+                &update.namespace,
+                &update.interface,
+            );
             debug!(
                 "Creating bandwidth publisher for {}: {}",
                 publisher_key,
