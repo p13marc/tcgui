@@ -11,13 +11,13 @@ use zenoh::Session;
 
 use tcgui_shared::scenario::{NetworkScenario, ScenarioLoadError};
 
-use super::{ScenarioExecutionEngine, ScenarioLoader, ScenarioZenohStorage};
+use super::{ScenarioExecutionEngine, ScenarioLoader, ScenarioStore};
 use crate::tc_commands::TcCommandManager;
 
 /// High-level scenario manager that coordinates all scenario operations
 pub struct ScenarioManager {
-    /// Storage backend for persisting scenarios
-    storage: ScenarioZenohStorage,
+    /// In-memory store for user-created scenarios (process lifetime)
+    storage: ScenarioStore,
     /// Execution engine for running scenarios
     execution_engine: ScenarioExecutionEngine,
     /// File-based scenario loader
@@ -66,8 +66,7 @@ impl ScenarioManager {
     ) -> Self {
         info!("Initializing ScenarioManager for backend: {}", backend_name);
 
-        let storage_prefix = format!("tcgui/storage/{}/scenarios", backend_name);
-        let storage = ScenarioZenohStorage::new(session.clone(), storage_prefix);
+        let storage = ScenarioStore::new();
 
         let execution_engine =
             ScenarioExecutionEngine::new(session.clone(), backend_name.clone(), tc_manager);

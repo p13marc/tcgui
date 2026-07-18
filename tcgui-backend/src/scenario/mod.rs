@@ -12,5 +12,5 @@ pub mod zenoh_handlers;
 pub use execution::{ScenarioExecutionEngine, ScenarioExecutor};
 pub use loader::ScenarioLoader;
 pub use manager::ScenarioManager;
-pub use storage::ScenarioZenohStorage;
+pub use storage::ScenarioStore;
 pub use zenoh_handlers::{ScenarioExecutionHandlers, ScenarioZenohHandlers};
