@@ -211,6 +211,11 @@ pub enum TcGuiMessage {
         backend_name: String,
         response: InterfaceControlResponse,
     },
+    /// A backend query failed on Zenoh's reply-error channel (RFC 05 §3).
+    QueryError {
+        backend_name: String,
+        error: String,
+    },
     /// Dismiss the notification at the given index.
     DismissNotification(usize),
 
@@ -267,6 +272,12 @@ pub enum ZenohEvent {
     InterfaceControlResult {
         backend_name: String,
         response: InterfaceControlResponse,
+    },
+    /// A query failed on Zenoh's reply-error channel (RFC keyspace-v2 05 §3).
+    /// `error` is the backend's namespaced `error/...: message` string.
+    QueryError {
+        backend_name: String,
+        error: String,
     },
     // Connection status
     ConnectionStatus(bool),

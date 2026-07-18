@@ -13,8 +13,54 @@ use tcgui_shared::scenario::{
     ScenarioRequest, ScenarioResponse,
 };
 use tcgui_shared::topics;
+use zenoh::key_expr::OwnedKeyExpr;
 
 use super::ScenarioManager;
+
+/// Reply to a scenario-management query on the queryable's **own concrete key**
+/// (never the echoed, possibly-wildcard `query.key_expr()` — RFC keyspace-v2
+/// 05 §2.1), routing the `Error` variant onto Zenoh's reply-error channel with a
+/// namespaced name (05 §3) rather than shipping a failure on the value channel.
+async fn reply_scenario(
+    query: &Query,
+    concrete_key: OwnedKeyExpr,
+    response: &ScenarioResponse,
+) -> Result<()> {
+    if let ScenarioResponse::Error { error } = response {
+        query
+            .reply_err(format!("error/scenario: {error:?}"))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reply_err to scenario query: {e}"))?;
+    } else {
+        let payload = serde_json::to_vec(response)?;
+        query
+            .reply(concrete_key, payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send scenario response: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Concrete-key + reply-error twin of [`reply_scenario`] for execution queries.
+async fn reply_execution(
+    query: &Query,
+    concrete_key: OwnedKeyExpr,
+    response: &ScenarioExecutionResponse,
+) -> Result<()> {
+    if let ScenarioExecutionResponse::Error { error } = response {
+        query
+            .reply_err(format!("error/execution: {error:?}"))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reply_err to execution query: {e}"))?;
+    } else {
+        let payload = serde_json::to_vec(response)?;
+        query
+            .reply(concrete_key, payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send execution response: {e}"))?;
+    }
+    Ok(())
+}
 
 /// Zenoh handlers for scenario management
 pub struct ScenarioZenohHandlers {
@@ -97,24 +143,23 @@ impl ScenarioZenohHandlers {
                 let error_response = ScenarioResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
-                let response_payload = serde_json::to_vec(&error_response)?;
-                query
-                    .reply(query.key_expr().clone(), response_payload)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to send error response: {}", e))?;
-                return Ok(());
+                return reply_scenario(
+                    &query,
+                    topics::scenario_query_service(backend_name),
+                    &error_response,
+                )
+                .await;
             }
         };
 
         // Process the request
         let response = Self::process_scenario_request(scenario_manager, request).await;
-
-        // Send the response
-        let response_payload = serde_json::to_vec(&response)?;
-        query
-            .reply(query.key_expr().clone(), response_payload)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send scenario response: {}", e))?;
+        reply_scenario(
+            &query,
+            topics::scenario_query_service(backend_name),
+            &response,
+        )
+        .await?;
 
         debug!("Scenario query processed successfully");
         Ok(())
@@ -296,24 +341,23 @@ impl ScenarioExecutionHandlers {
                 let error_response = ScenarioExecutionResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
-                let response_payload = serde_json::to_vec(&error_response)?;
-                query
-                    .reply(query.key_expr().clone(), response_payload)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to send error response: {}", e))?;
-                return Ok(());
+                return reply_execution(
+                    &query,
+                    topics::scenario_execution_query_service(backend_name),
+                    &error_response,
+                )
+                .await;
             }
         };
 
         // Process the request
         let response = Self::process_execution_request(scenario_manager, request).await;
-
-        // Send the response
-        let response_payload = serde_json::to_vec(&response)?;
-        query
-            .reply(query.key_expr().clone(), response_payload)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send execution response: {}", e))?;
+        reply_execution(
+            &query,
+            topics::scenario_execution_query_service(backend_name),
+            &response,
+        )
+        .await?;
 
         debug!("Execution query processed successfully");
         Ok(())

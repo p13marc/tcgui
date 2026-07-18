@@ -204,6 +204,14 @@ impl TcGui {
                 }
                 Task::none()
             }
+            TcGuiMessage::QueryError {
+                backend_name,
+                error,
+            } => {
+                tracing::warn!("Backend '{}' query error: {}", backend_name, error);
+                self.notify(error);
+                Task::none()
+            }
             TcGuiMessage::DismissNotification(index) => {
                 if index < self.notifications.len() {
                     self.notifications.remove(index);
@@ -800,6 +808,13 @@ impl TcGui {
                 } => TcGuiMessage::InterfaceControlResult {
                     backend_name,
                     response,
+                },
+                ZenohEvent::QueryError {
+                    backend_name,
+                    error,
+                } => TcGuiMessage::QueryError {
+                    backend_name,
+                    error,
                 },
                 ZenohEvent::PresetListUpdate {
                     backend_name,
