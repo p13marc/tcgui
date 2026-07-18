@@ -371,11 +371,18 @@ impl ZenohManager {
                             .await;
 
                         // Single state-plane subscriber (LWW; delete = tombstone).
-                        // Advanced triad keeps late-joiner history + recovery.
+                        // History detects late publishers; recovery uses
+                        // periodic queries rather than a per-publisher heartbeat —
+                        // RFC keyspace-v2 04 §3.3 prefers `periodic_queries` on a
+                        // wide wildcard subscription, where an unaggregated
+                        // heartbeat per publisher scales with fleet × interface.
                         let state_subscriber = match session
                             .declare_subscriber(topics::SEL_STATE)
                             .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
+                            .recovery(
+                                RecoveryConfig::default()
+                                    .periodic_queries(std::time::Duration::from_secs(5)),
+                            )
                             .subscriber_detection()
                             .await
                         {
