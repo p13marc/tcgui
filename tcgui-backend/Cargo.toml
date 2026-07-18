@@ -26,8 +26,10 @@ futures-util = { workspace = true }
 nlink = { workspace = true }
 
 # Communication
+zenkey = { workspace = true }
 zenoh = { workspace = true }
 zenoh-ext = { workspace = true }
+zblob = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

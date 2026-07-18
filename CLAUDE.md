@@ -105,6 +105,16 @@ The frontend uses `TcFeatures` with individual `TcFeature<T>` for: Loss, Delay, 
 
 - **Iced 0.14**: GUI framework with tokio integration
 - **Zenoh**: Pub/sub + query/reply messaging
+- **zenkey / zenkey-build** (crates.io): the keyspace-v2 convention. The subject/
+  procedure vocabulary is `tcgui-shared/registry/tc.toml`, compiled by
+  `zenkey-build` from `tcgui-shared/build.rs` into typed builders
+  (`tcgui_shared::registry::tc`); `tcgui_shared::topics` wraps them (public API
+  unchanged) and the backend serves the same TOML on `@rpc/tc/introspect`.
+  Never build keys with `format!` — go through `topics`/the generated registry.
+  Origins mint via `zenkey::AppProfile("tcgui", "tcgui-host-id-v1")` — changing
+  the salt re-keys every fleet.
+- **zblob** (crates.io): resumable blob transfer; the backend serves the
+  (currently empty) `@blob/artifact` plane for future diagnostics bundles.
 - **nlink**: Linux netlink for interface enumeration and TC operations
 - **tokio**: Async runtime
 
