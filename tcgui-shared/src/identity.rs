@@ -1,4 +1,4 @@
-//! Host origin identity for the keyspace-v2 grammar.
+//! Host origin identity for the keyspace-v2 grammar, on `zenkey`.
 //!
 //! Every key is `tcgui/v1/<origin>/<class>/<producer>/<subject…>`. The `<origin>`
 //! answers *who published it* with a **stable, opaque host id** — `h-<12 hex>` —
@@ -10,9 +10,10 @@
 //!
 //! tcgui is **host-as-origin, not container-as-origin**: the actuated resource
 //! is one kernel's qdiscs, so N backends on a host share one origin and are
-//! distinguished as producer *instances* (`tc`, `tc-2`) instead. The id is a
-//! SHA-256 of the machine id with a domain-separation tag, so it is stable
-//! across restarts and reveals nothing about the machine.
+//! distinguished as producer *instances* (`tc`, `tc-2`) instead. Minting is
+//! `zenkey`'s reference derivation (RFC 06 §1): SHA-256 of the machine id with
+//! tcgui's application salt — byte-identical to the pre-zenkey hand-rolled
+//! derivation, so adopting zenkey did not re-key existing fleets.
 //!
 //! The `Local`/`Remote` split makes the write-safety rule a *type* (RFC 08 §1.1,
 //! hardened to a MUST for writers by amendment G5): a backend mints exactly one
@@ -21,11 +22,12 @@
 //! them — you cannot format a write key from a name you typed or a wildcard.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use zenkey::{AppProfile, HostId};
 
-/// Domain-separation tag mixed into the host-id hash so the value is unique to
-/// tcgui and cannot be correlated with another consumer of the same machine id.
-const HOST_ID_DOMAIN: &str = "tcgui-host-id-v1";
+/// tcgui's application profile (RFC 06 §1): the app name and the origin salt.
+/// The salt is the same domain-separation tag the pre-zenkey derivation used,
+/// so origins are stable across the migration. Changing it re-keys every fleet.
+pub static PROFILE: AppProfile = AppProfile::new("tcgui", "tcgui-host-id-v1");
 
 /// Stable per-host machine-id sources, in priority order.
 const MACHINE_ID_PATHS: [&str; 2] = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
@@ -44,27 +46,19 @@ impl Origin {
         &self.0
     }
 
-    /// Derive a host origin from a raw machine-id string.
+    /// Derive a host origin from a raw machine-id string — zenkey's reference
+    /// derivation (RFC 06 §1) with tcgui's salt.
     fn from_machine_id(machine_id: &str) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(machine_id.trim().as_bytes());
-        hasher.update(HOST_ID_DOMAIN.as_bytes());
-        let digest = hasher.finalize();
-        let hex: String = digest.iter().take(6).fold(String::new(), |mut s, b| {
-            use std::fmt::Write;
-            let _ = write!(s, "{b:02x}");
-            s
-        });
-        Origin(format!("h-{hex}"))
+        Origin(
+            HostId::from_machine_id(machine_id, PROFILE.salt())
+                .as_str()
+                .to_string(),
+        )
     }
 
-    /// Validate that `s` is a well-formed concrete host origin (`h-<12 hex>`).
+    /// Whether `s` is a well-formed concrete host origin (`h-<12 hex>`).
     fn is_valid_host(s: &str) -> bool {
-        s.len() == 14
-            && s.starts_with("h-")
-            && s[2..]
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        zenkey::grammar::is_valid_host_origin(s)
     }
 }
 
@@ -82,6 +76,13 @@ impl std::fmt::Display for Origin {
 pub trait ConcreteOrigin {
     /// The origin chunk to place in the key.
     fn as_key_chunk(&self) -> &str;
+
+    /// The zenkey grammar origin for typed key building.
+    fn zk_origin(&self) -> zenkey::Origin {
+        zenkey::Origin::Host(
+            HostId::parse(self.as_key_chunk()).expect("origin validated at construction"),
+        )
+    }
 }
 
 /// This host's own origin. A backend mints exactly one and publishes every
@@ -148,6 +149,10 @@ impl ConcreteOrigin for RemoteOrigin {
 
 /// Read a stable per-host seed for the origin hash: the machine id if available,
 /// otherwise a persisted random id, otherwise the hostname (last resort).
+///
+/// This ladder predates zenkey's `AppProfile::host_id()` and additionally
+/// checks `/var/lib/dbus/machine-id` — kept so existing fallback hosts do not
+/// re-key.
 fn read_stable_host_seed() -> String {
     for path in MACHINE_ID_PATHS {
         if let Ok(contents) = std::fs::read_to_string(path) {
@@ -173,7 +178,7 @@ fn read_or_create_fallback_id() -> Option<String> {
         .or_else(|| {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
         })?
-        .join("tcgui");
+        .join(PROFILE.app());
     let path = dir.join("host-id");
 
     if let Ok(existing) = std::fs::read_to_string(&path) {
@@ -226,6 +231,28 @@ mod tests {
             LocalOrigin::from_seed("machine-a").as_str(),
             LocalOrigin::from_seed("machine-a\n").as_str()
         );
+    }
+
+    /// The zenkey adoption must not re-key fleets: zenkey's reference
+    /// derivation with tcgui's salt reproduces the pre-zenkey hand-rolled
+    /// value (sha256(machine_id ++ "tcgui-host-id-v1"), first 6 bytes).
+    #[test]
+    fn derivation_matches_pre_zenkey_values() {
+        use sha2::{Digest, Sha256};
+        let machine_id = "b642b4217b34b1e8d3bd915fc65c4452";
+        let mut hasher = Sha256::new();
+        hasher.update(machine_id.as_bytes());
+        hasher.update("tcgui-host-id-v1".as_bytes());
+        let digest = hasher.finalize();
+        let legacy = format!(
+            "h-{}",
+            digest.iter().take(6).fold(String::new(), |mut s, b| {
+                use std::fmt::Write;
+                let _ = write!(s, "{b:02x}");
+                s
+            })
+        );
+        assert_eq!(LocalOrigin::from_seed(machine_id).as_str(), legacy);
     }
 
     #[test]

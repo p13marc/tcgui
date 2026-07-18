@@ -1,0 +1,166 @@
+# tcgui producer registry (keyspace-v2, RFC 08). Compiled by zenkey-build into
+# typed builders/parsers (tcgui-shared/src/registry.rs) and served verbatim on
+# @rpc/tc/introspect (RFC 08 §6) for generic bus tooling (zenctl).
+#
+# The telemetry surface is enumerated explicitly (two families), never a
+# rest-var catch-all: a catch-all makes the lint vacuous and tells a consumer
+# nothing about what a producer emits. `alive` is intentionally absent — it is
+# a liveliness token leaf, not a data subject (08 §2 reserves it).
+#
+# Procedures carry the `fanout` field (amendment G2): every `write` is
+# `forbidden`, so a `*`-origin call is refused; the read procedures are
+# `allowed`. Write procedures put the actuated resource in the PATH (amendment
+# G6): ACL rules discriminate on path chunks, never selector parameters.
+
+[registry]
+version = "1.0"
+app = "tcgui"
+convention = 1
+
+[producer]
+name = "tc"
+description = "Linux tc/netem traffic-control actuator (one per host)"
+
+[[subject]]
+path = "health"
+class = "state"
+type = "BackendHealthStatus"
+common = "health"
+cardinality = 1
+ttl_s = 15
+since = "1.0"
+description = "backend health document { host_id, name, status, ... }"
+
+[[subject]]
+path = "sensor"
+class = "state"
+type = "SensorDoc"
+common = "sensor"
+cardinality = 1
+ttl_s = 3600
+since = "1.0"
+description = "producer registration: version + instance -> netns binding"
+
+[[subject]]
+path = "interface/{ns}/{iface}"
+class = "state"
+type = "NetworkInterface"
+cardinality = 1024
+ttl_s = 60
+since = "1.0"
+description = "per-interface record; delete = NIC gone, up:false = disabled"
+
+[[subject]]
+path = "config/{ns}/{iface}"
+class = "state"
+type = "TcConfigUpdate"
+cardinality = 1024
+ttl_s = 60
+since = "1.0"
+description = "applied TC/netem config echo; delete = cleared"
+
+[[subject]]
+path = "execution/{ns}/{iface}"
+class = "state"
+type = "ScenarioExecutionUpdate"
+cardinality = 1024
+ttl_s = 60
+since = "1.0"
+description = "scenario execution status, keyed by interface (never a run-id)"
+
+[[subject]]
+path = "scenario/{id}"
+class = "state"
+type = "NetworkScenario"
+cardinality = 1000
+ttl_s = 3600
+since = "1.0"
+description = "scenario library entry; delete = removed"
+
+[[subject]]
+path = "preset/{id}"
+class = "state"
+type = "CustomPreset"
+cardinality = 1000
+ttl_s = 3600
+since = "1.0"
+description = "preset library entry; delete = removed"
+
+[[subject]]
+path = "bandwidth/{ns}/{iface}"
+class = "telemetry"
+type = "BandwidthUpdate"
+cardinality = 1024
+since = "1.0"
+description = "per-interface bandwidth samples"
+
+[[subject]]
+path = "qdisc/{ns}/{iface}"
+class = "telemetry"
+type = "TcStatisticsUpdate"
+cardinality = 1024
+since = "1.0"
+description = "per-interface qdisc/netem statistics"
+
+[[subject]]
+path = "applied/{ulid}"
+class = "events"
+type = "TcAppliedEvent"
+cardinality = 0
+rate = "low"
+since = "1.0"
+description = "immutable audit record of a TC apply"
+
+[[procedure]]
+path = "config/{ns}/{iface}/set"
+kind = "write"
+fanout = "forbidden"
+reply = "TcResponse"
+idempotent = false
+since = "1.0"
+description = "apply or clear TC/netem on one interface"
+
+[[procedure]]
+path = "interface/{ns}/{iface}/set"
+kind = "write"
+fanout = "forbidden"
+reply = "InterfaceControlResponse"
+idempotent = false
+since = "1.0"
+description = "enable or disable one interface"
+
+[[procedure]]
+path = "scenario/set"
+kind = "write"
+fanout = "forbidden"
+reply = "ScenarioResponse"
+idempotent = false
+since = "1.0"
+description = "scenario CRUD (add/remove/update/get/list)"
+
+[[procedure]]
+path = "execution/{ns}/{iface}/set"
+kind = "write"
+fanout = "forbidden"
+reply = "ScenarioExecutionResponse"
+idempotent = false
+since = "1.0"
+description = "start/stop/pause/resume a scenario on one interface"
+
+[[procedure]]
+path = "diagnostics"
+kind = "read"
+fanout = "allowed"
+reply = "DiagnosticsResponse"
+idempotent = true
+since = "1.0"
+description = "run interface/TC diagnostics"
+
+[[procedure]]
+path = "introspect"
+kind = "read"
+fanout = "allowed"
+reply = "toml"
+idempotent = true
+since = "1.0"
+description = "return this registry slice as TOML (RFC 08 §6)"

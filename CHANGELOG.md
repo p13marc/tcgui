@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **Adopted the `zenkey` convention crates (crates.io)**: the hand-rolled
+  keyspace-v2 layer is now built on `zenkey` 0.2 + `zenkey-build`. The
+  subject/procedure vocabulary lives in `tcgui-shared/registry/tc.toml`
+  (linted per RFC 08 §5 at build time); `tcgui_shared::topics` keeps its
+  public API but builds and parses every key through the generated typed
+  registry, and the backend serves the same file on `@rpc/tc/introspect` —
+  one source of truth for keys and slice. Origin minting now uses zenkey's
+  reference derivation with the existing `tcgui-host-id-v1` salt, so
+  machine-id-derived host origins are unchanged; hosts on the persisted
+  random fallback re-key once.
+- Added `zblob` (crates.io): the backend serves the `@blob/artifact` plane
+  (empty for now — the diagnostics/support-bundle download will publish
+  through it).
+
 ## [0.8.0] - 2026-05-05
 
 ### Changed

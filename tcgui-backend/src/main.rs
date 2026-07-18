@@ -27,7 +27,10 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 
 use tcgui_shared::{
     NetworkInterface, TcConfigUpdate, TcConfiguration, TcStatisticsUpdate, ZenohConfig,
-    errors::TcguiError, identity::LocalOrigin, presets::PresetList, topics,
+    errors::TcguiError,
+    identity::{ConcreteOrigin, LocalOrigin},
+    presets::PresetList,
+    topics,
 };
 
 use bandwidth::BandwidthMonitor;
@@ -302,6 +305,24 @@ impl TcBackend {
             "[BACKEND] Backend '{}' introspect handler declared on: {}",
             self.backend_name,
             introspect_topic.as_str()
+        );
+
+        // Large-payload plane (RFC keyspace-v2 07 §2): a zblob Tier-1 server on
+        // this host's `@blob/artifact` prefix. No blobs are registered yet —
+        // the planned diagnostics/support-bundle download will publish through
+        // it; serving the (empty) plane from day one keeps the wire contract
+        // and the dependency honest.
+        let blob_prefix = zenkey::V1Context::with_origin(self.local_origin.zk_origin(), "tc")
+            .blob_prefix(zenkey::grammar::BlobTier::Artifact);
+        let blob_server = zblob::BlobServer::new(
+            std::sync::Arc::new(self.session.clone()),
+            blob_prefix.clone(),
+            zblob::Format::Json,
+        );
+        tokio::spawn(blob_server.run());
+        info!(
+            "[BACKEND] Backend '{}' blob plane served on: {}/**",
+            self.backend_name, blob_prefix
         );
 
         // Initialize scenario management services

@@ -40,15 +40,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zenoh::config::WhatAmI;
-use zenoh::key_expr::{
-    OwnedKeyExpr,
-    format::{kedefine, keformat},
-};
+use zenoh::key_expr::OwnedKeyExpr;
 
 pub mod errors;
 pub mod identity;
 pub mod preset_json;
 pub mod presets;
+pub mod registry;
 pub mod scenario;
 pub mod scenario_json;
 pub mod validation;
@@ -66,27 +64,14 @@ pub mod validation;
 pub mod topics {
     use super::*;
     use crate::identity::{ConcreteOrigin, LocalOrigin};
+    use crate::registry::tc;
     use crate::validation::slug_key_chunk;
+    use zenkey::grammar;
 
-    kedefine!(
-        pub k_state_health: "v1/${origin:*}/state/tc/health",
-        pub k_state_alive: "v1/${origin:*}/state/tc/alive",
-        pub k_state_sensor: "v1/${origin:*}/state/tc/sensor",
-        pub k_state_interface: "v1/${origin:*}/state/tc/interface/${ns:*}/${iface:*}",
-        pub k_state_config: "v1/${origin:*}/state/tc/config/${ns:*}/${iface:*}",
-        pub k_state_execution: "v1/${origin:*}/state/tc/execution/${ns:*}/${iface:*}",
-        pub k_state_scenario: "v1/${origin:*}/state/tc/scenario/${id:*}",
-        pub k_state_preset: "v1/${origin:*}/state/tc/preset/${id:*}",
-        pub k_tel_bandwidth: "v1/${origin:*}/telemetry/tc/bandwidth/${ns:*}/${iface:*}",
-        pub k_tel_qdisc: "v1/${origin:*}/telemetry/tc/qdisc/${ns:*}/${iface:*}",
-        pub k_evt_applied: "v1/${origin:*}/events/tc/applied/${ulid:*}",
-        pub k_rpc_config: "v1/${origin:*}/@rpc/tc/config/${ns:*}/${iface:*}/set",
-        pub k_rpc_interface: "v1/${origin:*}/@rpc/tc/interface/${ns:*}/${iface:*}/set",
-        pub k_rpc_scenario: "v1/${origin:*}/@rpc/tc/scenario/set",
-        pub k_rpc_execution: "v1/${origin:*}/@rpc/tc/execution/${ns:*}/${iface:*}/set",
-        pub k_rpc_diagnostics: "v1/${origin:*}/@rpc/tc/diagnostics",
-        pub k_rpc_introspect: "v1/${origin:*}/@rpc/tc/introspect"
-    );
+    /// A generated typed key (always valid by construction) as a Zenoh keyexpr.
+    fn ke(key: String) -> OwnedKeyExpr {
+        OwnedKeyExpr::try_from(key).expect("registry-built keys are valid keyexprs")
+    }
 
     // ----- fleet selectors (frontend subscriptions; wildcards allowed) --------
 
@@ -102,102 +87,88 @@ pub mod topics {
 
     /// Health document key (`{ host_id, name, … }`).
     pub fn state_health(o: &LocalOrigin) -> OwnedKeyExpr {
-        keformat!(k_state_health::formatter(), origin = o.as_str()).expect("state/health key")
+        ke(tc::key(&o.zk_origin(), &tc::Subject::Health).expect("state/health key"))
     }
     /// Reserved liveliness-token leaf — distinct from the health document so
-    /// presence and data selectors never collide (04 §5).
+    /// presence and data selectors never collide (04 §5). Deliberately not a
+    /// registry subject: `alive` is machinery, and the registry lint reserves
+    /// it (08 §2).
     pub fn state_alive(o: &LocalOrigin) -> OwnedKeyExpr {
-        keformat!(k_state_alive::formatter(), origin = o.as_str()).expect("state/alive key")
+        ke(grammar::alive_key(&o.zk_origin(), Some(&tc::producer())).expect("state/alive key"))
     }
     /// Producer registration document (version, netns binding).
     pub fn state_sensor(o: &LocalOrigin) -> OwnedKeyExpr {
-        keformat!(k_state_sensor::formatter(), origin = o.as_str()).expect("state/sensor key")
+        ke(tc::key(&o.zk_origin(), &tc::Subject::Sensor).expect("state/sensor key"))
     }
     /// Per-interface record — replaces the old list + events split. Removal of
     /// a NIC is a `SampleKind::Delete` on this key.
     pub fn state_interface(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_state_interface::formatter(),
-            origin = o.as_str(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
-        )
-        .expect("state/interface key")
+        let subject = tc::Subject::Interface {
+            ns: slug_key_chunk(ns),
+            iface: slug_key_chunk(iface),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("state/interface key"))
     }
     /// Applied-TC-config echo. Clearing config is a `Delete`, never a `None`
     /// payload (04 §1.2).
     pub fn state_config(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_state_config::formatter(),
-            origin = o.as_str(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
-        )
-        .expect("state/config key")
+        let subject = tc::Subject::Config {
+            ns: slug_key_chunk(ns),
+            iface: slug_key_chunk(iface),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("state/config key"))
     }
     /// Scenario execution status, keyed by the interface (never a run-id — 03
     /// §2 forbids per-message data in a key).
     pub fn state_execution(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_state_execution::formatter(),
-            origin = o.as_str(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
-        )
-        .expect("state/execution key")
+        let subject = tc::Subject::Execution {
+            ns: slug_key_chunk(ns),
+            iface: slug_key_chunk(iface),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("state/execution key"))
     }
     /// Scenario library entry; delete-on-removal tombstone.
     pub fn state_scenario(o: &LocalOrigin, id: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_state_scenario::formatter(),
-            origin = o.as_str(),
-            id = slug_key_chunk(id)
-        )
-        .expect("state/scenario key")
+        let subject = tc::Subject::Scenario {
+            id: slug_key_chunk(id),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("state/scenario key"))
     }
     /// Preset library entry; delete-on-removal tombstone.
     pub fn state_preset(o: &LocalOrigin, id: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_state_preset::formatter(),
-            origin = o.as_str(),
-            id = slug_key_chunk(id)
-        )
-        .expect("state/preset key")
+        let subject = tc::Subject::Preset {
+            id: slug_key_chunk(id),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("state/preset key"))
     }
 
     // ----- telemetry plane ----------------------------------------------------
 
     /// Real-time bandwidth samples (superseded; best-effort).
     pub fn telemetry_bandwidth(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_tel_bandwidth::formatter(),
-            origin = o.as_str(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
-        )
-        .expect("telemetry/bandwidth key")
+        let subject = tc::Subject::Bandwidth {
+            ns: slug_key_chunk(ns),
+            iface: slug_key_chunk(iface),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("telemetry/bandwidth key"))
     }
     /// Real-time qdisc statistics (superseded; best-effort).
     pub fn telemetry_qdisc(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_tel_qdisc::formatter(),
-            origin = o.as_str(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
-        )
-        .expect("telemetry/qdisc key")
+        let subject = tc::Subject::Qdisc {
+            ns: slug_key_chunk(ns),
+            iface: slug_key_chunk(iface),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("telemetry/qdisc key"))
     }
 
     // ----- events plane -------------------------------------------------------
 
     /// Immutable audit record of a TC apply. `ulid` is lowercased already.
     pub fn events_applied(o: &LocalOrigin, ulid: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_evt_applied::formatter(),
-            origin = o.as_str(),
-            ulid = slug_key_chunk(ulid)
-        )
-        .expect("events/applied key")
+        let subject = tc::Subject::Applied {
+            ulid: slug_key_chunk(ulid),
+        };
+        ke(tc::key(&o.zk_origin(), &subject).expect("events/applied key"))
     }
 
     // ----- @rpc plane ---------------------------------------------------------
@@ -205,81 +176,77 @@ pub mod topics {
     // Call keys are concrete (built from a ConcreteOrigin — Local when a backend
     // reply-keys, Remote when the frontend calls). Serve keys wildcard the
     // per-interface subject so one queryable per service covers every interface.
+    // Both come from the registry's ProcedureId — the actuated resource is in
+    // the path (G6), typed, never a selector parameter.
 
     /// Concrete apply/clear-TC call key (write). Resource is in the path (G6).
     pub fn rpc_config(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_rpc_config::formatter(),
-            origin = o.as_key_chunk(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
+        ke(tc::rpc_key_with(
+            &o.zk_origin(),
+            tc::ProcedureId::ConfigNsIfaceSet,
+            &[&slug_key_chunk(ns), &slug_key_chunk(iface)],
         )
-        .expect("@rpc/config key")
+        .expect("@rpc/config key"))
     }
     /// Backend's config queryable key (`…/config/*/*/set`).
     pub fn rpc_config_serve(o: &LocalOrigin) -> OwnedKeyExpr {
-        keformat!(
-            k_rpc_config::formatter(),
-            origin = o.as_str(),
-            ns = "*",
-            iface = "*"
-        )
-        .expect("@rpc/config serve key")
+        ke(tc::rpc_serve_key(
+            &o.zk_origin(),
+            tc::ProcedureId::ConfigNsIfaceSet,
+        ))
     }
     /// Concrete enable/disable call key (write).
     pub fn rpc_interface(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_rpc_interface::formatter(),
-            origin = o.as_key_chunk(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
+        ke(tc::rpc_key_with(
+            &o.zk_origin(),
+            tc::ProcedureId::InterfaceNsIfaceSet,
+            &[&slug_key_chunk(ns), &slug_key_chunk(iface)],
         )
-        .expect("@rpc/interface key")
+        .expect("@rpc/interface key"))
     }
     /// Backend's interface-control queryable key (`…/interface/*/*/set`).
     pub fn rpc_interface_serve(o: &LocalOrigin) -> OwnedKeyExpr {
-        keformat!(
-            k_rpc_interface::formatter(),
-            origin = o.as_str(),
-            ns = "*",
-            iface = "*"
-        )
-        .expect("@rpc/interface serve key")
+        ke(tc::rpc_serve_key(
+            &o.zk_origin(),
+            tc::ProcedureId::InterfaceNsIfaceSet,
+        ))
     }
     /// Scenario CRUD call/serve key (no per-interface subject).
     pub fn rpc_scenario(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
-        keformat!(k_rpc_scenario::formatter(), origin = o.as_key_chunk())
-            .expect("@rpc/scenario key")
+        ke(
+            tc::rpc_key_with(&o.zk_origin(), tc::ProcedureId::ScenarioSet, &[])
+                .expect("@rpc/scenario key"),
+        )
     }
     /// Concrete start/stop/pause/resume call key (write).
     pub fn rpc_execution(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        keformat!(
-            k_rpc_execution::formatter(),
-            origin = o.as_key_chunk(),
-            ns = slug_key_chunk(ns),
-            iface = slug_key_chunk(iface)
+        ke(tc::rpc_key_with(
+            &o.zk_origin(),
+            tc::ProcedureId::ExecutionNsIfaceSet,
+            &[&slug_key_chunk(ns), &slug_key_chunk(iface)],
         )
-        .expect("@rpc/execution key")
+        .expect("@rpc/execution key"))
     }
     /// Backend's execution-control queryable key (`…/execution/*/*/set`).
     pub fn rpc_execution_serve(o: &LocalOrigin) -> OwnedKeyExpr {
-        keformat!(
-            k_rpc_execution::formatter(),
-            origin = o.as_str(),
-            ns = "*",
-            iface = "*"
-        )
-        .expect("@rpc/execution serve key")
+        ke(tc::rpc_serve_key(
+            &o.zk_origin(),
+            tc::ProcedureId::ExecutionNsIfaceSet,
+        ))
     }
     /// Diagnostics call/serve key (read).
     pub fn rpc_diagnostics(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
-        keformat!(k_rpc_diagnostics::formatter(), origin = o.as_key_chunk())
-            .expect("@rpc/diagnostics key")
+        ke(
+            tc::rpc_key_with(&o.zk_origin(), tc::ProcedureId::Diagnostics, &[])
+                .expect("@rpc/diagnostics key"),
+        )
     }
     /// Registry-slice introspect call/serve key (read) — consumed by `zenctl`.
     pub fn rpc_introspect(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
-        keformat!(k_rpc_introspect::formatter(), origin = o.as_key_chunk())
-            .expect("@rpc/introspect key")
+        ke(
+            tc::rpc_key_with(&o.zk_origin(), tc::ProcedureId::Introspect, &[])
+                .expect("@rpc/introspect key"),
+        )
     }
 
     // ----- parsing ------------------------------------------------------------
@@ -308,29 +275,31 @@ pub mod topics {
         pub id: Option<String>,
     }
 
-    /// Split a key into chunks, tolerating an optional leading `tcgui` base in
-    /// case the session namespace was not stripped (e.g. an external observer).
-    fn chunks(key: &str) -> Vec<&str> {
-        let mut parts: Vec<&str> = key.split('/').collect();
-        if parts.first() == Some(&"tcgui") {
-            parts.remove(0);
-        }
-        parts
+    /// Strip an optional leading `tcgui` base in case the session namespace was
+    /// not stripped (e.g. an external observer).
+    fn relative(key: &str) -> &str {
+        grammar::strip_base("tcgui", key).unwrap_or(key)
     }
 
     /// Extract the origin chunk from any v1 key (accepts a `KeyExpr`'s `as_str`).
     pub fn parse_origin(key: &str) -> Option<String> {
-        let p = chunks(key);
+        let p: Vec<&str> = relative(key).split('/').collect();
         (p.len() >= 2 && p[0] == "v1").then(|| p[1].to_string())
     }
 
-    /// Parse a `v1/<origin>/state/tc/<family>/…` key.
+    /// Parse a `v1/<origin>/state/tc/<family>/…` key through the grammar and
+    /// the registry's parse direction (RFC 08 §1) — variables come back named,
+    /// never `parts[i]`.
     pub fn parse_state_key(key: &str) -> Option<StateKey> {
-        let p = chunks(key);
-        if p.len() < 5 || p[0] != "v1" || p[2] != "state" || p[3] != "tc" {
+        let parsed = grammar::parse(relative(key)).ok()?;
+        let zenkey::ClassOrPlane::Class(zenkey::Class::State) = parsed.class else {
+            return None;
+        };
+        if parsed.producer.as_ref()?.name() != "tc" {
             return None;
         }
-        let origin = p[1].to_string();
+        let origin = parsed.origin.chunk().to_string();
+        let tail: Vec<&str> = parsed.subject.iter().map(String::as_str).collect();
         let mk = |family, ns, iface, id| {
             Some(StateKey {
                 origin: origin.clone(),
@@ -340,32 +309,25 @@ pub mod topics {
                 id,
             })
         };
-        match p[4] {
-            "health" => mk(StateFamily::Health, None, None, None),
-            "alive" => mk(StateFamily::Alive, None, None, None),
-            "sensor" => mk(StateFamily::Sensor, None, None, None),
-            "interface" if p.len() >= 7 => mk(
-                StateFamily::Interface,
-                Some(p[5].to_string()),
-                Some(p[6].to_string()),
-                None,
-            ),
-            "config" if p.len() >= 7 => mk(
-                StateFamily::Config,
-                Some(p[5].to_string()),
-                Some(p[6].to_string()),
-                None,
-            ),
-            "execution" if p.len() >= 7 => mk(
-                StateFamily::Execution,
-                Some(p[5].to_string()),
-                Some(p[6].to_string()),
-                None,
-            ),
-            "scenario" if p.len() >= 6 => {
-                mk(StateFamily::Scenario, None, None, Some(p[5].to_string()))
+        // `alive` is the reserved liveliness leaf, not a registry subject.
+        if tail == ["alive"] {
+            return mk(StateFamily::Alive, None, None, None);
+        }
+        match tc::Subject::parse(zenkey::Class::State, &tail)? {
+            tc::Subject::Health => mk(StateFamily::Health, None, None, None),
+            tc::Subject::Sensor => mk(StateFamily::Sensor, None, None, None),
+            tc::Subject::Interface { ns, iface } => {
+                mk(StateFamily::Interface, Some(ns), Some(iface), None)
             }
-            "preset" if p.len() >= 6 => mk(StateFamily::Preset, None, None, Some(p[5].to_string())),
+            tc::Subject::Config { ns, iface } => {
+                mk(StateFamily::Config, Some(ns), Some(iface), None)
+            }
+            tc::Subject::Execution { ns, iface } => {
+                mk(StateFamily::Execution, Some(ns), Some(iface), None)
+            }
+            tc::Subject::Scenario { id } => mk(StateFamily::Scenario, None, None, Some(id)),
+            tc::Subject::Preset { id } => mk(StateFamily::Preset, None, None, Some(id)),
+            // Telemetry/events subjects cannot appear under the state class.
             _ => None,
         }
     }

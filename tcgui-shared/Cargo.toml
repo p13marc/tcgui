@@ -9,6 +9,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+zenkey = { workspace = true }
 zenoh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,3 +19,6 @@ anyhow = { workspace = true }
 nlink = { workspace = true }
 duration-string = "0.4"
 sha2 = "0.10"
+
+[build-dependencies]
+zenkey-build = { workspace = true }
