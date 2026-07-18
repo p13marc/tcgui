@@ -73,16 +73,6 @@ pub mod topics {
         pub diagnostics_query_keys: "tcgui/${backend:*}/query/diagnostics"
     );
 
-    kedefine!(
-        pub all_interface_lists: "tcgui/${backend:*}/interfaces/list",
-        pub all_interface_events: "tcgui/${backend:*}/interfaces/events",
-        pub all_bandwidth: "tcgui/${backend:*}/bandwidth/${namespace:*}/${interface:*}",
-        pub all_health: "tcgui/${backend:*}/health",
-        pub backend_bandwidth_keys: "tcgui/${backend:*}/bandwidth/${ns:*}/${iface:*}",
-        pub all_tc_configs: "tcgui/${backend:*}/tc/${namespace:*}/${interface:*}",
-        pub all_tc_stats: "tcgui/${backend:*}/tc/stats/${namespace:*}/${interface:*}"
-    );
-
     /// Get interface list topic key expression for a specific backend
     pub fn interface_list(backend_name: &str) -> OwnedKeyExpr {
         keformat!(interface_list_keys::formatter(), backend = backend_name)
@@ -95,26 +85,21 @@ pub mod topics {
             .expect("Failed to format interface events topic - this should never happen with valid backend name")
     }
 
-    /// Get bandwidth updates topic key expression for a specific interface
+    /// Get bandwidth updates topic key expression for a specific interface.
+    ///
+    /// `namespace`/`interface` may be netlink-discovered names containing bytes
+    /// that are illegal in a key expression (`*`, `?`, `#`, `$`, `/`), so they
+    /// are slugged into safe chunks first — see [`crate::validation::slug_key_chunk`].
     pub fn bandwidth_updates(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
         keformat!(
             bandwidth_keys::formatter(),
             backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            namespace = crate::validation::slug_key_chunk(namespace),
+            interface = crate::validation::slug_key_chunk(interface)
         )
-        .expect("Failed to format bandwidth topic - this should never happen with valid parameters")
-    }
-
-    /// Get bandwidth updates wildcard pattern for a specific backend
-    pub fn backend_bandwidth_pattern(backend_name: &str) -> OwnedKeyExpr {
-        keformat!(
-            backend_bandwidth_keys::formatter(),
-            backend = backend_name,
-            ns = "*",
-            iface = "*"
+        .expect(
+            "Failed to format bandwidth topic - this should never happen with slugged parameters",
         )
-        .expect("Failed to format backend bandwidth pattern - this should never happen")
     }
 
     /// Get backend health status topic key expression
@@ -137,26 +122,32 @@ pub mod topics {
             .expect("Failed to format interface query topic - this should never happen with valid backend name")
     }
 
-    /// Get TC configuration topic key expression for a specific interface
+    /// Get TC configuration topic key expression for a specific interface.
+    /// `namespace`/`interface` are slugged (see [`bandwidth_updates`]).
     pub fn tc_config(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
         keformat!(
             tc_config_keys::formatter(),
             backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            namespace = crate::validation::slug_key_chunk(namespace),
+            interface = crate::validation::slug_key_chunk(interface)
         )
-        .expect("Failed to format TC config topic - this should never happen with valid parameters")
+        .expect(
+            "Failed to format TC config topic - this should never happen with slugged parameters",
+        )
     }
 
-    /// Get TC statistics topic key expression for a specific interface
+    /// Get TC statistics topic key expression for a specific interface.
+    /// `namespace`/`interface` are slugged (see [`bandwidth_updates`]).
     pub fn tc_statistics(backend_name: &str, namespace: &str, interface: &str) -> OwnedKeyExpr {
         keformat!(
             tc_stats_keys::formatter(),
             backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            namespace = crate::validation::slug_key_chunk(namespace),
+            interface = crate::validation::slug_key_chunk(interface)
         )
-        .expect("Failed to format TC stats topic - this should never happen with valid parameters")
+        .expect(
+            "Failed to format TC stats topic - this should never happen with slugged parameters",
+        )
     }
 
     /// Get scenario management query service key expression
@@ -180,10 +171,10 @@ pub mod topics {
         keformat!(
             scenario_execution_updates_keys::formatter(),
             backend = backend_name,
-            namespace = namespace,
-            interface = interface
+            namespace = crate::validation::slug_key_chunk(namespace),
+            interface = crate::validation::slug_key_chunk(interface)
         )
-        .expect("Failed to format scenario execution updates topic - this should never happen with valid parameters")
+        .expect("Failed to format scenario execution updates topic - this should never happen with slugged parameters")
     }
 
     /// Get preset list topic key expression for a specific backend
@@ -1784,6 +1775,38 @@ pub enum InterfaceEventType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostile_netlink_names_produce_safe_keys() {
+        // Names that Linux `dev_valid_name()` permits but that used to either
+        // panic the daemon (`?`/`#`/`$`/`**` -> keformat error -> .expect) or
+        // make it publish on a wildcard key (`*`). Every builder must now return
+        // a concrete, wildcard-free single-target key without panicking.
+        for name in ["*", "**", "?", "#", "$x"] {
+            for key in [
+                topics::bandwidth_updates("default", "myns", name),
+                topics::tc_config("default", "myns", name),
+                topics::tc_statistics("default", "myns", name),
+                topics::scenario_execution_updates("default", "myns", name),
+            ] {
+                let s = key.as_str();
+                assert!(
+                    !s.contains('*'),
+                    "wildcard leaked into key {s:?} for {name:?}"
+                );
+                assert!(!s.contains(['?', '#', '$']), "reserved char in key {s:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn clean_names_keep_their_wire_key() {
+        // Regression guard for the "no wire change" property of the slugging fix.
+        assert_eq!(
+            topics::tc_config("default", "myns", "eth0.100").as_str(),
+            "tcgui/default/tc/myns/eth0.100"
+        );
+    }
 
     #[test]
     fn test_tc_loss_config_validation() {
