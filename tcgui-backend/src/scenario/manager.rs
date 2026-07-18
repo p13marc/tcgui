@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tracing::{info, instrument};
 use zenoh::Session;
 
+use tcgui_shared::identity::LocalOrigin;
 use tcgui_shared::scenario::{NetworkScenario, ScenarioLoadError};
 
 use super::{ScenarioExecutionEngine, ScenarioLoader, ScenarioStore};
@@ -33,19 +34,39 @@ pub struct ScenarioManager {
 impl ScenarioManager {
     /// Create a new scenario manager with default scenario directories
     #[instrument(skip(session, tc_manager))]
-    pub fn new(session: Arc<Session>, backend_name: String, tc_manager: TcCommandManager) -> Self {
-        Self::with_options(session, backend_name, tc_manager, vec![], false)
+    pub fn new(
+        session: Arc<Session>,
+        local_origin: LocalOrigin,
+        backend_name: String,
+        tc_manager: TcCommandManager,
+    ) -> Self {
+        Self::with_options(
+            session,
+            local_origin,
+            backend_name,
+            tc_manager,
+            vec![],
+            false,
+        )
     }
 
     /// Create a new scenario manager with additional scenario directories
     #[instrument(skip(session, tc_manager, extra_dirs))]
     pub fn with_scenario_dirs(
         session: Arc<Session>,
+        local_origin: LocalOrigin,
         backend_name: String,
         tc_manager: TcCommandManager,
         extra_dirs: Vec<PathBuf>,
     ) -> Self {
-        Self::with_options(session, backend_name, tc_manager, extra_dirs, false)
+        Self::with_options(
+            session,
+            local_origin,
+            backend_name,
+            tc_manager,
+            extra_dirs,
+            false,
+        )
     }
 
     /// Create a new scenario manager with full configuration options
@@ -59,6 +80,7 @@ impl ScenarioManager {
     #[instrument(skip(session, tc_manager, extra_dirs))]
     pub fn with_options(
         session: Arc<Session>,
+        local_origin: LocalOrigin,
         backend_name: String,
         tc_manager: TcCommandManager,
         extra_dirs: Vec<PathBuf>,
@@ -68,8 +90,12 @@ impl ScenarioManager {
 
         let storage = ScenarioStore::new();
 
-        let execution_engine =
-            ScenarioExecutionEngine::new(session.clone(), backend_name.clone(), tc_manager);
+        let execution_engine = ScenarioExecutionEngine::new(
+            session.clone(),
+            local_origin,
+            backend_name.clone(),
+            tc_manager,
+        );
 
         // Create loader, optionally skipping default directories
         let mut loader = ScenarioLoader::with_defaults(!no_default_scenarios);

@@ -1,13 +1,18 @@
 use iced::Subscription;
 use iced::task::{Never, Sipper, sipper};
+use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use tcgui_shared::{
-    BackendHealthStatus, BandwidthUpdate, InterfaceControlResponse, InterfaceListUpdate,
-    InterfaceStateEvent, TcConfigUpdate, TcResponse, TcStatisticsUpdate, ZenohConfig,
-    presets::PresetList, scenario::ScenarioExecutionUpdate, topics,
+    BackendHealthStatus, BandwidthUpdate, InterfaceControlResponse, NetworkInterface,
+    TcConfigUpdate, TcResponse, TcStatisticsUpdate, ZenohConfig,
+    identity::RemoteOrigin,
+    presets::CustomPreset,
+    scenario::{NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionUpdate},
+    topics::{self, StateFamily},
 };
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
+use zenoh::sample::{Sample, SampleKind};
 use zenoh_ext::{AdvancedSubscriberBuilderExt, HistoryConfig, RecoveryConfig};
 
 use crate::messages::{
@@ -28,275 +33,257 @@ fn reply_error_message(err: &zenoh::query::ReplyError) -> String {
     }
 }
 
-/// Common zenoh sample processing logic extracted to reduce code duplication
-///
-/// This macro eliminates repetitive error handling patterns by:
-/// 1. Extracting backend name from topic
-/// 2. Converting payload bytes to UTF-8 string
-/// 3. Deserializing JSON to the target type
-/// 4. Logging success/failure with contextual information
-macro_rules! process_zenoh_sample {
-    ($sample:expr, $message_type:ty, $type_name:expr, $log_block:expr, $event_constructor:expr) => {{
-        let topic = $sample.key_expr().as_str();
-
-        // Extract backend name from topic
-        if let Some(backend_name) = topics::extract_backend_name(&$sample.key_expr()) {
-            // Convert payload to bytes
-            let payload_bytes = $sample.payload().to_bytes();
-
-            // Convert bytes to UTF-8 string
-            match std::str::from_utf8(&payload_bytes) {
-                Ok(payload_str) => {
-                    // Deserialize JSON to target type
-                    match serde_json::from_str::<$message_type>(payload_str) {
-                        Ok(message) => {
-                            // Log successful processing
-                            $log_block(&backend_name, &message);
-                            // Create and send the event
-                            Some($event_constructor(message))
-                        }
-                        Err(e) => {
-                            error!("Failed to deserialize {}: {}", $type_name, e);
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to extract {} payload: {}", $type_name, e);
-                    None
-                }
+/// Deserialize a sample's JSON payload into `T`, logging (and swallowing) any
+/// UTF-8 or JSON error. Only called on `Put` samples — a `Delete` tombstone
+/// carries no payload, so its routing is derived from the key instead.
+fn deser_payload<T: DeserializeOwned>(sample: &Sample, ctx: &str) -> Option<T> {
+    let bytes = sample.payload().to_bytes();
+    match std::str::from_utf8(&bytes) {
+        Ok(s) => match serde_json::from_str::<T>(s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                error!("Failed to deserialize {}: {}", ctx, e);
+                None
             }
-        } else {
-            error!(
-                "Could not extract backend name from {} topic: {}",
-                $type_name, topic
-            );
+        },
+        Err(e) => {
+            error!("Failed to read {} payload as UTF-8: {}", ctx, e);
             None
         }
-    }};
+    }
 }
 
-/// Handles zenoh sample processing for interface list updates
-fn handle_interface_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    process_zenoh_sample!(
-        sample,
-        InterfaceListUpdate,
-        "interface update",
-        |backend_name: &str, update: &InterfaceListUpdate| {
+/// The telemetry-plane kind chunk (`bandwidth` / `qdisc`) of a
+/// `v1/<origin>/telemetry/tc/<kind>/…` key, tolerating an optional `tcgui` base.
+fn telemetry_kind(key: &str) -> Option<&str> {
+    let mut parts = key.split('/');
+    let mut first = parts.next();
+    if first == Some("tcgui") {
+        first = parts.next();
+    }
+    // first is now the "v1" chunk; advance past origin, "telemetry", "tc".
+    let _v1 = first?;
+    let _origin = parts.next()?;
+    let _telemetry = parts.next()?;
+    let _tc = parts.next()?;
+    parts.next()
+}
+
+/// Route a `state`-plane sample (Put upsert or Delete tombstone).
+///
+/// Every family must inspect [`Sample::kind`] now that removal is a Delete
+/// tombstone rather than a snapshot diff (RFC keyspace-v2 04 §1.2): a Put
+/// deserializes the payload; a Delete carries none and its `ns`/`iface`/`id`
+/// come from the key.
+fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
+    let key = sample.key_expr().as_str();
+    let sk = match topics::parse_state_key(key) {
+        Some(sk) => sk,
+        None => {
+            error!("Could not parse state key: {}", key);
+            return None;
+        }
+    };
+    let is_delete = sample.kind() == SampleKind::Delete;
+
+    match sk.family {
+        // Presence is handled by the liveliness subscriber; the sensor document
+        // is not consumed by the GUI. Ignore both here.
+        StateFamily::Alive | StateFamily::Sensor => None,
+
+        StateFamily::Health => {
+            if is_delete {
+                return None;
+            }
+            let mut health: BackendHealthStatus = deser_payload(&sample, "health status")?;
+            // The key origin is authoritative; backfill it if the payload omitted it.
+            if health.host_id.is_empty() {
+                health.host_id = sk.origin.clone();
+            }
             info!(
-                "Frontend received interface update from '{}': {} namespaces",
-                backend_name,
-                update.namespaces.len()
+                "Frontend received health status from '{}': {}",
+                sk.origin, health.status
             );
-        },
-        ZenohEvent::InterfaceListUpdate
-    )
+            Some(ZenohEvent::BackendHealthUpdate(health))
+        }
+
+        StateFamily::Interface => {
+            let namespace = sk.ns?;
+            let interface = sk.iface?;
+            if is_delete {
+                info!(
+                    "Interface removed (tombstone) on '{}': {}/{}",
+                    sk.origin, namespace, interface
+                );
+                Some(ZenohEvent::InterfaceRemoved {
+                    backend_name: sk.origin,
+                    namespace,
+                    interface,
+                })
+            } else {
+                let record: NetworkInterface = deser_payload(&sample, "interface record")?;
+                Some(ZenohEvent::InterfaceUpsert {
+                    backend_name: sk.origin,
+                    interface: record,
+                })
+            }
+        }
+
+        StateFamily::Config => {
+            let namespace = sk.ns?;
+            let interface = sk.iface?;
+            if is_delete {
+                // Clearing config is a Delete, never a `None` payload (04 §1.2).
+                // Synthesize a "no TC" update so the interface UI resets.
+                Some(ZenohEvent::TcConfigUpdate(TcConfigUpdate {
+                    namespace,
+                    interface,
+                    backend_name: sk.origin,
+                    timestamp: 0,
+                    configuration: None,
+                    has_tc: false,
+                }))
+            } else {
+                let mut update: TcConfigUpdate = deser_payload(&sample, "TC config update")?;
+                update.backend_name = sk.origin;
+                Some(ZenohEvent::TcConfigUpdate(update))
+            }
+        }
+
+        StateFamily::Execution => {
+            let namespace = sk.ns?;
+            let interface = sk.iface?;
+            if is_delete {
+                Some(ZenohEvent::ScenarioExecutionRemoved {
+                    backend_name: sk.origin,
+                    namespace,
+                    interface,
+                })
+            } else {
+                let mut update: ScenarioExecutionUpdate =
+                    deser_payload(&sample, "scenario execution update")?;
+                update.backend_name = sk.origin;
+                Some(ZenohEvent::ScenarioExecutionUpdate(Box::new(update)))
+            }
+        }
+
+        StateFamily::Scenario => {
+            let id = sk.id?;
+            if is_delete {
+                Some(ZenohEvent::ScenarioRemoved {
+                    backend_name: sk.origin,
+                    id,
+                })
+            } else {
+                let scenario: NetworkScenario = deser_payload(&sample, "scenario entry")?;
+                Some(ZenohEvent::ScenarioUpsert {
+                    backend_name: sk.origin,
+                    scenario: Box::new(scenario),
+                })
+            }
+        }
+
+        StateFamily::Preset => {
+            let id = sk.id?;
+            if is_delete {
+                Some(ZenohEvent::PresetRemoved {
+                    backend_name: sk.origin,
+                    id,
+                })
+            } else {
+                let preset: CustomPreset = deser_payload(&sample, "preset entry")?;
+                Some(ZenohEvent::PresetUpsert {
+                    backend_name: sk.origin,
+                    preset,
+                })
+            }
+        }
+    }
 }
 
-/// Handles zenoh sample processing for bandwidth updates
-fn handle_bandwidth_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    process_zenoh_sample!(
-        sample,
-        BandwidthUpdate,
-        "bandwidth update",
-        |backend_name: &str, update: &BandwidthUpdate| {
+/// Route a `telemetry`-plane sample. Payloads are self-describing (carry
+/// ns/iface); the key's kind chunk selects the target type and its origin
+/// becomes the routing backend id.
+fn handle_telemetry_sample(sample: Sample) -> Option<ZenohEvent> {
+    let key = sample.key_expr().as_str();
+    let origin = topics::parse_origin(key)?;
+    match telemetry_kind(key)? {
+        "bandwidth" => {
+            let mut update: BandwidthUpdate = deser_payload(&sample, "bandwidth update")?;
+            update.backend_name = origin;
             trace!(
-                "Frontend received bandwidth update from '{}' for {}/{}: RX {:.2} B/s, TX {:.2} B/s",
-                backend_name,
+                "Frontend received bandwidth update for {}/{}: RX {:.2} B/s, TX {:.2} B/s",
                 update.namespace,
                 update.interface,
                 update.stats.rx_bytes_per_sec,
                 update.stats.tx_bytes_per_sec
             );
-        },
-        ZenohEvent::BandwidthUpdate
-    )
-}
-
-/// Handles zenoh sample processing for interface state events
-fn handle_interface_event_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    process_zenoh_sample!(
-        sample,
-        InterfaceStateEvent,
-        "interface event",
-        |backend_name: &str, event: &InterfaceStateEvent| {
-            info!(
-                "Frontend received interface event from '{}': {:?} on {}",
-                backend_name, event.event_type, event.interface.name
-            );
-        },
-        ZenohEvent::InterfaceStateEvent
-    )
-}
-
-/// Handles zenoh sample processing for backend health status
-fn handle_health_status_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    process_zenoh_sample!(
-        sample,
-        BackendHealthStatus,
-        "health status",
-        |backend_name: &str, health: &BackendHealthStatus| {
-            info!(
-                "Frontend received health status from '{}': {}",
-                backend_name, health.status
-            );
-        },
-        ZenohEvent::BackendHealthUpdate
-    )
-}
-
-/// Handles zenoh sample processing for TC configuration updates
-fn handle_tc_config_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    process_zenoh_sample!(
-        sample,
-        TcConfigUpdate,
-        "TC config update",
-        |backend_name: &str, update: &TcConfigUpdate| {
-            info!(
-                "Frontend received TC config update from '{}' for {}/{}: has_tc={}",
-                backend_name, update.namespace, update.interface, update.has_tc
-            );
-        },
-        ZenohEvent::TcConfigUpdate
-    )
-}
-
-/// Handles zenoh sample processing for TC statistics updates
-fn handle_tc_stats_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    process_zenoh_sample!(
-        sample,
-        TcStatisticsUpdate,
-        "TC stats update",
-        |_backend_name: &str, update: &TcStatisticsUpdate| {
-            tracing::trace!(
-                "Frontend received TC stats for {}/{}: drops={}, packets={}",
-                update.namespace,
-                update.interface,
-                update.stats_queue.map(|q| q.drops).unwrap_or(0),
-                update.stats_basic.map(|b| b.packets).unwrap_or(0)
-            );
-        },
-        ZenohEvent::TcStatisticsUpdate
-    )
-}
-
-/// Handles zenoh sample processing for preset list updates
-fn handle_preset_list_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    let topic = sample.key_expr().as_str();
-
-    // Extract backend name from topic
-    if let Some(backend_name) = topics::extract_backend_name(sample.key_expr()) {
-        // Convert payload to bytes
-        let payload_bytes = sample.payload().to_bytes();
-
-        // Convert bytes to UTF-8 string
-        match std::str::from_utf8(&payload_bytes) {
-            Ok(payload_str) => {
-                // Deserialize JSON to target type
-                match serde_json::from_str::<PresetList>(payload_str) {
-                    Ok(preset_list) => {
-                        // Log successful processing
-                        info!(
-                            "Frontend received preset list from '{}' with {} presets",
-                            backend_name,
-                            preset_list.len()
-                        );
-                        // Create and send the event
-                        Some(ZenohEvent::PresetListUpdate {
-                            backend_name,
-                            preset_list,
-                        })
-                    }
-                    Err(e) => {
-                        error!("Failed to deserialize preset list: {}", e);
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to extract preset list payload: {}", e);
-                None
-            }
+            Some(ZenohEvent::BandwidthUpdate(update))
         }
-    } else {
-        error!(
-            "Could not extract backend name from preset list topic: {}",
-            topic
-        );
-        None
+        "qdisc" => {
+            let mut update: TcStatisticsUpdate = deser_payload(&sample, "TC stats update")?;
+            update.backend_name = origin;
+            Some(ZenohEvent::TcStatisticsUpdate(update))
+        }
+        other => {
+            trace!("Ignoring unknown telemetry kind '{}' on {}", other, key);
+            None
+        }
     }
 }
 
-/// Handles zenoh sample processing for scenario execution updates
-fn handle_scenario_execution_update_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    let topic = sample.key_expr().as_str();
-
-    // Extract backend name from topic
-    if let Some(backend_name) = topics::extract_backend_name(sample.key_expr()) {
-        // Convert payload to bytes
-        let payload_bytes = sample.payload().to_bytes();
-
-        // Convert bytes to UTF-8 string
-        match std::str::from_utf8(&payload_bytes) {
-            Ok(payload_str) => {
-                // Deserialize JSON to target type
-                match serde_json::from_str::<ScenarioExecutionUpdate>(payload_str) {
-                    Ok(update) => {
-                        // Log successful processing
-                        info!(
-                            "Frontend received scenario execution update from '{}' for {}/{}: {:?}",
-                            backend_name,
-                            update.namespace,
-                            update.interface,
-                            update.execution.state
-                        );
-                        // Create and send the event with Box::new
-                        Some(ZenohEvent::ScenarioExecutionUpdate(Box::new(update)))
-                    }
-                    Err(e) => {
-                        error!("Failed to deserialize scenario execution update: {}", e);
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to extract scenario execution update payload: {}", e);
-                None
-            }
+/// Handles zenoh liveliness samples for backend presence detection. The whole
+/// presence protocol is the reserved `state/*/alive` leaf: a Put means the
+/// backend is present, a Delete means it is gone (04 §5).
+fn handle_liveliness_sample(sample: Sample) -> Option<ZenohEvent> {
+    let key = sample.key_expr().as_str();
+    match topics::parse_origin(key) {
+        Some(origin) => {
+            let alive = sample.kind() == SampleKind::Put;
+            info!(
+                "Frontend received liveliness update for backend '{}': {}",
+                origin,
+                if alive { "alive" } else { "disconnected" }
+            );
+            Some(ZenohEvent::BackendLiveliness {
+                backend_name: origin,
+                alive,
+            })
         }
-    } else {
-        error!(
-            "Could not extract backend name from scenario execution update topic: {}",
-            topic
-        );
-        None
+        None => {
+            error!("Could not extract origin from liveliness key: {}", key);
+            None
+        }
     }
 }
 
-/// Handles zenoh liveliness samples for backend presence detection
-fn handle_liveliness_sample(sample: zenoh::sample::Sample) -> Option<ZenohEvent> {
-    let topic = sample.key_expr().as_str();
-
-    // Extract backend name from topic (tcgui/{backend_name}/health)
-    if let Some(backend_name) = tcgui_shared::topics::extract_backend_name(sample.key_expr()) {
-        let alive = sample.kind() == zenoh::sample::SampleKind::Put;
-
-        info!(
-            "Frontend received liveliness update for backend '{}': {}",
-            backend_name,
-            if alive { "alive" } else { "disconnected" }
-        );
-
-        Some(ZenohEvent::BackendLiveliness {
-            backend_name: backend_name.to_string(),
-            alive,
-        })
-    } else {
-        error!(
-            "Could not extract backend name from liveliness topic: {}",
-            topic
-        );
-        None
+/// Extract the (namespace, interface) target from an execution request. Every
+/// variant the frontend sends (Start/Stop/Pause/Resume) carries one; the
+/// query-only variants (Status/ListActive) do not and are not routed here.
+fn execution_target(request: &ScenarioExecutionRequest) -> Option<(&str, &str)> {
+    match request {
+        ScenarioExecutionRequest::Start {
+            namespace,
+            interface,
+            ..
+        }
+        | ScenarioExecutionRequest::Stop {
+            namespace,
+            interface,
+        }
+        | ScenarioExecutionRequest::Pause {
+            namespace,
+            interface,
+        }
+        | ScenarioExecutionRequest::Resume {
+            namespace,
+            interface,
+        }
+        | ScenarioExecutionRequest::Status {
+            namespace,
+            interface,
+        } => Some((namespace, interface)),
+        ScenarioExecutionRequest::ListActive => None,
     }
 }
 
@@ -383,189 +370,49 @@ impl ZenohManager {
                             ))
                             .await;
 
-                        // Declare subscriber for interface list updates with history
-                        let interface_topic = "tcgui/*/interfaces/list";
-                        let interface_subscriber = match session
-                            .declare_subscriber(interface_topic)
+                        // Single state-plane subscriber (LWW; delete = tombstone).
+                        // Advanced triad keeps late-joiner history + recovery.
+                        let state_subscriber = match session
+                            .declare_subscriber(topics::SEL_STATE)
                             .history(HistoryConfig::default().detect_late_publishers())
                             .recovery(RecoveryConfig::default().heartbeat())
                             .subscriber_detection()
                             .await
                         {
                             Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all interface updates with history: {}",
-                                    interface_topic
-                                );
+                                info!("Subscribed to state plane: {}", topics::SEL_STATE);
                                 subscriber
                             }
                             Err(e) => {
-                                error!("Failed to subscribe to interface updates: {}", e);
+                                error!("Failed to subscribe to state plane: {}", e);
                                 continue; // Retry connection
                             }
                         };
 
-                        // Declare subscriber for bandwidth updates with history
-                        let bandwidth_topic = "tcgui/*/bandwidth/*/**";
-                        let bandwidth_subscriber = match session
-                            .declare_subscriber(bandwidth_topic)
-                            .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
-                            .subscriber_detection()
+                        // Telemetry-plane subscriber (superseded; best-effort).
+                        let telemetry_subscriber = match session
+                            .declare_subscriber(topics::SEL_TELEMETRY)
                             .await
                         {
                             Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all bandwidth updates with history: {}",
-                                    bandwidth_topic
-                                );
+                                info!("Subscribed to telemetry plane: {}", topics::SEL_TELEMETRY);
                                 subscriber
                             }
                             Err(e) => {
-                                error!("Failed to subscribe to bandwidth updates: {}", e);
+                                error!("Failed to subscribe to telemetry plane: {}", e);
                                 continue; // Retry connection
                             }
                         };
 
-                        // Declare subscriber for interface state events with history
-                        let interface_events_topic = "tcgui/*/interfaces/events";
-                        let interface_event_subscriber = match session
-                            .declare_subscriber(interface_events_topic)
-                            .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
-                            .subscriber_detection()
-                            .await
-                        {
-                            Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all interface events with history: {}",
-                                    interface_events_topic
-                                );
-                                subscriber
-                            }
-                            Err(e) => {
-                                error!("Failed to subscribe to interface events: {}", e);
-                                continue; // Retry connection
-                            }
-                        };
-
-                        // Declare subscriber for backend health status with history
-                        let health_topic = "tcgui/*/health";
-                        let health_subscriber = match session
-                            .declare_subscriber(health_topic)
-                            .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
-                            .subscriber_detection()
-                            .await
-                        {
-                            Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all backend health with history: {}",
-                                    health_topic
-                                );
-                                subscriber
-                            }
-                            Err(e) => {
-                                error!("Failed to subscribe to backend health: {}", e);
-                                continue; // Retry connection
-                            }
-                        };
-
-                        // Declare subscriber for TC configuration updates with history
-                        let tc_config_topic = "tcgui/*/tc/*/*";
-                        let tc_config_subscriber = match session
-                            .declare_subscriber(tc_config_topic)
-                            .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
-                            .subscriber_detection()
-                            .await
-                        {
-                            Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all TC config updates with history: {}",
-                                    tc_config_topic
-                                );
-                                subscriber
-                            }
-                            Err(e) => {
-                                error!("Failed to subscribe to TC config updates: {}", e);
-                                continue; // Retry connection
-                            }
-                        };
-
-                        // Declare subscriber for TC statistics updates (best-effort, no history)
-                        let tc_stats_topic = "tcgui/*/tc/stats/*/*";
-                        let tc_stats_subscriber = match session
-                            .declare_subscriber(tc_stats_topic)
-                            .await
-                        {
-                            Ok(subscriber) => {
-                                info!("Subscribed to TC statistics updates: {}", tc_stats_topic);
-                                subscriber
-                            }
-                            Err(e) => {
-                                error!("Failed to subscribe to TC statistics updates: {}", e);
-                                continue; // Retry connection
-                            }
-                        };
-
-                        // Declare subscriber for scenario execution updates with history
-                        let scenario_execution_topic = "tcgui/*/scenario/execution/*/*";
-                        let scenario_execution_subscriber = match session
-                            .declare_subscriber(scenario_execution_topic)
-                            .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
-                            .subscriber_detection()
-                            .await
-                        {
-                            Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all scenario execution updates with history: {}",
-                                    scenario_execution_topic
-                                );
-                                subscriber
-                            }
-                            Err(e) => {
-                                error!("Failed to subscribe to scenario execution updates: {}", e);
-                                continue; // Retry connection
-                            }
-                        };
-
-                        // Declare subscriber for preset list updates with history
-                        let preset_list_topic = "tcgui/*/presets/list";
-                        let preset_list_subscriber = match session
-                            .declare_subscriber(preset_list_topic)
-                            .history(HistoryConfig::default().detect_late_publishers())
-                            .recovery(RecoveryConfig::default().heartbeat())
-                            .subscriber_detection()
-                            .await
-                        {
-                            Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to all preset list updates with history: {}",
-                                    preset_list_topic
-                                );
-                                subscriber
-                            }
-                            Err(e) => {
-                                error!("Failed to subscribe to preset list updates: {}", e);
-                                continue; // Retry connection
-                            }
-                        };
-
-                        // Declare liveliness subscriber to detect backend presence
-                        let liveliness_topic = "tcgui/*/health";
+                        // Liveliness subscriber on the reserved alive leaf.
                         let liveliness_subscriber = match session
                             .liveliness()
-                            .declare_subscriber(liveliness_topic)
+                            .declare_subscriber(topics::SEL_ALIVE)
                             .history(true)
                             .await
                         {
                             Ok(subscriber) => {
-                                info!(
-                                    "Subscribed to backend liveliness with topic: {}",
-                                    liveliness_topic
-                                );
+                                info!("Subscribed to backend liveliness: {}", topics::SEL_ALIVE);
                                 subscriber
                             }
                             Err(e) => {
@@ -577,121 +424,31 @@ impl ZenohManager {
                         // Main communication loop
                         loop {
                             tokio::select! {
-                                // Handle interface list updates
-                                sample_result = interface_subscriber.recv_async() => {
+                                // Handle state-plane samples (put upsert / delete tombstone)
+                                sample_result = state_subscriber.recv_async() => {
                                     match sample_result {
                                         Ok(sample) => {
-                                            if let Some(event) = handle_interface_update_sample(sample) {
+                                            if let Some(event) = handle_state_sample(sample) {
                                                 let _ = output.send(event).await;
                                             }
                                         }
                                         Err(e) => {
-                                            error!("Error receiving interface update: {}", e);
+                                            error!("Error receiving state sample: {}", e);
                                             break;
                                         }
                                     }
                                 }
 
-                                // Handle bandwidth updates
-                                sample_result = bandwidth_subscriber.recv_async() => {
+                                // Handle telemetry-plane samples (bandwidth / qdisc stats)
+                                sample_result = telemetry_subscriber.recv_async() => {
                                     match sample_result {
                                         Ok(sample) => {
-                                            if let Some(event) = handle_bandwidth_update_sample(sample) {
+                                            if let Some(event) = handle_telemetry_sample(sample) {
                                                 let _ = output.send(event).await;
                                             }
                                         }
                                         Err(e) => {
-                                            error!("Error receiving bandwidth update: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Handle interface state events
-                                sample_result = interface_event_subscriber.recv_async() => {
-                                    match sample_result {
-                                        Ok(sample) => {
-                                            if let Some(event) = handle_interface_event_sample(sample) {
-                                                let _ = output.send(event).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error receiving interface event: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Handle backend health status
-                                sample_result = health_subscriber.recv_async() => {
-                                    match sample_result {
-                                        Ok(sample) => {
-                                            if let Some(event) = handle_health_status_sample(sample) {
-                                                let _ = output.send(event).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error receiving health status: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Handle TC configuration updates
-                                sample_result = tc_config_subscriber.recv_async() => {
-                                    match sample_result {
-                                        Ok(sample) => {
-                                            if let Some(event) = handle_tc_config_update_sample(sample) {
-                                                let _ = output.send(event).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error receiving TC config update: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Handle TC statistics updates
-                                sample_result = tc_stats_subscriber.recv_async() => {
-                                    match sample_result {
-                                        Ok(sample) => {
-                                            if let Some(event) = handle_tc_stats_update_sample(sample) {
-                                                let _ = output.send(event).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error receiving TC stats update: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Handle scenario execution updates
-                                sample_result = scenario_execution_subscriber.recv_async() => {
-                                    match sample_result {
-                                        Ok(sample) => {
-                                            if let Some(event) = handle_scenario_execution_update_sample(sample) {
-                                                let _ = output.send(event).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error receiving scenario execution update: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Handle preset list updates
-                                sample_result = preset_list_subscriber.recv_async() => {
-                                    match sample_result {
-                                        Ok(sample) => {
-                                            if let Some(event) = handle_preset_list_update_sample(sample) {
-                                                let _ = output.send(event).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error receiving preset list update: {}", e);
+                                            error!("Error receiving telemetry sample: {}", e);
                                             break;
                                         }
                                     }
@@ -714,7 +471,14 @@ impl ZenohManager {
 
                                 // Handle outgoing TC queries
                                 Some(tc_query) = tc_query_receiver.recv() => {
-                                    let topic = topics::tc_query_service(&tc_query.backend_name);
+                                    let origin = match RemoteOrigin::parse(&tc_query.backend_name) {
+                                        Some(o) => o,
+                                        None => {
+                                            error!("Refusing TC query: '{}' is not a concrete origin", tc_query.backend_name);
+                                            continue;
+                                        }
+                                    };
+                                    let topic = topics::rpc_config(&origin, &tc_query.request.namespace, &tc_query.request.interface);
                                     let mut output_clone = output.clone();
                                     let backend_name = tc_query.backend_name.clone();
                                     match serde_json::to_string(&tc_query.request) {
@@ -760,7 +524,14 @@ impl ZenohManager {
 
                                 // Handle outgoing interface control queries
                                 Some(interface_query) = interface_control_receiver.recv() => {
-                                    let topic = topics::interface_query_service(&interface_query.backend_name);
+                                    let origin = match RemoteOrigin::parse(&interface_query.backend_name) {
+                                        Some(o) => o,
+                                        None => {
+                                            error!("Refusing interface control query: '{}' is not a concrete origin", interface_query.backend_name);
+                                            continue;
+                                        }
+                                    };
+                                    let topic = topics::rpc_interface(&origin, &interface_query.request.namespace, &interface_query.request.interface);
                                     let mut output_clone = output.clone();
                                     let backend_name = interface_query.backend_name.clone();
                                     match serde_json::to_string(&interface_query.request) {
@@ -807,7 +578,14 @@ impl ZenohManager {
                                 // Handle outgoing scenario queries
                                 Some(scenario_query) = scenario_query_receiver.recv() => {
                                     use tcgui_shared::scenario::ScenarioResponse;
-                                    let topic = topics::scenario_query_service(&scenario_query.backend_name);
+                                    let origin = match RemoteOrigin::parse(&scenario_query.backend_name) {
+                                        Some(o) => o,
+                                        None => {
+                                            error!("Refusing scenario query: '{}' is not a concrete origin", scenario_query.backend_name);
+                                            continue;
+                                        }
+                                    };
+                                    let topic = topics::rpc_scenario(&origin);
                                     let backend_name = scenario_query.backend_name.clone();
                                     let mut output_clone = output.clone();
 
@@ -856,7 +634,21 @@ impl ZenohManager {
                                 // Handle outgoing scenario execution queries
                                 Some(execution_query) = scenario_execution_query_receiver.recv() => {
                                     use tcgui_shared::scenario::ScenarioExecutionResponse;
-                                    let topic = topics::scenario_execution_query_service(&execution_query.backend_name);
+                                    let origin = match RemoteOrigin::parse(&execution_query.backend_name) {
+                                        Some(o) => o,
+                                        None => {
+                                            error!("Refusing scenario execution query: '{}' is not a concrete origin", execution_query.backend_name);
+                                            continue;
+                                        }
+                                    };
+                                    let (namespace, interface) = match execution_target(&execution_query.request) {
+                                        Some(target) => target,
+                                        None => {
+                                            error!("Scenario execution request has no interface target; skipping");
+                                            continue;
+                                        }
+                                    };
+                                    let topic = topics::rpc_execution(&origin, namespace, interface);
                                     let mut output_clone = output.clone();
                                     let backend_name = execution_query.backend_name.clone();
                                     match serde_json::to_string(&execution_query.request) {
@@ -902,7 +694,14 @@ impl ZenohManager {
                                 // Handle outgoing diagnostics queries
                                 Some(diag_query) = diagnostics_query_receiver.recv() => {
                                     use tcgui_shared::DiagnosticsResponse;
-                                    let topic = topics::diagnostics_query_service(&diag_query.backend_name);
+                                    let origin = match RemoteOrigin::parse(&diag_query.backend_name) {
+                                        Some(o) => o,
+                                        None => {
+                                            error!("Refusing diagnostics query: '{}' is not a concrete origin", diag_query.backend_name);
+                                            continue;
+                                        }
+                                    };
+                                    let topic = topics::rpc_diagnostics(&origin);
                                     let mut output_clone = output.clone();
                                     let backend_name = diag_query.backend_name.clone();
                                     let namespace = diag_query.request.namespace.clone();
@@ -975,135 +774,81 @@ pub fn zenoh_manager_with_arc(config: Arc<ZenohConfig>) -> impl Sipper<Never, Ze
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::{
-        BackendMetadata, InterfaceType, NamespaceType, NetworkInterface, NetworkNamespace, topics,
-    };
-    use zenoh::key_expr::{KeyExpr, OwnedKeyExpr};
+    use tcgui_shared::identity::LocalOrigin;
+    use tcgui_shared::topics;
 
-    // Test the backend name extraction logic that our macro uses
     #[test]
-    fn test_backend_name_extraction() {
-        // Test valid topic with backend name
-        let key_str = "tcgui/backend1/interfaces/list";
-        let key_expr = OwnedKeyExpr::try_from(key_str).unwrap();
-        let key_ref = KeyExpr::from(&*key_expr);
-        let backend_name = topics::extract_backend_name(&key_ref);
-        assert_eq!(backend_name, Some("backend1".to_string()));
-
-        // Test invalid topic without backend name
-        let invalid_key_str = "invalid/topic";
-        let invalid_key_expr = OwnedKeyExpr::try_from(invalid_key_str).unwrap();
-        let invalid_key_ref = KeyExpr::from(&*invalid_key_expr);
-        let no_backend = topics::extract_backend_name(&invalid_key_ref);
-        assert!(no_backend.is_none());
-    }
-
-    // Test JSON serialization/deserialization of message types
-    #[test]
-    fn test_interface_update_serialization() {
-        let interface = NetworkInterface {
-            name: "test0".to_string(),
-            index: 1,
-            namespace: "default".to_string(),
-            is_up: true,
-            is_oper_up: true,
-            has_tc_qdisc: false,
-            interface_type: InterfaceType::Physical,
-            addresses: Vec::new(),
-            qdisc_kind: None,
-            link_speed_mbps: None,
-        };
-
-        let namespace = NetworkNamespace {
-            name: "default".to_string(),
-            id: Some(0),
-            is_active: true,
-            namespace_type: NamespaceType::Default,
-            interfaces: vec![interface],
-        };
-
-        let update = InterfaceListUpdate {
-            namespaces: vec![namespace],
-            timestamp: 1234567890,
-            backend_name: "backend1".to_string(),
-        };
-
-        let json = serde_json::to_string(&update).unwrap();
-        let deserialized: InterfaceListUpdate = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(deserialized.namespaces.len(), 1);
-        assert_eq!(deserialized.namespaces[0].name, "default");
-        assert_eq!(deserialized.backend_name, "backend1");
+    fn test_parse_origin_from_state_key() {
+        let origin = LocalOrigin::from_seed("machine-a");
+        let key = topics::state_interface(&origin, "default", "eth0");
+        let parsed = topics::parse_origin(key.as_str());
+        assert_eq!(parsed.as_deref(), Some(origin.as_str()));
     }
 
     #[test]
-    fn test_bandwidth_update_serialization() {
-        let bandwidth_stats = tcgui_shared::NetworkBandwidthStats {
-            rx_bytes: 50000,
-            rx_packets: 500,
-            rx_errors: 0,
-            rx_dropped: 0,
-            tx_bytes: 25000,
-            tx_packets: 250,
-            tx_errors: 0,
-            tx_dropped: 0,
-            timestamp: 1234567890,
-            rx_bytes_per_sec: 1000.0,
-            tx_bytes_per_sec: 500.0,
-        };
+    fn test_parse_state_key_interface() {
+        let origin = LocalOrigin::from_seed("machine-a");
+        let key = topics::state_interface(&origin, "default", "eth0");
+        let sk = topics::parse_state_key(key.as_str()).expect("parse");
+        assert_eq!(sk.family, StateFamily::Interface);
+        assert_eq!(sk.ns.as_deref(), Some("default"));
+        assert_eq!(sk.iface.as_deref(), Some("eth0"));
+        assert_eq!(sk.origin, origin.as_str());
+    }
 
-        let update = BandwidthUpdate {
+    #[test]
+    fn test_telemetry_kind_extraction() {
+        let origin = LocalOrigin::from_seed("machine-a");
+        let bw = topics::telemetry_bandwidth(&origin, "default", "eth0");
+        assert_eq!(telemetry_kind(bw.as_str()), Some("bandwidth"));
+        let qd = topics::telemetry_qdisc(&origin, "default", "eth0");
+        assert_eq!(telemetry_kind(qd.as_str()), Some("qdisc"));
+    }
+
+    #[test]
+    fn test_remote_origin_round_trip_builds_rpc_key() {
+        let local = LocalOrigin::from_seed("machine-a");
+        let remote = RemoteOrigin::parse(local.as_str()).expect("valid origin");
+        let key = topics::rpc_config(&remote, "default", "eth0");
+        assert!(key.as_str().contains(local.as_str()));
+        assert!(key.as_str().ends_with("/set"));
+    }
+
+    #[test]
+    fn test_execution_target_extraction() {
+        let start = ScenarioExecutionRequest::Stop {
             namespace: "default".to_string(),
             interface: "eth0".to_string(),
-            stats: bandwidth_stats,
-            backend_name: "backend1".to_string(),
         };
-
-        let json = serde_json::to_string(&update).unwrap();
-        let deserialized: BandwidthUpdate = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(deserialized.namespace, "default");
-        assert_eq!(deserialized.interface, "eth0");
-        assert_eq!(deserialized.stats.rx_bytes_per_sec, 1000.0);
-        assert_eq!(deserialized.backend_name, "backend1");
+        assert_eq!(execution_target(&start), Some(("default", "eth0")));
+        assert_eq!(
+            execution_target(&ScenarioExecutionRequest::ListActive),
+            None
+        );
     }
 
+    // JSON serialization sanity for the payload types the state/telemetry
+    // handlers deserialize.
     #[test]
     fn test_health_status_serialization() {
-        let metadata = BackendMetadata {
-            version: Some("1.0.0".to_string()),
-            hostname: Some("test-host".to_string()),
-            started_at: Some(1234567000),
-            capabilities: vec!["tc_netem".to_string()],
-        };
-
         let health = BackendHealthStatus {
+            host_id: "h-000000000001".to_string(),
             backend_name: "backend1".to_string(),
             status: "healthy".to_string(),
             timestamp: 1234567890,
-            metadata,
+            metadata: tcgui_shared::BackendMetadata::default(),
             namespace_count: 1,
             interface_count: 2,
         };
-
         let json = serde_json::to_string(&health).unwrap();
         let deserialized: BackendHealthStatus = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(deserialized.status, "healthy");
-        assert_eq!(deserialized.metadata.version, Some("1.0.0".to_string()));
+        assert_eq!(deserialized.host_id, "h-000000000001");
         assert_eq!(deserialized.interface_count, 2);
-        assert_eq!(deserialized.backend_name, "backend1");
     }
 
     #[test]
     fn test_invalid_json_deserialization() {
-        let result = serde_json::from_str::<InterfaceListUpdate>("invalid json");
-        assert!(result.is_err());
-
-        let result = serde_json::from_str::<BandwidthUpdate>("not valid json at all");
-        assert!(result.is_err());
-
-        let result = serde_json::from_str::<BackendHealthStatus>("{}");
-        assert!(result.is_err()); // Should fail due to missing required fields
+        assert!(serde_json::from_str::<BandwidthUpdate>("not valid json").is_err());
+        assert!(serde_json::from_str::<BackendHealthStatus>("{}").is_err());
     }
 }
