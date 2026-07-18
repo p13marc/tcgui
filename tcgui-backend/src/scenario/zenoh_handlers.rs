@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::{Session, query::Query};
 
+use tcgui_shared::identity::LocalOrigin;
 use tcgui_shared::scenario::{
     ScenarioError, ScenarioExecutionRequest, ScenarioExecutionResponse, ScenarioExecutionUpdate,
     ScenarioRequest, ScenarioResponse,
@@ -66,7 +67,7 @@ async fn reply_execution(
 pub struct ScenarioZenohHandlers {
     scenario_manager: Arc<ScenarioManager>,
     session: Arc<Session>,
-    backend_name: String,
+    local_origin: LocalOrigin,
 }
 
 impl ScenarioZenohHandlers {
@@ -74,23 +75,23 @@ impl ScenarioZenohHandlers {
     pub fn new(
         scenario_manager: Arc<ScenarioManager>,
         session: Arc<Session>,
-        backend_name: String,
+        local_origin: LocalOrigin,
     ) -> Self {
         info!(
-            "Creating scenario Zenoh handlers for backend: {}",
-            backend_name
+            "Creating scenario Zenoh handlers for origin: {}",
+            local_origin.as_str()
         );
         Self {
             scenario_manager,
             session,
-            backend_name,
+            local_origin,
         }
     }
 
     /// Start the scenario management query handler
     #[instrument(skip(self))]
     pub async fn start_query_handler(&self) -> Result<()> {
-        let scenario_query_topic = topics::scenario_query_service(&self.backend_name);
+        let scenario_query_topic = topics::rpc_scenario(&self.local_origin);
         let queryable = self
             .session
             .declare_queryable(&scenario_query_topic)
@@ -103,16 +104,16 @@ impl ScenarioZenohHandlers {
         );
 
         let scenario_manager = self.scenario_manager.clone();
-        let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
 
         tokio::spawn(async move {
             while let Ok(query) = queryable.recv_async().await {
                 let scenario_manager = scenario_manager.clone();
-                let backend_name = backend_name.clone();
+                let local_origin = local_origin.clone();
 
                 tokio::spawn(async move {
                     if let Err(e) =
-                        Self::handle_scenario_query(&scenario_manager, &backend_name, query).await
+                        Self::handle_scenario_query(&scenario_manager, &local_origin, query).await
                     {
                         error!("Error handling scenario query: {}", e);
                     }
@@ -127,7 +128,7 @@ impl ScenarioZenohHandlers {
     #[instrument(skip(scenario_manager, query))]
     async fn handle_scenario_query(
         scenario_manager: &ScenarioManager,
-        backend_name: &str,
+        local_origin: &LocalOrigin,
         query: Query,
     ) -> Result<()> {
         debug!(
@@ -143,23 +144,14 @@ impl ScenarioZenohHandlers {
                 let error_response = ScenarioResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
-                return reply_scenario(
-                    &query,
-                    topics::scenario_query_service(backend_name),
-                    &error_response,
-                )
-                .await;
+                return reply_scenario(&query, topics::rpc_scenario(local_origin), &error_response)
+                    .await;
             }
         };
 
         // Process the request
         let response = Self::process_scenario_request(scenario_manager, request).await;
-        reply_scenario(
-            &query,
-            topics::scenario_query_service(backend_name),
-            &response,
-        )
-        .await?;
+        reply_scenario(&query, topics::rpc_scenario(local_origin), &response).await?;
 
         debug!("Scenario query processed successfully");
         Ok(())
@@ -264,7 +256,7 @@ impl ScenarioZenohHandlers {
 pub struct ScenarioExecutionHandlers {
     scenario_manager: Arc<ScenarioManager>,
     session: Arc<Session>,
-    backend_name: String,
+    local_origin: LocalOrigin,
 }
 
 impl ScenarioExecutionHandlers {
@@ -272,23 +264,23 @@ impl ScenarioExecutionHandlers {
     pub fn new(
         scenario_manager: Arc<ScenarioManager>,
         session: Arc<Session>,
-        backend_name: String,
+        local_origin: LocalOrigin,
     ) -> Self {
         info!(
-            "Creating scenario execution Zenoh handlers for backend: {}",
-            backend_name
+            "Creating scenario execution Zenoh handlers for origin: {}",
+            local_origin.as_str()
         );
         Self {
             scenario_manager,
             session,
-            backend_name,
+            local_origin,
         }
     }
 
     /// Start the scenario execution query handler
     #[instrument(skip(self))]
     pub async fn start_query_handler(&self) -> Result<()> {
-        let execution_query_topic = topics::scenario_execution_query_service(&self.backend_name);
+        let execution_query_topic = topics::rpc_execution_serve(&self.local_origin);
         let queryable = self
             .session
             .declare_queryable(&execution_query_topic)
@@ -301,16 +293,16 @@ impl ScenarioExecutionHandlers {
         );
 
         let scenario_manager = self.scenario_manager.clone();
-        let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
 
         tokio::spawn(async move {
             while let Ok(query) = queryable.recv_async().await {
                 let scenario_manager = scenario_manager.clone();
-                let backend_name = backend_name.clone();
+                let local_origin = local_origin.clone();
 
                 tokio::spawn(async move {
                     if let Err(e) =
-                        Self::handle_execution_query(&scenario_manager, &backend_name, query).await
+                        Self::handle_execution_query(&scenario_manager, &local_origin, query).await
                     {
                         error!("Error handling execution query: {}", e);
                     }
@@ -321,11 +313,41 @@ impl ScenarioExecutionHandlers {
         Ok(())
     }
 
+    /// The `(namespace, interface)` an execution request targets, for building
+    /// the concrete reply key. `ListActive` is fleet-wide and carries neither, so
+    /// it falls back to a reserved `all/all` subject (integrator-owned).
+    fn request_target(request: &ScenarioExecutionRequest) -> (String, String) {
+        match request {
+            ScenarioExecutionRequest::Start {
+                namespace,
+                interface,
+                ..
+            }
+            | ScenarioExecutionRequest::Stop {
+                namespace,
+                interface,
+            }
+            | ScenarioExecutionRequest::Pause {
+                namespace,
+                interface,
+            }
+            | ScenarioExecutionRequest::Resume {
+                namespace,
+                interface,
+            }
+            | ScenarioExecutionRequest::Status {
+                namespace,
+                interface,
+            } => (namespace.clone(), interface.clone()),
+            ScenarioExecutionRequest::ListActive => ("all".to_string(), "all".to_string()),
+        }
+    }
+
     /// Handle individual scenario execution query
     #[instrument(skip(scenario_manager, query))]
     async fn handle_execution_query(
         scenario_manager: &ScenarioManager,
-        backend_name: &str,
+        local_origin: &LocalOrigin,
         query: Query,
     ) -> Result<()> {
         debug!(
@@ -341,23 +363,23 @@ impl ScenarioExecutionHandlers {
                 let error_response = ScenarioExecutionResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
+                // Error rides reply_err; the key is unused for the Error variant.
                 return reply_execution(
                     &query,
-                    topics::scenario_execution_query_service(backend_name),
+                    topics::rpc_execution(local_origin, "all", "all"),
                     &error_response,
                 )
                 .await;
             }
         };
 
+        // Concrete reply key derived from the request's target interface.
+        let (ns, iface) = Self::request_target(&request);
+        let reply_key = topics::rpc_execution(local_origin, &ns, &iface);
+
         // Process the request
         let response = Self::process_execution_request(scenario_manager, request).await;
-        reply_execution(
-            &query,
-            topics::scenario_execution_query_service(backend_name),
-            &response,
-        )
-        .await?;
+        reply_execution(&query, reply_key, &response).await?;
 
         debug!("Execution query processed successfully");
         Ok(())
@@ -508,7 +530,7 @@ impl ScenarioExecutionHandlers {
 
         let session = self.session.clone();
         let scenario_manager = self.scenario_manager.clone();
-        let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
@@ -523,15 +545,15 @@ impl ScenarioExecutionHandlers {
                         namespace: execution.target_namespace.clone(),
                         interface: execution.target_interface.clone(),
                         execution: execution.clone(),
-                        backend_name: backend_name.clone(),
+                        backend_name: local_origin.as_str().to_string(),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_millis() as u64,
                     };
 
-                    let update_topic = topics::scenario_execution_updates(
-                        &backend_name,
+                    let update_topic = topics::state_execution(
+                        &local_origin,
                         &execution.target_namespace,
                         &execution.target_interface,
                     );

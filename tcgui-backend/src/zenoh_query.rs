@@ -375,7 +375,7 @@ impl TcBackend {
             let payload = serde_json::to_string(&response)?;
             self.reply_value(
                 &query,
-                topics::tc_query_service(&self.backend_name),
+                topics::rpc_config(&self.local_origin, &request.namespace, &request.interface),
                 payload,
             )
             .await?;
@@ -479,7 +479,7 @@ impl TcBackend {
             let payload = serde_json::to_string(&response)?;
             self.reply_value(
                 &query,
-                topics::interface_query_service(&self.backend_name),
+                topics::rpc_interface(&self.local_origin, &request.namespace, &request.interface),
                 payload,
             )
             .await?;
@@ -547,12 +547,8 @@ impl TcBackend {
 
         if response.success {
             let payload = serde_json::to_string(&response)?;
-            self.reply_value(
-                &query,
-                topics::diagnostics_query_service(&self.backend_name),
-                payload,
-            )
-            .await?;
+            self.reply_value(&query, topics::rpc_diagnostics(&self.local_origin), payload)
+                .await?;
             info!(
                 "Diagnostics completed for {}/{}: {}",
                 request.namespace, request.interface, response.message
@@ -570,6 +566,7 @@ impl TcBackend {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         let health_status = BackendHealthStatus {
+            host_id: self.local_origin.as_str().to_string(),
             backend_name: self.backend_name.clone(),
             status: status.to_string(),
             timestamp,
@@ -579,7 +576,7 @@ impl TcBackend {
         };
 
         let payload = serde_json::to_string(&health_status)?;
-        let backend_health_topic = topics::backend_health(&self.backend_name);
+        let backend_health_topic = topics::state_health(&self.local_origin);
         self.session
             .put(&backend_health_topic, payload)
             .await
@@ -590,19 +587,25 @@ impl TcBackend {
         Ok(())
     }
 
-    /// Publish the preset list to the frontend
+    /// Publish each available preset as its own state document keyed by preset id.
     #[instrument(skip(self), fields(backend_name = %self.backend_name))]
     pub(crate) async fn publish_preset_list(&self) -> Result<()> {
-        let payload = serde_json::to_string(&self.preset_list)?;
-        self.preset_list_publisher
-            .put(payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to publish preset list: {}", e),
-            })?;
+        for preset in self.preset_list.all() {
+            let Some(publisher) = self.preset_publishers.get(&preset.id) else {
+                warn!("No publisher for preset '{}', skipping", preset.id);
+                continue;
+            };
+            let payload = serde_json::to_string(preset)?;
+            publisher
+                .put(payload)
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to publish preset '{}': {}", preset.id, e),
+                })?;
+        }
 
         info!(
-            "[BACKEND] Published preset list with {} presets",
+            "[BACKEND] Published {} preset(s) as state documents",
             self.preset_list.len()
         );
         Ok(())
@@ -618,7 +621,7 @@ impl TcBackend {
         let key = format!("{}/{}", namespace, interface);
 
         if !self.tc_config_publishers.contains_key(&key) {
-            let tc_config_topic = topics::tc_config(&self.backend_name, namespace, interface);
+            let tc_config_topic = topics::state_config(&self.local_origin, namespace, interface);
             info!(
                 "Creating TC config publisher for {}/{} on: {}",
                 namespace,
