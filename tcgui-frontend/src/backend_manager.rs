@@ -5,16 +5,46 @@
 //! track their health, and route messages appropriately.
 
 use crate::interface::TcInterface;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tcgui_shared::{
-    BackendHealthStatus, InterfaceEventType, InterfaceListUpdate, InterfaceStateEvent,
-    NamespaceType, NetworkNamespace, presets::PresetList,
+    BackendHealthStatus, NamespaceType, NetworkInterface, NetworkNamespace,
+    presets::{CustomPreset, PresetList},
 };
 use tracing::info;
 
+/// Current unix time in seconds (best-effort, saturating on clock errors).
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Best-effort namespace-type inference from the namespace name.
+///
+/// The keyspace-v2 per-interface state record carries only the namespace name,
+/// not the rich `NamespaceType` the old snapshot bundled. We synthesize a type
+/// so host-vs-namespace filtering keeps working: `default`/empty is the host
+/// root, everything else is treated as a traditional netns (container detail —
+/// runtime/id — is unavailable from the interface record alone).
+fn infer_namespace_type(name: &str) -> NamespaceType {
+    if name.is_empty() || name == "default" {
+        NamespaceType::Default
+    } else {
+        NamespaceType::Traditional
+    }
+}
+
 /// Backend grouping structure for organizing namespace and interface components.
+///
+/// Keyed (in [`BackendManager::backends`]) on the **host origin** (`h-<12hex>`),
+/// never the display name — that is the keyspace-v2 identity bridge (RFC 06 §6).
 #[derive(Clone)]
 pub struct BackendGroup {
+    /// Operator-chosen display label from the health document (`backend_name`).
+    /// Rendered in the UI; never used to route or key. Defaults to the origin
+    /// until the first health document arrives.
+    pub name: String,
     /// Backend connection status for UI indicators
     pub is_connected: bool,
     /// When this backend was last seen (for timeout detection)
@@ -25,6 +55,20 @@ pub struct BackendGroup {
     pub namespaces: HashMap<String, NamespaceGroup>,
     /// Available presets (built-in and custom) from this backend
     pub preset_list: PresetList,
+}
+
+impl BackendGroup {
+    /// A fresh, connected group with `name` defaulting to the origin.
+    fn new(origin: &str) -> Self {
+        Self {
+            name: origin.to_string(),
+            is_connected: true,
+            last_seen: now_secs(),
+            disconnected_at: None,
+            namespaces: HashMap::new(),
+            preset_list: PresetList::default(),
+        }
+    }
 }
 
 /// Namespace grouping structure for organizing interface components within a backend.
@@ -39,7 +83,7 @@ pub struct NamespaceGroup {
 
 /// Manager for backend operations and state.
 pub struct BackendManager {
-    /// Backend instances organized by backend name for efficient routing
+    /// Backend instances keyed by **host origin** (`h-<12hex>`) for routing.
     backends: HashMap<String, BackendGroup>,
 }
 
@@ -61,122 +105,107 @@ impl BackendManager {
         &mut self.backends
     }
 
-    /// Handles interface list updates from a backend.
-    pub fn handle_interface_list_update(&mut self, interface_update: InterfaceListUpdate) {
-        let backend_name = &interface_update.backend_name;
+    /// Returns a mutable reference to the backend group for `origin`, creating
+    /// a fresh connected entry (with `name` defaulting to the origin) if absent.
+    fn get_or_create(&mut self, origin: &str) -> &mut BackendGroup {
+        self.backends
+            .entry(origin.to_string())
+            .or_insert_with(|| BackendGroup::new(origin))
+    }
 
-        info!(
-            "Received interface update from backend '{}' with {} namespaces",
-            backend_name,
-            interface_update.namespaces.len()
-        );
+    /// Upserts a single interface from a `state/tc/interface/{ns}/{if}` Put.
+    ///
+    /// Replaces the old snapshot+events merge: one Put creates/updates exactly
+    /// one interface; removal arrives as a Delete tombstone (see
+    /// [`Self::handle_interface_removed`]). The payload's own `namespace` field
+    /// selects the namespace group.
+    pub fn handle_interface_upsert(&mut self, origin: &str, interface: NetworkInterface) {
+        let namespace = interface.namespace.clone();
+        let iface_name = interface.name.clone();
 
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let backend_group = self
-            .backends
-            .entry(backend_name.clone())
-            .or_insert_with(|| BackendGroup {
-                is_connected: true,
-                last_seen: current_time,
-                disconnected_at: None,
-                namespaces: HashMap::new(),
-                preset_list: PresetList::default(),
-            });
-
-        // Mark backend as connected and update last seen
+        let backend_group = self.get_or_create(origin);
         backend_group.is_connected = true;
-        backend_group.last_seen = current_time;
+        backend_group.last_seen = now_secs();
         backend_group.disconnected_at = None;
 
-        // Remove namespaces that are no longer in the update
-        let current_namespaces: HashSet<String> =
-            backend_group.namespaces.keys().cloned().collect();
-        let updated_namespaces: HashSet<String> = interface_update
+        let namespace_group = backend_group
             .namespaces
-            .iter()
-            .map(|ns| ns.name.clone())
-            .collect();
-        for removed_namespace in current_namespaces.difference(&updated_namespaces) {
-            info!(
-                "Removing namespace '{}' from backend '{}' (no longer present)",
-                removed_namespace, backend_name
-            );
-            backend_group.namespaces.remove(removed_namespace);
+            .entry(namespace.clone())
+            .or_insert_with(|| NamespaceGroup {
+                namespace: NetworkNamespace {
+                    name: namespace.clone(),
+                    id: None,
+                    is_active: true,
+                    namespace_type: infer_namespace_type(&namespace),
+                    interfaces: Vec::new(),
+                },
+                tc_interfaces: HashMap::new(),
+            });
+
+        // Keep the namespace's interface record list in sync (message handlers
+        // look it up by name when applying TC config updates).
+        if let Some(existing) = namespace_group
+            .namespace
+            .interfaces
+            .iter_mut()
+            .find(|i| i.name == iface_name)
+        {
+            *existing = interface.clone();
+        } else {
+            namespace_group.namespace.interfaces.push(interface.clone());
         }
 
-        // Update namespaces
-        for namespace in &interface_update.namespaces {
-            let namespace_group = backend_group
-                .namespaces
-                .entry(namespace.name.clone())
-                .or_insert_with(|| NamespaceGroup {
-                    namespace: namespace.clone(),
-                    tc_interfaces: HashMap::new(),
-                });
-
-            // Update the namespace metadata
-            namespace_group.namespace = namespace.clone();
-
-            // Remove interfaces that are no longer in the update
-            let current_interfaces: HashSet<String> =
-                namespace_group.tc_interfaces.keys().cloned().collect();
-            let updated_interfaces: HashSet<String> = namespace
-                .interfaces
-                .iter()
-                .map(|i| i.name.clone())
-                .collect();
-            for removed_interface in current_interfaces.difference(&updated_interfaces) {
-                info!(
-                    "Removing interface '{}' from namespace '{}' of backend '{}' (no longer present)",
-                    removed_interface, namespace.name, backend_name
-                );
-                namespace_group.tc_interfaces.remove(removed_interface);
-            }
-
-            // Update interfaces in this namespace
-            for interface in &namespace.interfaces {
-                let tc_interface = namespace_group
-                    .tc_interfaces
-                    .entry(interface.name.clone())
-                    .or_insert_with(|| TcInterface::new(&interface.name));
-
-                tc_interface.update_from_backend(interface);
-            }
-        }
+        let tc_interface = namespace_group
+            .tc_interfaces
+            .entry(iface_name.clone())
+            .or_insert_with(|| TcInterface::new(&iface_name));
+        tc_interface.update_from_backend(&interface);
 
         info!(
-            "Backend '{}' now has {} namespaces with {} total interfaces",
-            backend_name,
-            backend_group.namespaces.len(),
-            backend_group
-                .namespaces
-                .values()
-                .map(|ns| ns.tc_interfaces.len())
-                .sum::<usize>()
+            "Upserted interface '{}' in namespace '{}' of backend '{}'",
+            iface_name, namespace, origin
         );
     }
 
-    /// Handles backend health status updates.
-    pub fn handle_backend_health_update(&mut self, health_status: BackendHealthStatus) {
-        let backend_name = &health_status.backend_name;
-
-        if let Some(backend_group) = self.backends.get_mut(backend_name) {
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-
-            backend_group.last_seen = current_time;
-
+    /// Removes a single interface in response to a Delete tombstone on
+    /// `state/tc/interface/{ns}/{if}`. `namespace`/`interface` come from the key
+    /// (the Delete carries no payload).
+    pub fn handle_interface_removed(&mut self, origin: &str, namespace: &str, interface: &str) {
+        if let Some(backend_group) = self.backends.get_mut(origin)
+            && let Some(namespace_group) = backend_group.namespaces.get_mut(namespace)
+        {
+            namespace_group.tc_interfaces.remove(interface);
+            namespace_group
+                .namespace
+                .interfaces
+                .retain(|i| i.name != interface);
             info!(
-                "Backend '{}' health status: {}",
-                backend_name, health_status.status
+                "Removed interface '{}' from namespace '{}' of backend '{}' (tombstone)",
+                interface, namespace, origin
             );
+            // Drop the namespace group once it has no interfaces left.
+            if namespace_group.tc_interfaces.is_empty() {
+                backend_group.namespaces.remove(namespace);
+            }
         }
+    }
+
+    /// Handles backend health status updates. `origin` is the key-derived host
+    /// origin; the display label is taken from the health document.
+    pub fn handle_backend_health_update(
+        &mut self,
+        origin: &str,
+        health_status: BackendHealthStatus,
+    ) {
+        let backend_group = self.get_or_create(origin);
+        backend_group.last_seen = now_secs();
+        backend_group.disconnected_at = None;
+        backend_group.name = health_status.backend_name.clone();
+
+        info!(
+            "Backend '{}' (name '{}') health status: {}",
+            origin, health_status.backend_name, health_status.status
+        );
     }
 
     /// Handles backend liveliness changes.
@@ -192,15 +221,11 @@ impl BackendManager {
             let backend_group = self
                 .backends
                 .entry(backend_name.clone())
-                .or_insert_with(|| BackendGroup {
-                    is_connected: false, // Will be set to true when first message arrives
-                    last_seen: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    disconnected_at: None,
-                    namespaces: HashMap::new(),
-                    preset_list: PresetList::default(),
+                .or_insert_with(|| {
+                    let mut group = BackendGroup::new(&backend_name);
+                    // Will be set to true when the first data message arrives.
+                    group.is_connected = false;
+                    group
                 });
 
             // Clear disconnection timestamp since backend is alive
@@ -211,71 +236,12 @@ impl BackendManager {
             // Backend went offline - mark as disconnected and record timestamp
             if let Some(backend_group) = self.backends.get_mut(&backend_name) {
                 backend_group.is_connected = false;
-                let disconnected_timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
+                let disconnected_timestamp = now_secs();
                 backend_group.disconnected_at = Some(disconnected_timestamp);
                 info!(
                     "Backend '{}' is now disconnected at timestamp {}",
                     backend_name, disconnected_timestamp
                 );
-            }
-        }
-    }
-
-    /// Handles interface state events.
-    pub fn handle_interface_state_event(&mut self, state_event: InterfaceStateEvent) {
-        let backend_name = &state_event.backend_name;
-        let namespace = &state_event.namespace;
-        let interface = &state_event.interface;
-
-        info!(
-            "Interface update from backend '{}' in {}: {:?} - {:?}",
-            backend_name, namespace, interface, state_event.event_type
-        );
-
-        // Ensure backend and namespace exist
-        if let Some(backend_group) = self.backends.get_mut(backend_name) {
-            if !backend_group.namespaces.contains_key(namespace) {
-                let empty_namespace = NetworkNamespace {
-                    name: namespace.clone(),
-                    id: None,
-                    is_active: true,
-                    namespace_type: NamespaceType::Default,
-                    interfaces: Vec::new(),
-                };
-                let namespace_group = NamespaceGroup {
-                    namespace: empty_namespace,
-                    tc_interfaces: HashMap::new(),
-                };
-                backend_group
-                    .namespaces
-                    .insert(namespace.clone(), namespace_group);
-            }
-
-            if let Some(namespace_group) = backend_group.namespaces.get_mut(namespace) {
-                match state_event.event_type {
-                    InterfaceEventType::Added => {
-                        if !namespace_group.tc_interfaces.contains_key(&interface.name) {
-                            let mut tc_interface = TcInterface::new(&interface.name);
-                            tc_interface.update_from_backend(interface);
-                            namespace_group
-                                .tc_interfaces
-                                .insert(interface.name.clone(), tc_interface);
-                        }
-                    }
-                    InterfaceEventType::Removed => {
-                        namespace_group.tc_interfaces.remove(&interface.name);
-                    }
-                    _ => {
-                        if let Some(tc_interface) =
-                            namespace_group.tc_interfaces.get_mut(&interface.name)
-                        {
-                            tc_interface.update_from_backend(interface);
-                        }
-                    }
-                }
             }
         }
     }
@@ -350,35 +316,25 @@ impl BackendManager {
             .sum()
     }
 
-    /// Updates the preset list for a specific backend.
-    pub fn update_preset_list(&mut self, backend_name: &str, preset_list: PresetList) {
-        if let Some(backend_group) = self.backends.get_mut(backend_name) {
-            info!(
-                "Updated preset list for backend '{}' with {} presets",
-                backend_name,
-                preset_list.len()
-            );
-            backend_group.preset_list = preset_list;
+    /// Upserts a single preset from a `state/tc/preset/{id}` Put.
+    pub fn upsert_preset(&mut self, origin: &str, preset: CustomPreset) {
+        let backend_group = self.get_or_create(origin);
+        let presets = &mut backend_group.preset_list.presets;
+        if let Some(existing) = presets.iter_mut().find(|p| p.id == preset.id) {
+            *existing = preset;
         } else {
-            // Create backend entry if it doesn't exist yet
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            presets.push(preset);
+        }
+    }
+
+    /// Removes a single preset in response to a Delete tombstone on
+    /// `state/tc/preset/{id}`.
+    pub fn remove_preset(&mut self, origin: &str, id: &str) {
+        if let Some(backend_group) = self.backends.get_mut(origin) {
+            backend_group.preset_list.presets.retain(|p| p.id != id);
             info!(
-                "Creating backend '{}' entry for preset list with {} presets",
-                backend_name,
-                preset_list.len()
-            );
-            self.backends.insert(
-                backend_name.to_string(),
-                BackendGroup {
-                    is_connected: false,
-                    last_seen: current_time,
-                    disconnected_at: None,
-                    namespaces: HashMap::new(),
-                    preset_list,
-                },
+                "Removed preset '{}' from backend '{}' (tombstone)",
+                id, origin
             );
         }
     }
@@ -386,8 +342,8 @@ impl BackendManager {
     /// Gets the preset list for a specific backend.
     /// This method is prepared for future frontend preset UI integration.
     #[allow(dead_code)]
-    pub fn get_preset_list(&self, backend_name: &str) -> Option<&PresetList> {
-        self.backends.get(backend_name).map(|bg| &bg.preset_list)
+    pub fn get_preset_list(&self, origin: &str) -> Option<&PresetList> {
+        self.backends.get(origin).map(|bg| &bg.preset_list)
     }
 }
 
@@ -400,7 +356,12 @@ impl Default for BackendManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::{BackendMetadata, InterfaceType, NamespaceType, NetworkInterface};
+    use tcgui_shared::{BackendMetadata, InterfaceType, TcNetemConfig};
+
+    // Origins are opaque `h-<12hex>` strings on the wire; the manager only ever
+    // uses them as map keys, so the tests use recognizable stand-ins.
+    const ORIGIN1: &str = "h-000000000001";
+    const ORIGIN2: &str = "h-000000000002";
 
     fn create_test_interface(name: &str, namespace: &str) -> NetworkInterface {
         NetworkInterface {
@@ -417,27 +378,11 @@ mod tests {
         }
     }
 
-    fn create_test_namespace(name: &str, interfaces: Vec<&str>) -> NetworkNamespace {
-        NetworkNamespace {
-            name: name.to_string(),
-            id: Some(1),
-            is_active: true,
-            namespace_type: NamespaceType::Default,
-            interfaces: interfaces
-                .into_iter()
-                .map(|iface| create_test_interface(iface, name))
-                .collect(),
-        }
-    }
-
-    fn create_test_interface_list(
-        backend_name: &str,
-        namespaces: Vec<NetworkNamespace>,
-    ) -> InterfaceListUpdate {
-        InterfaceListUpdate {
-            backend_name: backend_name.to_string(),
-            namespaces,
-            timestamp: 0,
+    /// Upsert a batch of interfaces under one namespace (mimics the per-key
+    /// Puts that arrive on `state/tc/interface/{ns}/{if}`).
+    fn upsert_ns(manager: &mut BackendManager, origin: &str, namespace: &str, ifaces: &[&str]) {
+        for iface in ifaces {
+            manager.handle_interface_upsert(origin, create_test_interface(iface, namespace));
         }
     }
 
@@ -450,43 +395,29 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_interface_list_update() {
+    fn test_handle_interface_upsert() {
         let mut manager = BackendManager::new();
 
-        let update = create_test_interface_list(
-            "backend1",
-            vec![
-                create_test_namespace("default", vec!["eth0", "eth1"]),
-                create_test_namespace("ns1", vec!["veth0"]),
-            ],
-        );
-
-        manager.handle_interface_list_update(update);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0", "eth1"]);
+        upsert_ns(&mut manager, ORIGIN1, "ns1", &["veth0"]);
 
         assert_eq!(manager.backend_count(), 1);
         assert_eq!(manager.total_interface_count(), 3);
 
         let backends = manager.backends();
-        assert!(backends.contains_key("backend1"));
-        assert!(backends["backend1"].is_connected);
-        assert_eq!(backends["backend1"].namespaces.len(), 2);
+        assert!(backends.contains_key(ORIGIN1));
+        assert!(backends[ORIGIN1].is_connected);
+        assert_eq!(backends[ORIGIN1].namespaces.len(), 2);
+        // Name defaults to the origin until a health doc arrives.
+        assert_eq!(backends[ORIGIN1].name, ORIGIN1);
     }
 
     #[test]
     fn test_multiple_backends() {
         let mut manager = BackendManager::new();
 
-        let update1 = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        let update2 = create_test_interface_list(
-            "backend2",
-            vec![create_test_namespace("default", vec!["eth1", "eth2"])],
-        );
-
-        manager.handle_interface_list_update(update1);
-        manager.handle_interface_list_update(update2);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
+        upsert_ns(&mut manager, ORIGIN2, "default", &["eth1", "eth2"]);
 
         assert_eq!(manager.backend_count(), 2);
         assert_eq!(manager.total_interface_count(), 3);
@@ -494,56 +425,36 @@ mod tests {
     }
 
     #[test]
-    fn test_namespace_removal() {
+    fn test_interface_removed_tombstone() {
         let mut manager = BackendManager::new();
 
-        // Initial state with two namespaces
-        let update1 = create_test_interface_list(
-            "backend1",
-            vec![
-                create_test_namespace("ns1", vec!["eth0"]),
-                create_test_namespace("ns2", vec!["eth1"]),
-            ],
-        );
-        manager.handle_interface_list_update(update1);
-        assert_eq!(manager.backends()["backend1"].namespaces.len(), 2);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0", "eth1"]);
+        assert_eq!(manager.total_interface_count(), 2);
 
-        // Update with only one namespace - ns2 should be removed
-        let update2 = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("ns1", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update2);
+        // Delete tombstone removes exactly one interface.
+        manager.handle_interface_removed(ORIGIN1, "default", "eth1");
 
-        let backends = manager.backends();
-        assert_eq!(backends["backend1"].namespaces.len(), 1);
-        assert!(backends["backend1"].namespaces.contains_key("ns1"));
-        assert!(!backends["backend1"].namespaces.contains_key("ns2"));
+        assert_eq!(manager.total_interface_count(), 1);
+        let ns = &manager.backends()[ORIGIN1].namespaces["default"];
+        assert!(ns.tc_interfaces.contains_key("eth0"));
+        assert!(!ns.tc_interfaces.contains_key("eth1"));
     }
 
     #[test]
-    fn test_interface_removal() {
+    fn test_namespace_dropped_when_last_interface_removed() {
         let mut manager = BackendManager::new();
 
-        // Initial state with two interfaces
-        let update1 = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0", "eth1"])],
-        );
-        manager.handle_interface_list_update(update1);
-        assert_eq!(manager.total_interface_count(), 2);
+        upsert_ns(&mut manager, ORIGIN1, "ns1", &["eth0"]);
+        upsert_ns(&mut manager, ORIGIN1, "ns2", &["eth1"]);
+        assert_eq!(manager.backends()[ORIGIN1].namespaces.len(), 2);
 
-        // Update with only one interface - eth1 should be removed
-        let update2 = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update2);
+        // Removing ns2's only interface drops the empty namespace group.
+        manager.handle_interface_removed(ORIGIN1, "ns2", "eth1");
 
-        assert_eq!(manager.total_interface_count(), 1);
-        let ns = &manager.backends()["backend1"].namespaces["default"];
-        assert!(ns.tc_interfaces.contains_key("eth0"));
-        assert!(!ns.tc_interfaces.contains_key("eth1"));
+        let backends = manager.backends();
+        assert_eq!(backends[ORIGIN1].namespaces.len(), 1);
+        assert!(backends[ORIGIN1].namespaces.contains_key("ns1"));
+        assert!(!backends[ORIGIN1].namespaces.contains_key("ns2"));
     }
 
     #[test]
@@ -551,96 +462,30 @@ mod tests {
         let mut manager = BackendManager::new();
 
         // Backend comes alive
-        manager.handle_backend_liveliness("backend1".to_string(), true);
-        assert!(manager.backends().contains_key("backend1"));
-        assert!(manager.backends()["backend1"].disconnected_at.is_none());
+        manager.handle_backend_liveliness(ORIGIN1.to_string(), true);
+        assert!(manager.backends().contains_key(ORIGIN1));
+        assert!(manager.backends()[ORIGIN1].disconnected_at.is_none());
 
         // Add some data
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update);
-        assert!(manager.backends()["backend1"].is_connected);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
+        assert!(manager.backends()[ORIGIN1].is_connected);
 
         // Backend goes offline
-        manager.handle_backend_liveliness("backend1".to_string(), false);
-        assert!(!manager.backends()["backend1"].is_connected);
-        assert!(manager.backends()["backend1"].disconnected_at.is_some());
-    }
-
-    #[test]
-    fn test_interface_state_event_added() {
-        let mut manager = BackendManager::new();
-
-        // First add a backend with a namespace
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update);
-
-        // Add a new interface via event
-        let event = InterfaceStateEvent {
-            backend_name: "backend1".to_string(),
-            namespace: "default".to_string(),
-            interface: create_test_interface("eth1", "default"),
-            event_type: InterfaceEventType::Added,
-            timestamp: 0,
-        };
-        manager.handle_interface_state_event(event);
-
-        assert_eq!(manager.total_interface_count(), 2);
-        let ns = &manager.backends()["backend1"].namespaces["default"];
-        assert!(ns.tc_interfaces.contains_key("eth1"));
-    }
-
-    #[test]
-    fn test_interface_state_event_removed() {
-        let mut manager = BackendManager::new();
-
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0", "eth1"])],
-        );
-        manager.handle_interface_list_update(update);
-        assert_eq!(manager.total_interface_count(), 2);
-
-        // Remove an interface via event
-        let event = InterfaceStateEvent {
-            backend_name: "backend1".to_string(),
-            namespace: "default".to_string(),
-            interface: create_test_interface("eth1", "default"),
-            event_type: InterfaceEventType::Removed,
-            timestamp: 0,
-        };
-        manager.handle_interface_state_event(event);
-
-        assert_eq!(manager.total_interface_count(), 1);
-        let ns = &manager.backends()["backend1"].namespaces["default"];
-        assert!(!ns.tc_interfaces.contains_key("eth1"));
+        manager.handle_backend_liveliness(ORIGIN1.to_string(), false);
+        assert!(!manager.backends()[ORIGIN1].is_connected);
+        assert!(manager.backends()[ORIGIN1].disconnected_at.is_some());
     }
 
     #[test]
     fn test_cleanup_stale_backends() {
         let mut manager = BackendManager::new();
 
-        // Add a backend
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
 
         // Mark as disconnected with old timestamp (simulate disconnection >10 seconds ago)
-        if let Some(backend) = manager.backends_mut().get_mut("backend1") {
+        if let Some(backend) = manager.backends_mut().get_mut(ORIGIN1) {
             backend.is_connected = false;
-            // Set disconnected_at to 20 seconds ago
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            backend.disconnected_at = Some(current_time.saturating_sub(20));
+            backend.disconnected_at = Some(now_secs().saturating_sub(20));
         }
 
         // Cleanup should remove stale backend
@@ -653,21 +498,12 @@ mod tests {
     fn test_cleanup_keeps_recent_disconnections() {
         let mut manager = BackendManager::new();
 
-        // Add a backend
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
 
         // Mark as disconnected with recent timestamp (just now)
-        if let Some(backend) = manager.backends_mut().get_mut("backend1") {
+        if let Some(backend) = manager.backends_mut().get_mut(ORIGIN1) {
             backend.is_connected = false;
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            backend.disconnected_at = Some(current_time);
+            backend.disconnected_at = Some(now_secs());
         }
 
         // Cleanup should NOT remove recently disconnected backend
@@ -676,105 +512,91 @@ mod tests {
     }
 
     #[test]
-    fn test_backend_health_update() {
+    fn test_backend_health_update_sets_name() {
         let mut manager = BackendManager::new();
 
-        // Add a backend first
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update);
-
-        let initial_last_seen = manager.backends()["backend1"].last_seen;
-
-        // Small delay to ensure timestamp changes
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
+        let initial_last_seen = manager.backends()[ORIGIN1].last_seen;
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        // Health update should update last_seen
         let health = BackendHealthStatus {
-            backend_name: "backend1".to_string(),
+            host_id: ORIGIN1.to_string(),
+            backend_name: "lab-router".to_string(),
             status: "healthy".to_string(),
             timestamp: 0,
             metadata: BackendMetadata::default(),
             namespace_count: 1,
             interface_count: 1,
         };
-        manager.handle_backend_health_update(health);
+        manager.handle_backend_health_update(ORIGIN1, health);
 
-        // last_seen should be updated (or at least not earlier)
-        assert!(manager.backends()["backend1"].last_seen >= initial_last_seen);
+        // Display name comes from the health doc; routing key stays the origin.
+        assert_eq!(manager.backends()[ORIGIN1].name, "lab-router");
+        assert!(manager.backends()[ORIGIN1].last_seen >= initial_last_seen);
     }
 
     #[test]
     fn test_connected_backend_names() {
         let mut manager = BackendManager::new();
 
-        let update1 = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        let update2 = create_test_interface_list(
-            "backend2",
-            vec![create_test_namespace("default", vec!["eth1"])],
-        );
-
-        manager.handle_interface_list_update(update1);
-        manager.handle_interface_list_update(update2);
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
+        upsert_ns(&mut manager, ORIGIN2, "default", &["eth1"]);
 
         // Both connected
-        let connected = manager.connected_backend_names();
-        assert_eq!(connected.len(), 2);
+        assert_eq!(manager.connected_backend_names().len(), 2);
 
         // Disconnect one
-        manager.handle_backend_liveliness("backend1".to_string(), false);
+        manager.handle_backend_liveliness(ORIGIN1.to_string(), false);
 
         let connected = manager.connected_backend_names();
         assert_eq!(connected.len(), 1);
-        assert!(connected.contains(&"backend2".to_string()));
+        assert!(connected.contains(&ORIGIN2.to_string()));
     }
 
     #[test]
-    fn test_interface_update_preserves_tc_interface() {
+    fn test_interface_upsert_preserves_tc_interface() {
         let mut manager = BackendManager::new();
 
-        // Add initial interface
-        let update = create_test_interface_list(
-            "backend1",
-            vec![create_test_namespace("default", vec!["eth0"])],
-        );
-        manager.handle_interface_list_update(update);
-
-        // Verify interface exists
+        upsert_ns(&mut manager, ORIGIN1, "default", &["eth0"]);
         assert!(
-            manager.backends()["backend1"].namespaces["default"]
+            manager.backends()[ORIGIN1].namespaces["default"]
                 .tc_interfaces
                 .contains_key("eth0")
         );
 
-        // Send another update (same interface, different backend state)
+        // Re-upsert the same interface with a changed backend flag.
         let mut new_iface = create_test_interface("eth0", "default");
-        new_iface.has_tc_qdisc = true; // Now has TC configured
+        new_iface.has_tc_qdisc = true;
+        manager.handle_interface_upsert(ORIGIN1, new_iface);
 
-        let update2 = InterfaceListUpdate {
-            backend_name: "backend1".to_string(),
-            namespaces: vec![NetworkNamespace {
-                name: "default".to_string(),
-                id: Some(1),
-                is_active: true,
-                namespace_type: NamespaceType::Default,
-                interfaces: vec![new_iface],
-            }],
-            timestamp: 1,
-        };
-        manager.handle_interface_list_update(update2);
-
-        // TC interface should still exist after update
-        let backends = manager.backends();
+        // TC interface component is reused, not recreated.
         assert!(
-            backends["backend1"].namespaces["default"]
+            manager.backends()[ORIGIN1].namespaces["default"]
                 .tc_interfaces
                 .contains_key("eth0")
         );
+        assert_eq!(manager.total_interface_count(), 1);
+    }
+
+    #[test]
+    fn test_preset_upsert_and_remove() {
+        let mut manager = BackendManager::new();
+
+        let preset = CustomPreset {
+            id: "sat".to_string(),
+            name: "Satellite".to_string(),
+            description: "test".to_string(),
+            config: TcNetemConfig::default(),
+        };
+        manager.upsert_preset(ORIGIN1, preset.clone());
+        assert_eq!(manager.get_preset_list(ORIGIN1).map(|p| p.len()), Some(1));
+
+        // Upserting the same id replaces rather than duplicates.
+        manager.upsert_preset(ORIGIN1, preset);
+        assert_eq!(manager.get_preset_list(ORIGIN1).map(|p| p.len()), Some(1));
+
+        // Tombstone removes it.
+        manager.remove_preset(ORIGIN1, "sat");
+        assert_eq!(manager.get_preset_list(ORIGIN1).map(|p| p.len()), Some(0));
     }
 }

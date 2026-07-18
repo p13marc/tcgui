@@ -8,19 +8,66 @@ use std::sync::Arc;
 use tracing::{debug, error, info, instrument, warn};
 use zenoh::{Session, query::Query};
 
+use tcgui_shared::identity::LocalOrigin;
 use tcgui_shared::scenario::{
     ScenarioError, ScenarioExecutionRequest, ScenarioExecutionResponse, ScenarioExecutionUpdate,
     ScenarioRequest, ScenarioResponse,
 };
 use tcgui_shared::topics;
+use zenoh::key_expr::OwnedKeyExpr;
 
 use super::ScenarioManager;
+
+/// Reply to a scenario-management query on the queryable's **own concrete key**
+/// (never the echoed, possibly-wildcard `query.key_expr()` — RFC keyspace-v2
+/// 05 §2.1), routing the `Error` variant onto Zenoh's reply-error channel with a
+/// namespaced name (05 §3) rather than shipping a failure on the value channel.
+async fn reply_scenario(
+    query: &Query,
+    concrete_key: OwnedKeyExpr,
+    response: &ScenarioResponse,
+) -> Result<()> {
+    if let ScenarioResponse::Error { error } = response {
+        query
+            .reply_err(format!("error/scenario: {error:?}"))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reply_err to scenario query: {e}"))?;
+    } else {
+        let payload = serde_json::to_vec(response)?;
+        query
+            .reply(concrete_key, payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send scenario response: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Concrete-key + reply-error twin of [`reply_scenario`] for execution queries.
+async fn reply_execution(
+    query: &Query,
+    concrete_key: OwnedKeyExpr,
+    response: &ScenarioExecutionResponse,
+) -> Result<()> {
+    if let ScenarioExecutionResponse::Error { error } = response {
+        query
+            .reply_err(format!("error/execution: {error:?}"))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reply_err to execution query: {e}"))?;
+    } else {
+        let payload = serde_json::to_vec(response)?;
+        query
+            .reply(concrete_key, payload)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send execution response: {e}"))?;
+    }
+    Ok(())
+}
 
 /// Zenoh handlers for scenario management
 pub struct ScenarioZenohHandlers {
     scenario_manager: Arc<ScenarioManager>,
     session: Arc<Session>,
-    backend_name: String,
+    local_origin: LocalOrigin,
 }
 
 impl ScenarioZenohHandlers {
@@ -28,23 +75,23 @@ impl ScenarioZenohHandlers {
     pub fn new(
         scenario_manager: Arc<ScenarioManager>,
         session: Arc<Session>,
-        backend_name: String,
+        local_origin: LocalOrigin,
     ) -> Self {
         info!(
-            "Creating scenario Zenoh handlers for backend: {}",
-            backend_name
+            "Creating scenario Zenoh handlers for origin: {}",
+            local_origin.as_str()
         );
         Self {
             scenario_manager,
             session,
-            backend_name,
+            local_origin,
         }
     }
 
     /// Start the scenario management query handler
     #[instrument(skip(self))]
     pub async fn start_query_handler(&self) -> Result<()> {
-        let scenario_query_topic = topics::scenario_query_service(&self.backend_name);
+        let scenario_query_topic = topics::rpc_scenario(&self.local_origin);
         let queryable = self
             .session
             .declare_queryable(&scenario_query_topic)
@@ -57,16 +104,16 @@ impl ScenarioZenohHandlers {
         );
 
         let scenario_manager = self.scenario_manager.clone();
-        let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
 
         tokio::spawn(async move {
             while let Ok(query) = queryable.recv_async().await {
                 let scenario_manager = scenario_manager.clone();
-                let backend_name = backend_name.clone();
+                let local_origin = local_origin.clone();
 
                 tokio::spawn(async move {
                     if let Err(e) =
-                        Self::handle_scenario_query(&scenario_manager, &backend_name, query).await
+                        Self::handle_scenario_query(&scenario_manager, &local_origin, query).await
                     {
                         error!("Error handling scenario query: {}", e);
                     }
@@ -81,7 +128,7 @@ impl ScenarioZenohHandlers {
     #[instrument(skip(scenario_manager, query))]
     async fn handle_scenario_query(
         scenario_manager: &ScenarioManager,
-        backend_name: &str,
+        local_origin: &LocalOrigin,
         query: Query,
     ) -> Result<()> {
         debug!(
@@ -97,24 +144,14 @@ impl ScenarioZenohHandlers {
                 let error_response = ScenarioResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
-                let response_payload = serde_json::to_vec(&error_response)?;
-                query
-                    .reply(query.key_expr().clone(), response_payload)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to send error response: {}", e))?;
-                return Ok(());
+                return reply_scenario(&query, topics::rpc_scenario(local_origin), &error_response)
+                    .await;
             }
         };
 
         // Process the request
         let response = Self::process_scenario_request(scenario_manager, request).await;
-
-        // Send the response
-        let response_payload = serde_json::to_vec(&response)?;
-        query
-            .reply(query.key_expr().clone(), response_payload)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send scenario response: {}", e))?;
+        reply_scenario(&query, topics::rpc_scenario(local_origin), &response).await?;
 
         debug!("Scenario query processed successfully");
         Ok(())
@@ -219,7 +256,7 @@ impl ScenarioZenohHandlers {
 pub struct ScenarioExecutionHandlers {
     scenario_manager: Arc<ScenarioManager>,
     session: Arc<Session>,
-    backend_name: String,
+    local_origin: LocalOrigin,
 }
 
 impl ScenarioExecutionHandlers {
@@ -227,23 +264,23 @@ impl ScenarioExecutionHandlers {
     pub fn new(
         scenario_manager: Arc<ScenarioManager>,
         session: Arc<Session>,
-        backend_name: String,
+        local_origin: LocalOrigin,
     ) -> Self {
         info!(
-            "Creating scenario execution Zenoh handlers for backend: {}",
-            backend_name
+            "Creating scenario execution Zenoh handlers for origin: {}",
+            local_origin.as_str()
         );
         Self {
             scenario_manager,
             session,
-            backend_name,
+            local_origin,
         }
     }
 
     /// Start the scenario execution query handler
     #[instrument(skip(self))]
     pub async fn start_query_handler(&self) -> Result<()> {
-        let execution_query_topic = topics::scenario_execution_query_service(&self.backend_name);
+        let execution_query_topic = topics::rpc_execution_serve(&self.local_origin);
         let queryable = self
             .session
             .declare_queryable(&execution_query_topic)
@@ -256,16 +293,16 @@ impl ScenarioExecutionHandlers {
         );
 
         let scenario_manager = self.scenario_manager.clone();
-        let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
 
         tokio::spawn(async move {
             while let Ok(query) = queryable.recv_async().await {
                 let scenario_manager = scenario_manager.clone();
-                let backend_name = backend_name.clone();
+                let local_origin = local_origin.clone();
 
                 tokio::spawn(async move {
                     if let Err(e) =
-                        Self::handle_execution_query(&scenario_manager, &backend_name, query).await
+                        Self::handle_execution_query(&scenario_manager, &local_origin, query).await
                     {
                         error!("Error handling execution query: {}", e);
                     }
@@ -276,11 +313,41 @@ impl ScenarioExecutionHandlers {
         Ok(())
     }
 
+    /// The `(namespace, interface)` an execution request targets, for building
+    /// the concrete reply key. `ListActive` is fleet-wide and carries neither, so
+    /// it falls back to a reserved `all/all` subject (integrator-owned).
+    fn request_target(request: &ScenarioExecutionRequest) -> (String, String) {
+        match request {
+            ScenarioExecutionRequest::Start {
+                namespace,
+                interface,
+                ..
+            }
+            | ScenarioExecutionRequest::Stop {
+                namespace,
+                interface,
+            }
+            | ScenarioExecutionRequest::Pause {
+                namespace,
+                interface,
+            }
+            | ScenarioExecutionRequest::Resume {
+                namespace,
+                interface,
+            }
+            | ScenarioExecutionRequest::Status {
+                namespace,
+                interface,
+            } => (namespace.clone(), interface.clone()),
+            ScenarioExecutionRequest::ListActive => ("all".to_string(), "all".to_string()),
+        }
+    }
+
     /// Handle individual scenario execution query
     #[instrument(skip(scenario_manager, query))]
     async fn handle_execution_query(
         scenario_manager: &ScenarioManager,
-        backend_name: &str,
+        local_origin: &LocalOrigin,
         query: Query,
     ) -> Result<()> {
         debug!(
@@ -296,24 +363,23 @@ impl ScenarioExecutionHandlers {
                 let error_response = ScenarioExecutionResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
-                let response_payload = serde_json::to_vec(&error_response)?;
-                query
-                    .reply(query.key_expr().clone(), response_payload)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to send error response: {}", e))?;
-                return Ok(());
+                // Error rides reply_err; the key is unused for the Error variant.
+                return reply_execution(
+                    &query,
+                    topics::rpc_execution(local_origin, "all", "all"),
+                    &error_response,
+                )
+                .await;
             }
         };
 
+        // Concrete reply key derived from the request's target interface.
+        let (ns, iface) = Self::request_target(&request);
+        let reply_key = topics::rpc_execution(local_origin, &ns, &iface);
+
         // Process the request
         let response = Self::process_execution_request(scenario_manager, request).await;
-
-        // Send the response
-        let response_payload = serde_json::to_vec(&response)?;
-        query
-            .reply(query.key_expr().clone(), response_payload)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send execution response: {}", e))?;
+        reply_execution(&query, reply_key, &response).await?;
 
         debug!("Execution query processed successfully");
         Ok(())
@@ -464,7 +530,7 @@ impl ScenarioExecutionHandlers {
 
         let session = self.session.clone();
         let scenario_manager = self.scenario_manager.clone();
-        let backend_name = self.backend_name.clone();
+        let local_origin = self.local_origin.clone();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
@@ -479,15 +545,15 @@ impl ScenarioExecutionHandlers {
                         namespace: execution.target_namespace.clone(),
                         interface: execution.target_interface.clone(),
                         execution: execution.clone(),
-                        backend_name: backend_name.clone(),
+                        backend_name: local_origin.as_str().to_string(),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_millis() as u64,
                     };
 
-                    let update_topic = topics::scenario_execution_updates(
-                        &backend_name,
+                    let update_topic = topics::state_execution(
+                        &local_origin,
                         &execution.target_namespace,
                         &execution.target_interface,
                     );

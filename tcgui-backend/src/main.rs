@@ -3,16 +3,14 @@ pub mod config;
 mod container;
 mod diagnostics;
 mod hw_shaping;
-mod interfaces;
 mod namespace_watcher;
 mod netlink_events;
 mod network;
 pub mod preset_loader;
+mod registry;
 pub mod scenario;
-pub mod services;
 mod tc_commands;
 mod tc_config;
-mod utils;
 mod zenoh_query;
 
 #[cfg(test)]
@@ -29,7 +27,7 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 
 use tcgui_shared::{
     NetworkInterface, TcConfigUpdate, TcConfiguration, TcStatisticsUpdate, ZenohConfig,
-    errors::TcguiError, presets::PresetList, topics,
+    errors::TcguiError, identity::LocalOrigin, presets::PresetList, topics,
 };
 
 use bandwidth::BandwidthMonitor;
@@ -52,8 +50,12 @@ struct TcBackend {
     execution_handlers: Option<ScenarioExecutionHandlers>,
     _preset_loader: PresetLoader,
     preset_list: PresetList,
-    preset_list_publisher: AdvancedPublisher<'static>,
+    /// Per-preset state publishers keyed by preset id (`state/tc/preset/{id}`).
+    preset_publishers: HashMap<String, AdvancedPublisher<'static>>,
     exclude_loopback: bool,
+    /// This host's minted origin — the identity every published key is built from.
+    local_origin: LocalOrigin,
+    /// Operator-chosen display label — used only in the health document, never as a key.
     backend_name: String,
     tc_config_publishers: HashMap<String, AdvancedPublisher<'static>>, // namespace/interface -> publisher
     tc_stats_publishers: HashMap<String, Publisher<'static>>, // namespace/interface -> publisher (best-effort)
@@ -87,28 +89,36 @@ impl TcBackend {
             zenoh_config.mode, zenoh_config.endpoints
         );
 
-        // Declare liveliness for this specific backend service
-        let backend_health_topic = topics::backend_health(&backend_name);
+        // Mint this host's origin once; every published key is built from it.
+        let local_origin = LocalOrigin::mint();
+        info!("[BACKEND] Host origin minted: {}", local_origin.as_str());
+
+        // Declare the liveliness token on the reserved `state/alive` leaf — distinct
+        // from the health document (which is a normal Put on `state/health`).
+        let alive_topic = topics::state_alive(&local_origin);
         let liveliness_token = session
             .liveliness()
-            .declare_token(&backend_health_topic)
+            .declare_token(&alive_topic)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare liveliness: {}", e),
             })?;
         info!(
-            "[BACKEND] Backend '{}' health liveliness declared on topic: {}",
+            "[BACKEND] Backend '{}' liveliness declared on: {}",
             backend_name,
-            backend_health_topic.as_str()
+            alive_topic.as_str()
         );
 
-        // Initialize managers with backend name for topic routing
+        // Initialize managers with the host origin for key building
         // NetworkManager now creates its own nlink connection internally
-        let network_manager = NetworkManager::new(session.clone(), backend_name.clone()).await?;
+        let network_manager =
+            NetworkManager::new(session.clone(), local_origin.clone(), backend_name.clone())
+                .await?;
         info!("[BACKEND] Network manager initialized with nlink");
 
         // Create bandwidth monitor and share container cache for container namespace support
-        let mut bandwidth_monitor = BandwidthMonitor::new(session.clone(), backend_name.clone());
+        let mut bandwidth_monitor =
+            BandwidthMonitor::new(session.clone(), local_origin.clone(), backend_name.clone());
         bandwidth_monitor.set_container_cache(network_manager.container_cache());
 
         let tc_manager = TcCommandManager::new();
@@ -121,6 +131,7 @@ impl TcBackend {
             .collect();
         let scenario_manager = std::sync::Arc::new(ScenarioManager::with_options(
             session_arc.clone(),
+            local_origin.clone(),
             backend_name.clone(),
             tc_manager.clone(),
             scenario_dirs_paths,
@@ -131,13 +142,13 @@ impl TcBackend {
         let scenario_handlers = ScenarioZenohHandlers::new(
             scenario_manager.clone(),
             session_arc.clone(),
-            backend_name.clone(),
+            local_origin.clone(),
         );
 
         let execution_handlers = ScenarioExecutionHandlers::new(
             scenario_manager.clone(),
             session_arc.clone(),
-            backend_name.clone(),
+            local_origin.clone(),
         );
 
         // Initialize preset loader with configuration
@@ -160,23 +171,29 @@ impl TcBackend {
             );
         }
 
-        // Create preset list publisher with history cache for late-joining frontends
-        let preset_list_topic = topics::preset_list(&backend_name);
-        let preset_list_publisher = session
-            .declare_publisher(preset_list_topic.clone())
-            .cache(CacheConfig::default().max_samples(1))
-            .sample_miss_detection(
-                MissDetectionConfig::default().heartbeat(Duration::from_millis(2000)),
-            )
-            .publisher_detection()
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to create preset list publisher: {}", e),
-            })?;
-        info!(
-            "[BACKEND] Created preset list publisher on topic: {}",
-            preset_list_topic.as_str()
-        );
+        // Create one state publisher per preset with history cache for late-joining
+        // frontends. Each preset is an independent library entry keyed by its id.
+        let mut preset_publishers = HashMap::new();
+        for preset in preset_list.all() {
+            let preset_topic = topics::state_preset(&local_origin, &preset.id);
+            let publisher = session
+                .declare_publisher(preset_topic.clone())
+                .cache(CacheConfig::default().max_samples(1))
+                .sample_miss_detection(
+                    MissDetectionConfig::default().heartbeat(Duration::from_millis(2000)),
+                )
+                .publisher_detection()
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to create preset publisher: {}", e),
+                })?;
+            info!(
+                "[BACKEND] Created preset publisher for '{}' on: {}",
+                preset.id,
+                preset_topic.as_str()
+            );
+            preset_publishers.insert(preset.id.clone(), publisher);
+        }
 
         Ok(Self {
             session,
@@ -190,8 +207,9 @@ impl TcBackend {
             execution_handlers: Some(execution_handlers),
             _preset_loader: preset_loader,
             preset_list,
-            preset_list_publisher,
+            preset_publishers,
             exclude_loopback,
+            local_origin,
             backend_name,
             tc_config_publishers: HashMap::new(),
             tc_stats_publishers: HashMap::new(),
@@ -224,8 +242,8 @@ impl TcBackend {
     async fn run(&mut self) -> Result<()> {
         info!("[BACKEND] Starting TC backend");
 
-        // Set up TC query handler
-        let tc_query_topic = topics::tc_query_service(&self.backend_name);
+        // Set up TC query handler (serve key wildcards the per-interface subject)
+        let tc_query_topic = topics::rpc_config_serve(&self.local_origin);
         let tc_queryable = self
             .session
             .declare_queryable(&tc_query_topic)
@@ -240,7 +258,7 @@ impl TcBackend {
         );
 
         // Set up Interface control query handler
-        let interface_query_topic = topics::interface_query_service(&self.backend_name);
+        let interface_query_topic = topics::rpc_interface_serve(&self.local_origin);
         let interface_queryable = self
             .session
             .declare_queryable(&interface_query_topic)
@@ -255,7 +273,7 @@ impl TcBackend {
         );
 
         // Set up Diagnostics query handler
-        let diagnostics_query_topic = topics::diagnostics_query_service(&self.backend_name);
+        let diagnostics_query_topic = topics::rpc_diagnostics(&self.local_origin);
         let diagnostics_queryable = self
             .session
             .declare_queryable(&diagnostics_query_topic)
@@ -267,6 +285,23 @@ impl TcBackend {
             "[BACKEND] Backend '{}' Diagnostics query handler declared on: {}",
             self.backend_name,
             diagnostics_query_topic.as_str()
+        );
+
+        // Set up introspect query handler — serves this producer's registry
+        // slice as TOML so generic bus tooling (zenctl) needs no compiled-in
+        // registry (RFC keyspace-v2 08 §6).
+        let introspect_topic = topics::rpc_introspect(&self.local_origin);
+        let introspect_queryable = self
+            .session
+            .declare_queryable(&introspect_topic)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to declare introspect queryable: {}", e),
+            })?;
+        info!(
+            "[BACKEND] Backend '{}' introspect handler declared on: {}",
+            self.backend_name,
+            introspect_topic.as_str()
         );
 
         // Initialize scenario management services
@@ -447,6 +482,21 @@ impl TcBackend {
                         }
                         Err(e) => {
                             error!("Error receiving Diagnostics query: {}", e);
+                        }
+                    }
+                }
+
+                // Handle introspect queries (serve the registry slice as TOML)
+                query = introspect_queryable.recv_async() => {
+                    match query {
+                        Ok(query) => {
+                            let reply_key = topics::rpc_introspect(&self.local_origin);
+                            if let Err(e) = query.reply(reply_key, registry::REGISTRY_TOML).await {
+                                error!("Failed to reply to introspect query: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error receiving introspect query: {}", e);
                         }
                     }
                 }
@@ -723,7 +773,7 @@ impl TcBackend {
         let key = format!("{}/{}", namespace, interface);
 
         if !self.tc_stats_publishers.contains_key(&key) {
-            let topic = topics::tc_statistics(&self.backend_name, namespace, interface);
+            let topic = topics::telemetry_qdisc(&self.local_origin, namespace, interface);
             tracing::debug!("Creating TC stats publisher for {}: {}", key, topic);
 
             let publisher = self.session.declare_publisher(topic).await.map_err(|e| {
@@ -1059,27 +1109,43 @@ impl TcBackend {
         let backend_name = self.backend_name.clone();
         let publisher = self.get_tc_config_publisher(namespace, interface).await?;
 
-        let tc_update = TcConfigUpdate {
-            namespace: namespace.to_string(),
-            interface: interface.to_string(),
-            backend_name,
-            timestamp,
-            configuration: configuration.clone(),
-            has_tc: configuration.is_some(),
-        };
+        match configuration {
+            Some(configuration) => {
+                let tc_update = TcConfigUpdate {
+                    namespace: namespace.to_string(),
+                    interface: interface.to_string(),
+                    backend_name,
+                    timestamp,
+                    configuration: Some(configuration),
+                    has_tc: true,
+                };
 
-        let payload = serde_json::to_string(&tc_update)?;
-        publisher
-            .put(payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to publish TC config update: {}", e),
-            })?;
+                let payload = serde_json::to_string(&tc_update)?;
+                publisher
+                    .put(payload)
+                    .await
+                    .map_err(|e| TcguiError::ZenohError {
+                        message: format!("Failed to publish TC config update: {}", e),
+                    })?;
 
-        info!(
-            "Published TC config update for {}/{}: has_tc={}",
-            namespace, interface, tc_update.has_tc
-        );
+                info!("Published TC config update for {}/{}", namespace, interface);
+            }
+            None => {
+                // Config cleared → publish a Delete tombstone on the state key
+                // (never a None-payload Put — RFC keyspace-v2 04 §1.2).
+                publisher
+                    .delete()
+                    .await
+                    .map_err(|e| TcguiError::ZenohError {
+                        message: format!("Failed to publish TC config tombstone: {}", e),
+                    })?;
+
+                info!(
+                    "Published TC config tombstone for {}/{}",
+                    namespace, interface
+                );
+            }
+        }
         Ok(())
     }
 }

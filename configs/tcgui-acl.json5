@@ -1,0 +1,84 @@
+// Example Zenoh router access-control config for a tcgui fleet (keyspace-v2).
+//
+// A tcgui backend can apply `netem` — delay, loss, rate caps — to a production
+// NIC. That is exactly the "dangerous procedure deniable per-key, because the
+// key IS the target" case the RFC's ACL chapter (09 §3) is written for, and it
+// wants `no-remote-actions` far more than a telemetry sensor ever did. This
+// config is only expressible because the actuated resource is a PATH chunk
+// (`@rpc/tc/config/{ns}/{if}/set`), not a `?if=` selector — amendment G6: Zenoh
+// ACL matches keyexpr *inclusion* and cannot see selector parameters.
+//
+// Apply on the router with:  zenohd -c tcgui-acl.json5
+// (or merge the `access_control` block into an existing router config).
+//
+// Model:
+//   * The base `tcgui` is the session namespace, so on the wire keys are
+//     `tcgui/v1/<origin>/<class>/tc/<subject…>`.
+//   * The console (frontend) may READ any plane and CALL read-only @rpc
+//     (diagnostics, introspect) fleet-wide, but is DENIED the write procedures
+//     by default — an operator is allow-listed per host, or per interface.
+//   * Backends publish only under their own origin (enforced by the grammar;
+//     the ACL additionally denies a backend from writing to another origin).
+{
+  access_control: {
+    enabled: true,
+    default_permission: "allow",
+
+    rules: [
+      // ---- the dangerous surface: fleet-wide TC writes, denied by default ---
+      {
+        id: "no-remote-tc-writes",
+        permission: "deny",
+        flows: ["egress"],
+        messages: ["query"], // @rpc calls travel as Zenoh queries
+        key_exprs: [
+          "tcgui/v1/*/@rpc/tc/config/**",
+          "tcgui/v1/*/@rpc/tc/interface/**",
+          "tcgui/v1/*/@rpc/tc/execution/**",
+          "tcgui/v1/*/@rpc/tc/scenario/set",
+        ],
+      },
+      // ---- an operator explicitly trusted to shape ONE host -----------------
+      {
+        id: "allow-tc-write-lab-router",
+        permission: "allow",
+        flows: ["egress"],
+        messages: ["query"],
+        // Replace the origin with the target host id (h-<12hex>). Because the
+        // interface is a path chunk, this can be narrowed further, e.g.
+        //   .../@rpc/tc/config/default/eth1/set   (eth1 only, never the mgmt NIC)
+        key_exprs: [
+          "tcgui/v1/h-000000000000/@rpc/tc/**",
+        ],
+      },
+      // ---- console may always READ ------------------------------------------
+      {
+        id: "allow-reads",
+        permission: "allow",
+        flows: ["egress"],
+        messages: ["query", "declare_subscriber"],
+        key_exprs: [
+          "tcgui/v1/*/state/**",
+          "tcgui/v1/*/telemetry/**",
+          "tcgui/v1/*/events/**",
+          "tcgui/v1/*/@rpc/tc/diagnostics",
+          "tcgui/v1/*/@rpc/tc/introspect",
+        ],
+      },
+    ],
+
+    // Map credentials to subjects. CN comes from the mTLS client certificate;
+    // swap in your fleet's real identities.
+    subjects: [
+      { id: "console",  cert_common_names: ["tcgui-console"] },
+      { id: "operator", cert_common_names: ["tcgui-operator-alice"] },
+    ],
+
+    // Bind subjects to rules. `console` gets reads + the blanket write-deny;
+    // `operator` additionally gets the per-host write allow.
+    policies: [
+      { subjects: ["console"],  rules: ["allow-reads", "no-remote-tc-writes"] },
+      { subjects: ["operator"], rules: ["allow-reads", "allow-tc-write-lab-router"] },
+    ],
+  },
+}

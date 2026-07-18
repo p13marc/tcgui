@@ -461,7 +461,8 @@ fn render_status_line<'a>(
 
                 backend_statuses.push(icon.svg_sized_colored(scaled(14, zoom), color).into());
                 backend_statuses.push(
-                    text(backend_name.clone())
+                    // Display the operator-chosen name; the map key is the origin.
+                    text(backend_group.name.clone())
                         .size(scaled(14, zoom))
                         .style(move |_| text::Style { color: Some(color) })
                         .into(),
@@ -861,6 +862,7 @@ fn render_backend_namespaces<'a>(
 
             let section = render_namespace_section(
                 backend_name,
+                &backend_group.name,
                 namespace_name,
                 namespace_group,
                 &backend_group.preset_list,
@@ -885,6 +887,7 @@ fn render_backend_namespaces<'a>(
 #[allow(clippy::too_many_arguments)]
 fn render_namespace_section<'a>(
     backend_name: &'a str,
+    backend_label: &'a str,
     namespace_name: &'a str,
     namespace_group: &'a NamespaceGroup,
     preset_list: &'a tcgui_shared::presets::PresetList,
@@ -903,6 +906,7 @@ fn render_namespace_section<'a>(
 ) -> Element<'a, TcGuiMessage> {
     let namespace_header = render_namespace_header(
         backend_name,
+        backend_label,
         namespace_name,
         namespace_key.clone(),
         is_hidden,
@@ -973,6 +977,7 @@ fn render_namespace_section<'a>(
 #[allow(clippy::too_many_arguments)]
 fn render_namespace_header<'a>(
     backend_name: &'a str,
+    backend_label: &'a str,
     namespace_name: &'a str,
     namespace_key: String,
     is_hidden: bool,
@@ -1009,7 +1014,7 @@ fn render_namespace_header<'a>(
         column![
             row![
                 namespace_icon.svg_sized_colored(scaled(20, zoom), colors.text_primary),
-                text(format!(" {} ({})", display_name, backend_name))
+                text(format!(" {} ({})", display_name, backend_label))
                     .size(scaled(20, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary),
@@ -1027,7 +1032,7 @@ fn render_namespace_header<'a>(
         column![
             row![
                 namespace_icon.svg_sized_colored(scaled(20, zoom), colors.text_primary),
-                text(format!(" {} ({})", display_name, backend_name))
+                text(format!(" {} ({})", display_name, backend_label))
                     .size(scaled(20, zoom))
                     .style(move |_| text::Style {
                         color: Some(colors.text_primary),

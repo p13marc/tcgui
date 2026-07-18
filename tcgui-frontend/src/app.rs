@@ -137,14 +137,30 @@ impl TcGui {
     pub fn update(&mut self, message: TcGuiMessage) -> Task<TcGuiMessage> {
         match message {
             // Backend-related messages
-            TcGuiMessage::InterfaceListUpdate(interface_update) => {
+            TcGuiMessage::InterfaceUpsert {
+                backend_name,
+                interface,
+            } => {
                 self.backend_manager
-                    .handle_interface_list_update(interface_update);
+                    .handle_interface_upsert(&backend_name, interface);
+                Task::none()
+            }
+            TcGuiMessage::InterfaceRemoved {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                self.backend_manager.handle_interface_removed(
+                    &backend_name,
+                    &namespace,
+                    &interface,
+                );
                 Task::none()
             }
             TcGuiMessage::BackendHealthUpdate(health_status) => {
+                let origin = health_status.host_id.clone();
                 self.backend_manager
-                    .handle_backend_health_update(health_status);
+                    .handle_backend_health_update(&origin, health_status);
                 Task::none()
             }
             TcGuiMessage::BackendLiveliness {
@@ -161,11 +177,6 @@ impl TcGui {
                         self.scenario_manager.set_loading(&backend_name, false);
                     }
                 }
-                Task::none()
-            }
-            TcGuiMessage::InterfaceStateEvent(state_event) => {
-                self.backend_manager
-                    .handle_interface_state_event(state_event);
                 Task::none()
             }
             TcGuiMessage::TcConfigUpdate(tc_config_update) => {
@@ -202,6 +213,14 @@ impl TcGui {
                     );
                     self.notify(response.message);
                 }
+                Task::none()
+            }
+            TcGuiMessage::QueryError {
+                backend_name,
+                error,
+            } => {
+                tracing::warn!("Backend '{}' query error: {}", backend_name, error);
+                self.notify(error);
                 Task::none()
             }
             TcGuiMessage::DismissNotification(index) => {
@@ -292,6 +311,40 @@ impl TcGui {
                     // Update active execution state (with timestamp-based deduplication)
                     self.scenario_manager.handle_execution_update(*update);
                 }
+                Task::none()
+            }
+            TcGuiMessage::ScenarioExecutionRemoved {
+                backend_name,
+                namespace,
+                interface,
+            } => {
+                self.scenario_manager
+                    .remove_execution(&backend_name, &namespace, &interface);
+                Task::none()
+            }
+            // State-plane scenario library upsert / removal
+            TcGuiMessage::ScenarioUpsert {
+                backend_name,
+                scenario,
+            } => {
+                self.scenario_manager
+                    .upsert_scenario(backend_name, *scenario);
+                Task::none()
+            }
+            TcGuiMessage::ScenarioRemoved { backend_name, id } => {
+                self.scenario_manager.remove_scenario(&backend_name, &id);
+                Task::none()
+            }
+            // State-plane preset library upsert / removal
+            TcGuiMessage::PresetUpsert {
+                backend_name,
+                preset,
+            } => {
+                self.backend_manager.upsert_preset(&backend_name, preset);
+                Task::none()
+            }
+            TcGuiMessage::PresetRemoved { backend_name, id } => {
+                self.backend_manager.remove_preset(&backend_name, &id);
                 Task::none()
             }
 
@@ -651,22 +704,6 @@ impl TcGui {
                 &mut self.ui_state,
                 &mut self.scenario_manager,
             ),
-
-            // Preset list updates from backend
-            TcGuiMessage::PresetListUpdate {
-                backend_name,
-                preset_list,
-            } => {
-                info!(
-                    "Received preset list from '{}' with {} presets",
-                    backend_name,
-                    preset_list.len()
-                );
-                // Store preset list in backend manager for future use
-                self.backend_manager
-                    .update_preset_list(&backend_name, preset_list);
-                Task::none()
-            }
         }
     }
 
@@ -722,14 +759,24 @@ impl TcGui {
             event::listen().filter_map(Self::handle_zoom_event),
             // Zenoh events subscription
             self.zenoh_manager.subscription().map(|event| match event {
-                ZenohEvent::InterfaceListUpdate(interface_update) => {
-                    TcGuiMessage::InterfaceListUpdate(interface_update)
-                }
+                ZenohEvent::InterfaceUpsert {
+                    backend_name,
+                    interface,
+                } => TcGuiMessage::InterfaceUpsert {
+                    backend_name,
+                    interface,
+                },
+                ZenohEvent::InterfaceRemoved {
+                    backend_name,
+                    namespace,
+                    interface,
+                } => TcGuiMessage::InterfaceRemoved {
+                    backend_name,
+                    namespace,
+                    interface,
+                },
                 ZenohEvent::BandwidthUpdate(bandwidth_update) => {
                     TcGuiMessage::BandwidthUpdate(bandwidth_update)
-                }
-                ZenohEvent::InterfaceStateEvent(state_event) => {
-                    TcGuiMessage::InterfaceStateEvent(state_event)
                 }
                 ZenohEvent::BackendHealthUpdate(health_status) => {
                     TcGuiMessage::BackendHealthUpdate(health_status)
@@ -749,6 +796,25 @@ impl TcGui {
                 }
                 ZenohEvent::ScenarioExecutionUpdate(execution_update) => {
                     TcGuiMessage::ScenarioExecutionUpdate(execution_update)
+                }
+                ZenohEvent::ScenarioExecutionRemoved {
+                    backend_name,
+                    namespace,
+                    interface,
+                } => TcGuiMessage::ScenarioExecutionRemoved {
+                    backend_name,
+                    namespace,
+                    interface,
+                },
+                ZenohEvent::ScenarioUpsert {
+                    backend_name,
+                    scenario,
+                } => TcGuiMessage::ScenarioUpsert {
+                    backend_name,
+                    scenario,
+                },
+                ZenohEvent::ScenarioRemoved { backend_name, id } => {
+                    TcGuiMessage::ScenarioRemoved { backend_name, id }
                 }
                 ZenohEvent::ConnectionStatus(connected) => TcGuiMessage::BackendConnectionStatus {
                     backend_name: "unknown".to_string(),
@@ -801,13 +867,23 @@ impl TcGui {
                     backend_name,
                     response,
                 },
-                ZenohEvent::PresetListUpdate {
+                ZenohEvent::QueryError {
                     backend_name,
-                    preset_list,
-                } => TcGuiMessage::PresetListUpdate {
+                    error,
+                } => TcGuiMessage::QueryError {
                     backend_name,
-                    preset_list,
+                    error,
                 },
+                ZenohEvent::PresetUpsert {
+                    backend_name,
+                    preset,
+                } => TcGuiMessage::PresetUpsert {
+                    backend_name,
+                    preset,
+                },
+                ZenohEvent::PresetRemoved { backend_name, id } => {
+                    TcGuiMessage::PresetRemoved { backend_name, id }
+                }
             }),
             // Timer for periodic backend cleanup (every 3 seconds)
             iced::time::every(std::time::Duration::from_secs(3))
