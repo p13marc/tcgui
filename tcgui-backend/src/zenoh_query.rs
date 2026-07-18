@@ -24,22 +24,49 @@ use crate::TcBackend;
 use crate::{diagnostics, tc_config};
 
 impl TcBackend {
-    /// Reply to a TC query with a failure `TcResponse` (used for rejected input).
-    async fn reply_tc_error(&self, query: &zenoh::query::Query, message: String) -> Result<()> {
-        let response = TcResponse {
-            success: false,
-            message,
-            applied_config: None,
-            error_code: Some(22), // EINVAL
-        };
-        let response_payload = serde_json::to_string(&response)?;
+    /// Reply to a query with a success value on the queryable's **own concrete
+    /// key** — never the echoed `query.key_expr()`, which for a `*`-origin
+    /// fan-in is the shared wildcard key that Zenoh consolidation collapses to a
+    /// single surviving reply (RFC keyspace-v2 05 §2.1). Passing the concrete
+    /// service key keeps every backend's reply distinct.
+    async fn reply_value(
+        &self,
+        query: &zenoh::query::Query,
+        concrete_key: zenoh::key_expr::OwnedKeyExpr,
+        payload: String,
+    ) -> Result<()> {
         query
-            .reply(query.key_expr(), response_payload)
+            .reply(concrete_key, payload)
             .await
             .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to TC query: {}", e),
+                message: format!("Failed to reply to query: {e}"),
             })?;
         Ok(())
+    }
+
+    /// Signal a failure on Zenoh's **reply-error channel** with a namespaced
+    /// error name (RFC keyspace-v2 05 §3: a value reply always means success; a
+    /// failure always rides `reply_err`). `error_name` is a stable
+    /// `error/<service>[/<kind>]` slug; `message` carries the human detail.
+    async fn reply_query_error(
+        &self,
+        query: &zenoh::query::Query,
+        error_name: &str,
+        message: &str,
+    ) -> Result<()> {
+        query
+            .reply_err(format!("{error_name}: {message}"))
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to reply_err to query: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Reject a TC query on the reply-error channel (used for invalid input).
+    async fn reply_tc_error(&self, query: &zenoh::query::Query, message: String) -> Result<()> {
+        self.reply_query_error(query, "error/tc/invalid-request", &message)
+            .await
     }
 
     #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
@@ -342,14 +369,20 @@ impl TcBackend {
             }
         };
 
-        // Send response back to query
-        let response_payload = serde_json::to_string(&response)?;
-        query
-            .reply(query.key_expr(), response_payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to TC query: {}", e),
-            })?;
+        // Success rides the value channel on our concrete key; failure rides
+        // reply_err (RFC 05 §2.1 / §3).
+        if response.success {
+            let payload = serde_json::to_string(&response)?;
+            self.reply_value(
+                &query,
+                topics::tc_query_service(&self.backend_name),
+                payload,
+            )
+            .await?;
+        } else {
+            self.reply_query_error(&query, "error/tc/apply", &response.message)
+                .await?;
+        }
 
         Ok(())
     }
@@ -384,20 +417,13 @@ impl TcBackend {
                 "Rejecting interface request for {}/{}: {}",
                 request.namespace, request.interface, reason
             );
-            let response = InterfaceControlResponse {
-                success: false,
-                message: format!("Invalid request: {reason}"),
-                new_state: false,
-                error_code: Some(22), // EINVAL
-            };
-            let response_payload = serde_json::to_string(&response)?;
-            query
-                .reply(query.key_expr(), response_payload)
-                .await
-                .map_err(|e| TcguiError::ZenohError {
-                    message: format!("Failed to reply to interface query: {}", e),
-                })?;
-            return Ok(());
+            return self
+                .reply_query_error(
+                    &query,
+                    "error/interface/invalid-request",
+                    &format!("Invalid request: {reason}"),
+                )
+                .await;
         }
 
         let response = match &request.operation {
@@ -449,14 +475,18 @@ impl TcBackend {
             }
         };
 
-        // Send response back to query
-        let response_payload = serde_json::to_string(&response)?;
-        query
-            .reply(query.key_expr(), response_payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to Interface query: {}", e),
-            })?;
+        if response.success {
+            let payload = serde_json::to_string(&response)?;
+            self.reply_value(
+                &query,
+                topics::interface_query_service(&self.backend_name),
+                payload,
+            )
+            .await?;
+        } else {
+            self.reply_query_error(&query, "error/interface", &response.message)
+                .await?;
+        }
 
         Ok(())
     }
@@ -515,19 +545,22 @@ impl TcBackend {
             }
         };
 
-        // Send response back to query
-        let response_payload = serde_json::to_string(&response)?;
-        query
-            .reply(query.key_expr(), response_payload)
-            .await
-            .map_err(|e| TcguiError::ZenohError {
-                message: format!("Failed to reply to Diagnostics query: {}", e),
-            })?;
-
-        info!(
-            "Diagnostics completed for {}/{}: {}",
-            request.namespace, request.interface, response.message
-        );
+        if response.success {
+            let payload = serde_json::to_string(&response)?;
+            self.reply_value(
+                &query,
+                topics::diagnostics_query_service(&self.backend_name),
+                payload,
+            )
+            .await?;
+            info!(
+                "Diagnostics completed for {}/{}: {}",
+                request.namespace, request.interface, response.message
+            );
+        } else {
+            self.reply_query_error(&query, "error/diagnostics", &response.message)
+                .await?;
+        }
 
         Ok(())
     }

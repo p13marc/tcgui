@@ -15,6 +15,19 @@ use crate::messages::{
     ScenarioQueryMessage, TcQueryMessage, ZenohEvent,
 };
 
+/// Extract a human-readable message from a Zenoh reply-error payload.
+///
+/// Backends signal query failures on the reply-error channel (RFC keyspace-v2
+/// 05 §3) carrying a namespaced `error/<service>: <detail>` string; surface that
+/// verbatim, falling back to a generic note if it is not valid UTF-8.
+fn reply_error_message(err: &zenoh::query::ReplyError) -> String {
+    let bytes = err.payload().to_bytes();
+    match std::str::from_utf8(&bytes) {
+        Ok(s) if !s.is_empty() => s.to_string(),
+        _ => "backend reported an error".to_string(),
+    }
+}
+
 /// Common zenoh sample processing logic extracted to reduce code duplication
 ///
 /// This macro eliminates repetitive error handling patterns by:
@@ -723,7 +736,12 @@ impl ZenohManager {
                                                                             }
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("TC query reply error: {}", e);
+                                                                    let error = reply_error_message(&e);
+                                                                    error!("TC query reply error: {}", error);
+                                                                    let _ = output_clone.send(ZenohEvent::QueryError {
+                                                                        backend_name: backend_name.clone(),
+                                                                        error,
+                                                                    }).await;
                                                                 }
                                                             }
                                                         }
@@ -764,7 +782,12 @@ impl ZenohManager {
                                                                             }
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("Interface control query reply error: {}", e);
+                                                                    let error = reply_error_message(&e);
+                                                                    error!("Interface control query reply error: {}", error);
+                                                                    let _ = output_clone.send(ZenohEvent::QueryError {
+                                                                        backend_name: backend_name.clone(),
+                                                                        error,
+                                                                    }).await;
                                                                 }
                                                             }
                                                         }
@@ -808,7 +831,12 @@ impl ZenohManager {
                                                                         }
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("Scenario query reply error: {}", e);
+                                                                    let error = reply_error_message(&e);
+                                                                    error!("Scenario query reply error: {}", error);
+                                                                    let _ = output_clone.send(ZenohEvent::QueryError {
+                                                                        backend_name: backend_name.clone(),
+                                                                        error,
+                                                                    }).await;
                                                                 }
                                                             }
                                                         }
@@ -829,6 +857,8 @@ impl ZenohManager {
                                 Some(execution_query) = scenario_execution_query_receiver.recv() => {
                                     use tcgui_shared::scenario::ScenarioExecutionResponse;
                                     let topic = topics::scenario_execution_query_service(&execution_query.backend_name);
+                                    let mut output_clone = output.clone();
+                                    let backend_name = execution_query.backend_name.clone();
                                     match serde_json::to_string(&execution_query.request) {
                                         Ok(payload) => {
                                             match session.get(&topic).payload(payload).await {
@@ -847,7 +877,12 @@ impl ZenohManager {
                                                                             }
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("Scenario execution query reply error: {}", e);
+                                                                    let error = reply_error_message(&e);
+                                                                    error!("Scenario execution query reply error: {}", error);
+                                                                    let _ = output_clone.send(ZenohEvent::QueryError {
+                                                                        backend_name: backend_name.clone(),
+                                                                        error,
+                                                                    }).await;
                                                                 }
                                                             }
                                                         }
@@ -895,7 +930,12 @@ impl ZenohManager {
                                                                     }
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("Diagnostics query reply error: {}", e);
+                                                                    let error = reply_error_message(&e);
+                                                                    error!("Diagnostics query reply error: {}", error);
+                                                                    let _ = output_clone.send(ZenohEvent::QueryError {
+                                                                        backend_name: backend_name.clone(),
+                                                                        error,
+                                                                    }).await;
                                                                 }
                                                             }
                                                         }
