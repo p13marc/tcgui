@@ -595,6 +595,7 @@ impl TcBackend {
         let backend_health_topic = tc::key(&self.local_origin, &tc::Subject::Health);
         self.session
             .put(backend_health_topic.as_keyexpr(), payload)
+            .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to send backend health status: {}", e),
@@ -614,6 +615,7 @@ impl TcBackend {
             let payload = serde_json::to_string(preset)?;
             publisher
                 .put(payload)
+                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                 .await
                 .map_err(|e| TcguiError::ZenohError {
                     message: format!("Failed to publish preset '{}': {}", preset.id, e),

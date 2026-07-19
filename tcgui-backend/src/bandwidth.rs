@@ -422,6 +422,7 @@ impl BandwidthMonitor {
         if let Some(publisher) = self.bandwidth_publishers.get(&publisher_key) {
             publisher
                 .put(payload)
+                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                 .await
                 .map_err(|e| TcguiError::ZenohError {
                     message: format!("Failed to send bandwidth update: {}", e),

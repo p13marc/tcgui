@@ -13,7 +13,7 @@
 # G6): ACL rules discriminate on path chunks, never selector parameters.
 
 [registry]
-version = "1.0"
+version = "1.1"
 app = "tcgui"
 convention = 1
 
@@ -164,3 +164,12 @@ reply = "toml"
 idempotent = true
 since = "1.0"
 description = "return this registry slice as TOML (RFC 08 §6)"
+
+[[procedure]]
+path = "describe"
+kind = "read"
+fanout = "allowed"
+reply = "SchemaSet"
+idempotent = true
+since = "1.1"
+description = "payload self-description: the SchemaSet JSON for every type this slice references (RFC 08 §7)"
