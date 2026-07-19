@@ -9,11 +9,12 @@ use tracing::{debug, error, info, instrument, warn};
 use zenoh::{Session, query::Query};
 
 use tcgui_shared::identity::LocalOrigin;
+use tcgui_shared::registry::tc;
 use tcgui_shared::scenario::{
     ScenarioError, ScenarioExecutionRequest, ScenarioExecutionResponse, ScenarioExecutionUpdate,
     ScenarioRequest, ScenarioResponse,
 };
-use tcgui_shared::topics;
+use zenkey::ConcreteOrigin as _;
 use zenoh::key_expr::OwnedKeyExpr;
 
 use super::ScenarioManager;
@@ -79,7 +80,7 @@ impl ScenarioZenohHandlers {
     ) -> Self {
         info!(
             "Creating scenario Zenoh handlers for origin: {}",
-            local_origin.as_str()
+            local_origin.chunk()
         );
         Self {
             scenario_manager,
@@ -91,10 +92,10 @@ impl ScenarioZenohHandlers {
     /// Start the scenario management query handler
     #[instrument(skip(self))]
     pub async fn start_query_handler(&self) -> Result<()> {
-        let scenario_query_topic = topics::rpc_scenario(&self.local_origin);
+        let scenario_query_topic = tc::scenario_set_key(&self.local_origin);
         let queryable = self
             .session
-            .declare_queryable(&scenario_query_topic)
+            .declare_queryable(scenario_query_topic.as_keyexpr())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to declare scenario queryable: {}", e))?;
 
@@ -144,14 +145,18 @@ impl ScenarioZenohHandlers {
                 let error_response = ScenarioResponse::Error {
                     error: ScenarioError::validation("Missing request payload"),
                 };
-                return reply_scenario(&query, topics::rpc_scenario(local_origin), &error_response)
-                    .await;
+                return reply_scenario(
+                    &query,
+                    tc::scenario_set_key(local_origin).into(),
+                    &error_response,
+                )
+                .await;
             }
         };
 
         // Process the request
         let response = Self::process_scenario_request(scenario_manager, request).await;
-        reply_scenario(&query, topics::rpc_scenario(local_origin), &response).await?;
+        reply_scenario(&query, tc::scenario_set_key(local_origin).into(), &response).await?;
 
         debug!("Scenario query processed successfully");
         Ok(())
@@ -268,7 +273,7 @@ impl ScenarioExecutionHandlers {
     ) -> Self {
         info!(
             "Creating scenario execution Zenoh handlers for origin: {}",
-            local_origin.as_str()
+            local_origin.chunk()
         );
         Self {
             scenario_manager,
@@ -280,10 +285,11 @@ impl ScenarioExecutionHandlers {
     /// Start the scenario execution query handler
     #[instrument(skip(self))]
     pub async fn start_query_handler(&self) -> Result<()> {
-        let execution_query_topic = topics::rpc_execution_serve(&self.local_origin);
+        let execution_query_topic =
+            tc::rpc_serve_key(&self.local_origin, tc::ProcedureId::ExecutionNsIfaceSet);
         let queryable = self
             .session
-            .declare_queryable(&execution_query_topic)
+            .declare_queryable(execution_query_topic.as_keyexpr())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to declare execution queryable: {}", e))?;
 
@@ -366,7 +372,7 @@ impl ScenarioExecutionHandlers {
                 // Error rides reply_err; the key is unused for the Error variant.
                 return reply_execution(
                     &query,
-                    topics::rpc_execution(local_origin, "all", "all"),
+                    tc::execution_ns_iface_set_key(local_origin, "all", "all").into(),
                     &error_response,
                 )
                 .await;
@@ -375,11 +381,11 @@ impl ScenarioExecutionHandlers {
 
         // Concrete reply key derived from the request's target interface.
         let (ns, iface) = Self::request_target(&request);
-        let reply_key = topics::rpc_execution(local_origin, &ns, &iface);
+        let reply_key = tc::execution_ns_iface_set_key(local_origin, &ns, &iface);
 
         // Process the request
         let response = Self::process_execution_request(scenario_manager, request).await;
-        reply_execution(&query, reply_key, &response).await?;
+        reply_execution(&query, reply_key.into(), &response).await?;
 
         debug!("Execution query processed successfully");
         Ok(())
@@ -545,22 +551,28 @@ impl ScenarioExecutionHandlers {
                         namespace: execution.target_namespace.clone(),
                         interface: execution.target_interface.clone(),
                         execution: execution.clone(),
-                        backend_name: local_origin.as_str().to_string(),
+                        backend_name: local_origin.chunk().to_string(),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_millis() as u64,
                     };
 
-                    let update_topic = topics::state_execution(
+                    let update_topic = tc::key(
                         &local_origin,
-                        &execution.target_namespace,
-                        &execution.target_interface,
+                        &tc::Subject::execution(
+                            &execution.target_namespace,
+                            &execution.target_interface,
+                        ),
                     );
 
                     match serde_json::to_vec(&update) {
                         Ok(payload) => {
-                            if let Err(e) = session.put(&update_topic, payload).await {
+                            if let Err(e) = session
+                                .put(update_topic.as_keyexpr(), payload)
+                                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
+                                .await
+                            {
                                 error!(
                                     "Failed to publish execution status for {}:{}: {}",
                                     execution.target_namespace, execution.target_interface, e

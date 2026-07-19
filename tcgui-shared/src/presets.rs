@@ -10,7 +10,7 @@ pub use crate::preset_json::CustomPreset;
 
 /// Message sent from backend to frontend containing all available presets.
 /// All presets (including built-in ones) are loaded from JSON5 files.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
 pub struct PresetList {
     /// All presets loaded from files (built-in and user-defined)
     pub presets: Vec<CustomPreset>,

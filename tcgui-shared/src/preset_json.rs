@@ -57,7 +57,7 @@ impl From<std::io::Error> for PresetParseError {
 }
 
 /// A custom preset loaded from a JSON5 file
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CustomPreset {
     /// Unique identifier for the preset
     pub id: String,
@@ -73,7 +73,7 @@ pub struct CustomPreset {
 
 /// Intermediate struct for JSON5 deserialization of a preset file
 /// This allows for implicit `enabled: true` when a TC feature is present
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct PresetFile {
     pub id: String,
     pub name: String,

@@ -1,0 +1,16 @@
+# cargo-audit policy. Only advisories that CANNOT be fixed from this
+# workspace are ignored — each entry names the upstream pin that blocks it.
+# Revisit on every zenoh / iced (winit) major bump.
+[advisories]
+ignore = [
+    # rsa: Marvin timing sidechannel — no patched release exists upstream
+    # (transitive via zenoh-transport 1.9; TLS auth paths).
+    "RUSTSEC-2023-0071",
+    # lz4_flex 0.10 OOB read — patched in >=0.11.6, but zenoh-transport 1.9
+    # pins 0.10.x; fixed by the next zenoh bump.
+    "RUSTSEC-2026-0041",
+    # quick-xml 0.39 DoS pair — patched in >=0.41, but wayland-scanner
+    # (iced/winit 0.30 build-time proc-macro, not runtime input) pins 0.39.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

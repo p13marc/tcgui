@@ -40,7 +40,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zenoh::config::WhatAmI;
-use zenoh::key_expr::OwnedKeyExpr;
 
 pub mod errors;
 pub mod identity;
@@ -61,282 +60,184 @@ pub mod validation;
 /// `state` (LWW, delete = tombstone), `telemetry` (superseded), `events`
 /// (immutable), and the verbatim `@rpc` plane — so storage/QoS/ACL are static
 /// prefixes (RFC keyspace-v2 03/04).
+/// On zenkey 0.3 the old hand-written builder layer is gone: call sites use
+/// the GENERATED `registry::tc` surface directly (`tc::key(&o,
+/// &tc::Subject::interface(ns, iface))`, `tc::config_ns_iface_set_key(&o,
+/// ns, iface)`, …) — builders return validated `zenkey::Key`s, slug their
+/// arguments at the boundary (RFC 03 §2), and publishing takes the typed
+/// `LocalOrigin` (G5). What remains here is the app-side vocabulary the
+/// registry cannot generate: fleet selectors, the liveliness key, and
+/// state-key routing.
 pub mod topics {
-    use super::*;
-    use crate::identity::{ConcreteOrigin, LocalOrigin};
+    use crate::identity::LocalOrigin;
     use crate::registry::tc;
-    use crate::validation::slug_key_chunk;
-    use zenkey::grammar;
-
-    /// A generated typed key (always valid by construction) as a Zenoh keyexpr.
-    fn ke(key: String) -> OwnedKeyExpr {
-        OwnedKeyExpr::try_from(key).expect("registry-built keys are valid keyexprs")
-    }
+    use zenkey::selector::Scope;
+    use zenkey::{ConcreteOrigin as _, Key};
+    use zenoh::key_expr::OwnedKeyExpr;
 
     // ----- fleet selectors (frontend subscriptions; wildcards allowed) --------
 
     /// All hosts' state plane — the drill-down and reconciliation feed.
-    pub const SEL_STATE: &str = "v1/*/state/**";
-    /// All hosts' telemetry plane.
-    pub const SEL_TELEMETRY: &str = "v1/*/telemetry/**";
-    /// The reserved liveliness leaf across the fleet — the whole presence
-    /// protocol, zero payload.
-    pub const SEL_ALIVE: &str = "v1/*/state/*/alive";
-
-    // ----- state plane (published by the owning host under its LocalOrigin) ---
-
-    /// Health document key (`{ host_id, name, … }`).
-    pub fn state_health(o: &LocalOrigin) -> OwnedKeyExpr {
-        ke(tc::key(&o.zk_origin(), &tc::Subject::Health).expect("state/health key"))
+    pub fn sel_state() -> OwnedKeyExpr {
+        zenkey::selector::all_state(Scope::fleet()).into()
     }
+    /// All hosts' telemetry plane.
+    pub fn sel_telemetry() -> OwnedKeyExpr {
+        zenkey::selector::all_telemetry(Scope::fleet()).into()
+    }
+    /// The reserved liveliness leaf across the fleet — the whole presence
+    /// protocol, zero payload (RFC 04 §5).
+    pub fn sel_alive() -> OwnedKeyExpr {
+        zenkey::selector::all_liveliness(Scope::fleet()).into()
+    }
+
     /// Reserved liveliness-token leaf — distinct from the health document so
     /// presence and data selectors never collide (04 §5). Deliberately not a
     /// registry subject: `alive` is machinery, and the registry lint reserves
     /// it (08 §2).
-    pub fn state_alive(o: &LocalOrigin) -> OwnedKeyExpr {
-        ke(grammar::alive_key(&o.zk_origin(), Some(&tc::producer())).expect("state/alive key"))
-    }
-    /// Producer registration document (version, netns binding).
-    pub fn state_sensor(o: &LocalOrigin) -> OwnedKeyExpr {
-        ke(tc::key(&o.zk_origin(), &tc::Subject::Sensor).expect("state/sensor key"))
-    }
-    /// Per-interface record — replaces the old list + events split. Removal of
-    /// a NIC is a `SampleKind::Delete` on this key.
-    pub fn state_interface(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Interface {
-            ns: slug_key_chunk(ns),
-            iface: slug_key_chunk(iface),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("state/interface key"))
-    }
-    /// Applied-TC-config echo. Clearing config is a `Delete`, never a `None`
-    /// payload (04 §1.2).
-    pub fn state_config(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Config {
-            ns: slug_key_chunk(ns),
-            iface: slug_key_chunk(iface),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("state/config key"))
-    }
-    /// Scenario execution status, keyed by the interface (never a run-id — 03
-    /// §2 forbids per-message data in a key).
-    pub fn state_execution(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Execution {
-            ns: slug_key_chunk(ns),
-            iface: slug_key_chunk(iface),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("state/execution key"))
-    }
-    /// Scenario library entry; delete-on-removal tombstone.
-    pub fn state_scenario(o: &LocalOrigin, id: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Scenario {
-            id: slug_key_chunk(id),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("state/scenario key"))
-    }
-    /// Preset library entry; delete-on-removal tombstone.
-    pub fn state_preset(o: &LocalOrigin, id: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Preset {
-            id: slug_key_chunk(id),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("state/preset key"))
-    }
-
-    // ----- telemetry plane ----------------------------------------------------
-
-    /// Real-time bandwidth samples (superseded; best-effort).
-    pub fn telemetry_bandwidth(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Bandwidth {
-            ns: slug_key_chunk(ns),
-            iface: slug_key_chunk(iface),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("telemetry/bandwidth key"))
-    }
-    /// Real-time qdisc statistics (superseded; best-effort).
-    pub fn telemetry_qdisc(o: &LocalOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Qdisc {
-            ns: slug_key_chunk(ns),
-            iface: slug_key_chunk(iface),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("telemetry/qdisc key"))
-    }
-
-    // ----- events plane -------------------------------------------------------
-
-    /// Immutable audit record of a TC apply. `ulid` is lowercased already.
-    pub fn events_applied(o: &LocalOrigin, ulid: &str) -> OwnedKeyExpr {
-        let subject = tc::Subject::Applied {
-            ulid: slug_key_chunk(ulid),
-        };
-        ke(tc::key(&o.zk_origin(), &subject).expect("events/applied key"))
-    }
-
-    // ----- @rpc plane ---------------------------------------------------------
-    //
-    // Call keys are concrete (built from a ConcreteOrigin — Local when a backend
-    // reply-keys, Remote when the frontend calls). Serve keys wildcard the
-    // per-interface subject so one queryable per service covers every interface.
-    // Both come from the registry's ProcedureId — the actuated resource is in
-    // the path (G6), typed, never a selector parameter.
-
-    /// Concrete apply/clear-TC call key (write). Resource is in the path (G6).
-    pub fn rpc_config(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        ke(tc::rpc_key_with(
-            &o.zk_origin(),
-            tc::ProcedureId::ConfigNsIfaceSet,
-            &[&slug_key_chunk(ns), &slug_key_chunk(iface)],
-        )
-        .expect("@rpc/config key"))
-    }
-    /// Backend's config queryable key (`…/config/*/*/set`).
-    pub fn rpc_config_serve(o: &LocalOrigin) -> OwnedKeyExpr {
-        ke(tc::rpc_serve_key(
-            &o.zk_origin(),
-            tc::ProcedureId::ConfigNsIfaceSet,
-        ))
-    }
-    /// Concrete enable/disable call key (write).
-    pub fn rpc_interface(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        ke(tc::rpc_key_with(
-            &o.zk_origin(),
-            tc::ProcedureId::InterfaceNsIfaceSet,
-            &[&slug_key_chunk(ns), &slug_key_chunk(iface)],
-        )
-        .expect("@rpc/interface key"))
-    }
-    /// Backend's interface-control queryable key (`…/interface/*/*/set`).
-    pub fn rpc_interface_serve(o: &LocalOrigin) -> OwnedKeyExpr {
-        ke(tc::rpc_serve_key(
-            &o.zk_origin(),
-            tc::ProcedureId::InterfaceNsIfaceSet,
-        ))
-    }
-    /// Scenario CRUD call/serve key (no per-interface subject).
-    pub fn rpc_scenario(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
-        ke(
-            tc::rpc_key_with(&o.zk_origin(), tc::ProcedureId::ScenarioSet, &[])
-                .expect("@rpc/scenario key"),
-        )
-    }
-    /// Concrete start/stop/pause/resume call key (write).
-    pub fn rpc_execution(o: &impl ConcreteOrigin, ns: &str, iface: &str) -> OwnedKeyExpr {
-        ke(tc::rpc_key_with(
-            &o.zk_origin(),
-            tc::ProcedureId::ExecutionNsIfaceSet,
-            &[&slug_key_chunk(ns), &slug_key_chunk(iface)],
-        )
-        .expect("@rpc/execution key"))
-    }
-    /// Backend's execution-control queryable key (`…/execution/*/*/set`).
-    pub fn rpc_execution_serve(o: &LocalOrigin) -> OwnedKeyExpr {
-        ke(tc::rpc_serve_key(
-            &o.zk_origin(),
-            tc::ProcedureId::ExecutionNsIfaceSet,
-        ))
-    }
-    /// Diagnostics call/serve key (read).
-    pub fn rpc_diagnostics(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
-        ke(
-            tc::rpc_key_with(&o.zk_origin(), tc::ProcedureId::Diagnostics, &[])
-                .expect("@rpc/diagnostics key"),
-        )
-    }
-    /// Registry-slice introspect call/serve key (read) — consumed by `zenctl`.
-    pub fn rpc_introspect(o: &impl ConcreteOrigin) -> OwnedKeyExpr {
-        ke(
-            tc::rpc_key_with(&o.zk_origin(), tc::ProcedureId::Introspect, &[])
-                .expect("@rpc/introspect key"),
-        )
+    pub fn state_alive(o: &LocalOrigin) -> Key {
+        zenkey::grammar::alive_key(&o.to_origin(), Some(&tc::producer())).expect("state/alive key")
     }
 
     // ----- parsing ------------------------------------------------------------
 
-    /// The state-plane subject families a key can name.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum StateFamily {
-        Health,
-        Alive,
-        Sensor,
-        Interface,
-        Config,
-        Execution,
-        Scenario,
-        Preset,
-    }
-
     /// A parsed `state` key — enough to route a Put or a Delete without the
-    /// payload (a Delete carries none, so `ns`/`iface`/`id` come from the key).
+    /// payload (a Delete carries none, so variables come from the key). The
+    /// subject is the generated typed enum: routing matches on
+    /// `tc::Subject::…` with named `Chunk` fields, never `parts[i]`.
     #[derive(Debug, Clone)]
     pub struct StateKey {
         pub origin: String,
-        pub family: StateFamily,
-        pub ns: Option<String>,
-        pub iface: Option<String>,
-        pub id: Option<String>,
+        pub subject: tc::Subject,
     }
 
     /// Strip an optional leading `tcgui` base in case the session namespace was
     /// not stripped (e.g. an external observer).
-    fn relative(key: &str) -> &str {
-        grammar::strip_base("tcgui", key).unwrap_or(key)
+    pub(crate) fn relative(key: &str) -> &str {
+        zenkey::grammar::strip_base("tcgui", key).unwrap_or(key)
     }
 
     /// Extract the origin chunk from any v1 key (accepts a `KeyExpr`'s `as_str`).
     pub fn parse_origin(key: &str) -> Option<String> {
-        let p: Vec<&str> = relative(key).split('/').collect();
-        (p.len() >= 2 && p[0] == "v1").then(|| p[1].to_string())
+        zenkey::grammar::parse(relative(key))
+            .ok()
+            .map(|p| p.origin.chunk().to_string())
     }
 
     /// Parse a `v1/<origin>/state/tc/<family>/…` key through the grammar and
-    /// the registry's parse direction (RFC 08 §1) — variables come back named,
-    /// never `parts[i]`.
+    /// the registry's parse direction (RFC 08 §1). Returns `None` for foreign
+    /// producers, the reserved `alive` leaf (presence rides the liveliness
+    /// subscriber), and unregistered subjects.
     pub fn parse_state_key(key: &str) -> Option<StateKey> {
-        let parsed = grammar::parse(relative(key)).ok()?;
+        let parsed = zenkey::grammar::parse(relative(key)).ok()?;
         let zenkey::ClassOrPlane::Class(zenkey::Class::State) = parsed.class else {
             return None;
         };
         if parsed.producer.as_ref()?.name() != "tc" {
             return None;
         }
-        let origin = parsed.origin.chunk().to_string();
-        let tail: Vec<&str> = parsed.subject.iter().map(String::as_str).collect();
-        let mk = |family, ns, iface, id| {
-            Some(StateKey {
-                origin: origin.clone(),
-                family,
-                ns,
-                iface,
-                id,
-            })
+        if parsed.subject == ["alive"] {
+            return None;
+        }
+        let subject = tc::Subject::parse(zenkey::Class::State, &parsed.subject)?;
+        Some(StateKey {
+            origin: parsed.origin.chunk().to_string(),
+            subject,
+        })
+    }
+
+    /// The telemetry-plane kind chunk (`bandwidth` / `qdisc`) of a
+    /// `v1/<origin>/telemetry/tc/<kind>/…` key.
+    pub fn telemetry_kind(key: &str) -> Option<&str> {
+        let parsed = zenkey::grammar::parse(relative(key)).ok()?;
+        let zenkey::ClassOrPlane::Class(zenkey::Class::Telemetry) = parsed.class else {
+            return None;
         };
-        // `alive` is the reserved liveliness leaf, not a registry subject.
-        if tail == ["alive"] {
-            return mk(StateFamily::Alive, None, None, None);
-        }
-        match tc::Subject::parse(zenkey::Class::State, &tail)? {
-            tc::Subject::Health => mk(StateFamily::Health, None, None, None),
-            tc::Subject::Sensor => mk(StateFamily::Sensor, None, None, None),
-            tc::Subject::Interface { ns, iface } => {
-                mk(StateFamily::Interface, Some(ns), Some(iface), None)
-            }
-            tc::Subject::Config { ns, iface } => {
-                mk(StateFamily::Config, Some(ns), Some(iface), None)
-            }
-            tc::Subject::Execution { ns, iface } => {
-                mk(StateFamily::Execution, Some(ns), Some(iface), None)
-            }
-            tc::Subject::Scenario { id } => mk(StateFamily::Scenario, None, None, Some(id)),
-            tc::Subject::Preset { id } => mk(StateFamily::Preset, None, None, Some(id)),
-            // Telemetry/events subjects cannot appear under the state class.
-            _ => None,
-        }
+        parsed.subject.first().copied()
+    }
+}
+
+/// Producer registration document for the `state/tc/sensor` subject.
+///
+/// Declared in the registry since 1.0 but not yet published by the backend
+/// (a known RFC 08 §6.1 gap, tracked; the type exists so the served schema
+/// set — RFC 08 §7 — and the type table stay total and honest).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SensorDoc {
+    /// Producer base name (`tc`).
+    pub name: String,
+    /// Backend version string.
+    pub version: String,
+    /// Network namespaces this backend can actuate.
+    pub namespaces: Vec<String>,
+}
+
+/// Immutable audit record for the `events/tc/applied/{ulid}` subject.
+///
+/// Declared since 1.0, not yet emitted (same RFC 08 §6.1 note as
+/// [`SensorDoc`]).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TcAppliedEvent {
+    /// The event's ULID (also the key leaf).
+    pub ulid: String,
+    pub namespace: String,
+    pub interface: String,
+    /// The netem configuration that was applied, if any (None = cleared).
+    pub configuration: Option<TcNetemConfig>,
+    pub timestamp: u64,
+}
+
+/// Payload self-description (RFC 08 §7): the schema set served on
+/// `@rpc/tc/describe`, covering every type the registry slice references.
+/// Totality against the generated `TYPE_NAMES` is enforced at first use.
+pub mod schema {
+    use std::sync::LazyLock;
+    use zenkey::schema::{SchemaSet, TypeSchema};
+
+    pub static SCHEMAS: LazyLock<SchemaSet> = LazyLock::new(|| {
+        SchemaSet::builder("tcgui")
+            .json::<crate::BackendHealthStatus>("BackendHealthStatus")
+            .json::<crate::SensorDoc>("SensorDoc")
+            .json::<crate::NetworkInterface>("NetworkInterface")
+            .json::<crate::TcConfigUpdate>("TcConfigUpdate")
+            .json::<crate::scenario::ScenarioExecutionUpdate>("ScenarioExecutionUpdate")
+            .json::<crate::scenario::NetworkScenario>("NetworkScenario")
+            .json::<crate::presets::CustomPreset>("CustomPreset")
+            .json::<crate::BandwidthUpdate>("BandwidthUpdate")
+            .json::<crate::TcStatisticsUpdate>("TcStatisticsUpdate")
+            .json::<crate::TcAppliedEvent>("TcAppliedEvent")
+            .json::<crate::TcResponse>("TcResponse")
+            .json::<crate::InterfaceControlResponse>("InterfaceControlResponse")
+            .json::<crate::scenario::ScenarioResponse>("ScenarioResponse")
+            .json::<crate::scenario::ScenarioExecutionResponse>("ScenarioExecutionResponse")
+            .json::<crate::DiagnosticsResponse>("DiagnosticsResponse")
+            // The describe reply's own envelope: a meta entry so the type
+            // table stays total (the real schema is RFC 08 §7's shape).
+            .entry(
+                "SchemaSet",
+                TypeSchema::json_schema(serde_json::json!({
+                    "type": "object",
+                    "description": "RFC 08 §7 SchemaSet envelope (schema_version/app/types)",
+                })),
+            )
+            .build_verified(&schema_type_names())
+    });
+
+    /// The registry's type names minus the `toml` sentinel (`introspect`'s
+    /// raw-TOML reply is text, not a schema'd payload — RFC 08 §6).
+    pub fn schema_type_names() -> Vec<&'static str> {
+        crate::registry::TYPE_NAMES
+            .iter()
+            .copied()
+            .filter(|n| *n != "toml")
+            .collect()
     }
 }
 
 /// Interface list update message (pub/sub)
 /// Topic: tcgui/{backend_name}/interfaces/list
 /// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceListUpdate {
     /// List of network namespaces with their interfaces
     pub namespaces: Vec<NetworkNamespace>,
@@ -349,7 +250,7 @@ pub struct InterfaceListUpdate {
 /// Real-time bandwidth statistics (pub/sub)
 /// Topic: tcgui/{backend_name}/bandwidth/{namespace}/{interface}
 /// QoS: Best effort, no history (high frequency updates)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BandwidthUpdate {
     /// Network namespace name
     pub namespace: String,
@@ -364,7 +265,7 @@ pub struct BandwidthUpdate {
 /// Interface state change event (pub/sub)
 /// Topic: tcgui/{backend_name}/interfaces/events
 /// QoS: Reliable delivery, history depth=10
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceStateEvent {
     /// Network namespace name
     pub namespace: String,
@@ -381,7 +282,7 @@ pub struct InterfaceStateEvent {
 /// Backend health and status information (pub/sub)
 /// Topic: tcgui/{backend_name}/health
 /// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BackendHealthStatus {
     /// The host origin (`h-<12hex>`) — THE identity. The frontend builds every
     /// key from this and keys its backend table on it (identity bridge, RFC
@@ -406,7 +307,7 @@ pub struct BackendHealthStatus {
 /// Traffic Control configuration status (pub/sub)
 /// Topic: tcgui/{backend_name}/tc/{namespace}/{interface}
 /// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcConfigUpdate {
     /// Network namespace name
     pub namespace: String,
@@ -423,7 +324,7 @@ pub struct TcConfigUpdate {
 }
 
 /// Basic TC statistics (bytes and packets transmitted)
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatsBasic {
     /// Total bytes transmitted through the qdisc
     pub bytes: u64,
@@ -432,7 +333,7 @@ pub struct TcStatsBasic {
 }
 
 /// Queue statistics from the TC qdisc
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatsQueue {
     /// Current queue length in packets
     pub qlen: u32,
@@ -447,7 +348,7 @@ pub struct TcStatsQueue {
 }
 
 /// Rate estimator statistics from TC qdisc
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatsRateEst {
     /// Current throughput in bytes per second
     pub bps: u32,
@@ -458,7 +359,7 @@ pub struct TcStatsRateEst {
 /// TC Statistics update message (pub/sub)
 /// Topic: tcgui/{backend_name}/tc/stats/{namespace}/{interface}
 /// QoS: Best effort, no history (high frequency updates)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatisticsUpdate {
     /// Network namespace name
     pub namespace: String,
@@ -478,7 +379,7 @@ pub struct TcStatisticsUpdate {
 
 /// Traffic control configuration request (Query)
 /// Query Service: tcgui/{backend_name}/query/tc
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcRequest {
     /// Target network namespace
     pub namespace: String,
@@ -489,7 +390,7 @@ pub struct TcRequest {
 }
 
 /// Structured TC configuration for all netem features
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcNetemConfig {
     pub loss: TcLossConfig,
     pub delay: TcDelayConfig,
@@ -500,7 +401,7 @@ pub struct TcNetemConfig {
 }
 
 /// Packet loss configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcLossConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -508,7 +409,7 @@ pub struct TcLossConfig {
 }
 
 /// Network delay configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcDelayConfig {
     pub enabled: bool,
     pub base_ms: f32,     // 0.0-5000.0
@@ -517,7 +418,7 @@ pub struct TcDelayConfig {
 }
 
 /// Packet duplication configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcDuplicateConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -525,7 +426,7 @@ pub struct TcDuplicateConfig {
 }
 
 /// Packet reordering configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcReorderConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -534,7 +435,7 @@ pub struct TcReorderConfig {
 }
 
 /// Packet corruption configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcCorruptConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -542,7 +443,7 @@ pub struct TcCorruptConfig {
 }
 
 /// Rate limiting configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcRateLimitConfig {
     pub enabled: bool,
     pub rate_kbps: u32, // 1-1000000
@@ -1068,7 +969,7 @@ impl TcNetemConfig {
 }
 
 /// Traffic control operations with structured configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TcOperation {
     /// Apply comprehensive netem configuration using structured config
     ApplyConfig { config: TcNetemConfig },
@@ -1093,7 +994,7 @@ pub enum TcOperation {
 }
 
 /// Traffic control configuration that was applied
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcConfiguration {
     /// Applied packet loss percentage
     pub loss: f32,
@@ -1126,7 +1027,7 @@ pub struct TcConfiguration {
 }
 
 /// Traffic control operation response (Reply)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcResponse {
     /// Whether the operation succeeded
     pub success: bool,
@@ -1140,7 +1041,7 @@ pub struct TcResponse {
 
 /// Interface control request (enable/disable) (Query)
 /// Query Service: tcgui/{backend_name}/query/interface
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceControlRequest {
     /// Target network namespace
     pub namespace: String,
@@ -1151,7 +1052,7 @@ pub struct InterfaceControlRequest {
 }
 
 /// Interface control operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum InterfaceControlOperation {
     /// Bring interface UP
     Enable,
@@ -1160,7 +1061,7 @@ pub enum InterfaceControlOperation {
 }
 
 /// Interface control operation response (Reply)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceControlResponse {
     /// Whether the operation succeeded
     pub success: bool,
@@ -1178,7 +1079,7 @@ pub struct InterfaceControlResponse {
 
 /// Network diagnostics request (Query)
 /// Query Service: tcgui/{backend_name}/query/diagnostics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsRequest {
     /// Target network namespace
     pub namespace: String,
@@ -1202,7 +1103,7 @@ impl Default for DiagnosticsRequest {
 }
 
 /// Network diagnostics response (Reply)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsResponse {
     /// Whether diagnostics completed successfully
     pub success: bool,
@@ -1215,7 +1116,7 @@ pub struct DiagnosticsResponse {
 }
 
 /// Comprehensive diagnostic results
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsResults {
     /// Link layer status
     pub link_status: LinkStatus,
@@ -1230,7 +1131,7 @@ pub struct DiagnosticsResults {
 }
 
 /// TC diagnostic statistics showing qdisc effectiveness
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcDiagnosticStats {
     /// Packets dropped by qdisc
     pub drops: u32,
@@ -1247,7 +1148,7 @@ pub struct TcDiagnosticStats {
 }
 
 /// Network link status information
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinkStatus {
     /// Whether the interface is administratively UP
     pub is_up: bool,
@@ -1258,7 +1159,7 @@ pub struct LinkStatus {
 }
 
 /// Connectivity test result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectivityResult {
     /// Target that was tested
     pub target: String,
@@ -1269,7 +1170,7 @@ pub struct ConnectivityResult {
 }
 
 /// Latency measurement result from ping tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LatencyResult {
     /// Target that was tested
     pub target: String,
@@ -1313,7 +1214,7 @@ pub mod qos {
 }
 
 /// Zenoh session configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct ZenohConfig {
     /// Session mode (Peer or Client)
     pub mode: ZenohMode,
@@ -1338,7 +1239,7 @@ impl std::hash::Hash for ZenohConfig {
 }
 
 /// Zenoh session modes
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub enum ZenohMode {
     /// Peer mode - can connect to and be connected from other nodes
     Peer,
@@ -1683,7 +1584,7 @@ impl ZenohConfig {
 /// Represents a single backend instance (uniquely identified by name) and all
 /// the network namespaces it manages. Used for organizing multi-backend display
 /// in the GUI with a hierarchical Backend -> Namespace -> Interface structure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Backend {
     /// Unique backend identifier (e.g., "server1", "edge-node-01")
     pub name: String,
@@ -1701,7 +1602,7 @@ pub struct Backend {
 ///
 /// Contains backend-specific information that may be useful for display
 /// or operational decisions in the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BackendMetadata {
     /// Backend software version (if available)
     pub version: Option<String>,
@@ -1728,7 +1629,7 @@ impl Default for BackendMetadata {
 ///
 /// Used to categorize namespaces for filtering in the frontend UI.
 /// Allows users to show/hide interfaces based on namespace origin.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub enum NamespaceType {
     /// Default/root namespace (host interfaces)
     #[default]
@@ -1776,7 +1677,7 @@ impl NamespaceType {
 ///
 /// Represents a Linux network namespace and all the network interfaces
 /// it contains. Used for organizing interface display in the GUI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NetworkNamespace {
     /// Namespace name ("default" for host namespace, or custom name)
     pub name: String,
@@ -1794,7 +1695,7 @@ pub struct NetworkNamespace {
 ///
 /// Represents a network interface within a specific namespace, including
 /// its current state and traffic control configuration status.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct NetworkInterface {
     /// Interface name (e.g., "eth0", "fo", "wlan0")
     pub name: String,
@@ -1837,7 +1738,7 @@ pub struct NetworkInterface {
 /// Used to categorize interfaces for display and operational purposes
 /// in the GUI. Different interface types may have different capabilities
 /// or restrictions for traffic control operations.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub enum InterfaceType {
     /// Physical hardware network interface (e.g., Ethernet, WiFi)
     Physical,
@@ -1860,7 +1761,7 @@ pub enum InterfaceType {
 /// Contains both cumulative counters (total bytes/packets since interface creation)
 /// and calculated rates (bytes per second) for real-time monitoring. Statistics
 /// are collected from `/proc/net/dev` with additional rate calculations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NetworkBandwidthStats {
     /// Total bytes received since interface creation
     pub rx_bytes: u64,
@@ -1890,7 +1791,7 @@ pub struct NetworkBandwidthStats {
 ///
 /// Used to categorize different types of interface updates sent from
 /// the backend to frontend for real-time interface monitoring.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum InterfaceEventType {
     /// New network interface was detected
     Added,
@@ -1911,16 +1812,17 @@ mod tests {
     #[test]
     fn hostile_netlink_names_produce_safe_keys() {
         // Names that Linux `dev_valid_name()` permits but that used to either
-        // panic the daemon (`?`/`#`/`$`/`**` -> keformat error -> .expect) or
-        // make it publish on a wildcard key (`*`). Every per-interface builder
-        // must now return a concrete, wildcard-free single-target key.
-        let o = crate::identity::LocalOrigin::from_seed("test");
+        // panic the daemon or make it publish on a wildcard key. The generated
+        // constructors slug at the boundary (RFC 03 §2 / 08 §1.2), so every
+        // per-interface builder returns a concrete, wildcard-free key.
+        use crate::registry::tc;
+        let o = crate::identity::local_origin_from_seed("test");
         for name in ["*", "**", "?", "#", "$x"] {
             for key in [
-                topics::telemetry_bandwidth(&o, "myns", name),
-                topics::state_config(&o, "myns", name),
-                topics::telemetry_qdisc(&o, "myns", name),
-                topics::state_execution(&o, "myns", name),
+                tc::key(&o, &tc::Subject::bandwidth("myns", name)),
+                tc::key(&o, &tc::Subject::config("myns", name)),
+                tc::key(&o, &tc::Subject::qdisc("myns", name)),
+                tc::key(&o, &tc::Subject::execution("myns", name)),
             ] {
                 let s = key.as_str();
                 assert!(
@@ -1937,23 +1839,45 @@ mod tests {
         // The declared key starts at `v1/` (the `tcgui` base is the session
         // namespace, prefixed transparently) and slugging is identity on clean
         // names.
-        let o = crate::identity::LocalOrigin::from_seed("test");
-        let key = topics::state_config(&o, "myns", "eth0.100");
+        use crate::identity::ConcreteOrigin as _;
+        use crate::registry::tc;
+        let o = crate::identity::local_origin_from_seed("test");
+        let key = tc::key(&o, &tc::Subject::config("myns", "eth0.100"));
         assert_eq!(
             key.as_str(),
-            format!("v1/{}/state/tc/config/myns/eth0.100", o.as_str())
+            format!("v1/{}/state/tc/config/myns/eth0.100", o.chunk())
         );
     }
 
     #[test]
     fn state_key_roundtrips_through_parser() {
-        let o = crate::identity::LocalOrigin::from_seed("test");
-        let key = topics::state_interface(&o, "default", "eth0");
+        use crate::identity::ConcreteOrigin as _;
+        use crate::registry::tc;
+        let o = crate::identity::local_origin_from_seed("test");
+        let key = tc::key(&o, &tc::Subject::interface("default", "eth0"));
         let parsed = topics::parse_state_key(key.as_str()).expect("parse");
-        assert_eq!(parsed.origin, o.as_str());
-        assert_eq!(parsed.family, topics::StateFamily::Interface);
-        assert_eq!(parsed.ns.as_deref(), Some("default"));
-        assert_eq!(parsed.iface.as_deref(), Some("eth0"));
+        assert_eq!(parsed.origin, o.chunk());
+        assert_eq!(parsed.subject, tc::Subject::interface("default", "eth0"));
+        assert_eq!(parsed.subject.family(), tc::Family::Interface);
+    }
+
+    /// RFC 08 §7 totality: the served SchemaSet covers every type name the
+    /// registry references (build_verified panics otherwise — this test
+    /// forces the static's evaluation in CI).
+    #[test]
+    fn served_schemas_cover_the_registry() {
+        let set = &*crate::schema::SCHEMAS;
+        let names = crate::schema::schema_type_names();
+        assert!(set.len() >= names.len());
+        assert!(
+            set.get("NetworkInterface")
+                .unwrap()
+                .json_document()
+                .is_some()
+        );
+        // The introspect raw-TOML sentinel is deliberately not schema'd.
+        assert!(set.verify_covers(&names).is_ok());
+        assert!(!names.contains(&"toml"));
     }
 
     #[test]

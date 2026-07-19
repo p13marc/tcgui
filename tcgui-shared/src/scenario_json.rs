@@ -58,7 +58,7 @@ impl From<std::io::Error> for ScenarioParseError {
 }
 
 /// Intermediate struct for JSON5 deserialization of a scenario file
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioFile {
     pub id: String,
     pub name: String,
@@ -79,7 +79,7 @@ fn default_cleanup_on_failure() -> bool {
 }
 
 /// Intermediate struct for scenario metadata
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioMetadataJson {
     #[serde(default)]
     pub tags: Vec<String>,
@@ -93,7 +93,7 @@ fn default_version() -> String {
 }
 
 /// Intermediate struct for a scenario step
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioStepJson {
     /// Duration as a string like "30s", "500ms", "1m"
     pub duration: String,
@@ -108,7 +108,7 @@ pub struct ScenarioStepJson {
 
 /// Intermediate struct for TC config with implicit enabled
 /// Any field present automatically means enabled=true
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
 pub struct TcConfigJson {
     pub loss: Option<LossConfigJson>,
     pub delay: Option<DelayConfigJson>,
@@ -119,7 +119,7 @@ pub struct TcConfigJson {
 }
 
 /// Loss configuration for JSON5 parsing (presence implies enabled)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct LossConfigJson {
     #[serde(default)]
     pub percentage: f32,
@@ -128,7 +128,7 @@ pub struct LossConfigJson {
 }
 
 /// Delay configuration for JSON5 parsing (presence implies enabled)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct DelayConfigJson {
     #[serde(default)]
     pub base_ms: f32,
@@ -139,7 +139,7 @@ pub struct DelayConfigJson {
 }
 
 /// Duplicate configuration for JSON5 parsing (presence implies enabled)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct DuplicateConfigJson {
     #[serde(default)]
     pub percentage: f32,
@@ -148,7 +148,7 @@ pub struct DuplicateConfigJson {
 }
 
 /// Reorder configuration for JSON5 parsing (presence implies enabled)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ReorderConfigJson {
     #[serde(default)]
     pub percentage: f32,
@@ -163,7 +163,7 @@ fn default_gap() -> u32 {
 }
 
 /// Corrupt configuration for JSON5 parsing (presence implies enabled)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct CorruptConfigJson {
     #[serde(default)]
     pub percentage: f32,
@@ -173,7 +173,7 @@ pub struct CorruptConfigJson {
 
 /// Rate limit configuration for JSON5 parsing (presence implies enabled)
 /// Supports both human-readable rate strings (e.g., "10mbit") and legacy rate_kbps values.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct RateLimitConfigJson {
     /// Human-readable rate string (e.g., "10mbit", "1gbit", "500kbit")
     /// Takes precedence over rate_kbps if both are provided.

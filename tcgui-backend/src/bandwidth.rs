@@ -27,9 +27,10 @@ use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use crate::container::Container;
+use tcgui_shared::registry::tc;
 use tcgui_shared::{
     BandwidthUpdate, NetworkBandwidthStats, NetworkInterface, errors::TcguiError,
-    identity::LocalOrigin, topics,
+    identity::LocalOrigin,
 };
 
 /// Returns true if the error chain contains an nlink permission-denied error.
@@ -391,10 +392,9 @@ impl BandwidthMonitor {
 
         // Get or create publisher for this interface
         if !self.bandwidth_publishers.contains_key(&publisher_key) {
-            let bandwidth_topic = topics::telemetry_bandwidth(
+            let bandwidth_topic = tc::key(
                 &self.local_origin,
-                &update.namespace,
-                &update.interface,
+                &tc::Subject::bandwidth(&update.namespace, &update.interface),
             );
             debug!(
                 "Creating bandwidth publisher for {}: {}",
@@ -404,7 +404,7 @@ impl BandwidthMonitor {
 
             let publisher = self
                 .session
-                .declare_publisher(bandwidth_topic)
+                .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(bandwidth_topic))
                 .cache(CacheConfig::default().max_samples(1))
                 .sample_miss_detection(
                     MissDetectionConfig::default().heartbeat(Duration::from_millis(500)),
@@ -422,6 +422,7 @@ impl BandwidthMonitor {
         if let Some(publisher) = self.bandwidth_publishers.get(&publisher_key) {
             publisher
                 .put(payload)
+                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                 .await
                 .map_err(|e| TcguiError::ZenohError {
                     message: format!("Failed to send bandwidth update: {}", e),
