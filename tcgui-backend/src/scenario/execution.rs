@@ -792,6 +792,7 @@ impl ScenarioExecutionEngine {
 
         session
             .put(topic.as_keyexpr(), payload)
+            .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to publish execution update: {}", e))?;
         Ok(())

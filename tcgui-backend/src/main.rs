@@ -310,6 +310,23 @@ impl TcBackend {
             introspect_topic.as_str()
         );
 
+        // Payload self-description (RFC keyspace-v2 08 §7): serve the
+        // SchemaSet JSON on @rpc/tc/describe so generic tools (zenctl,
+        // zengui) decode every registered payload into named fields.
+        let describe_topic = tc::describe_key(&self.local_origin);
+        let describe_queryable = self
+            .session
+            .declare_queryable(describe_topic.as_keyexpr())
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to declare describe queryable: {}", e),
+            })?;
+        info!(
+            "[BACKEND] Backend '{}' describe handler declared on: {}",
+            self.backend_name,
+            describe_topic.as_str()
+        );
+
         // Large-payload plane (RFC keyspace-v2 07 §2): a zblob Tier-1 server on
         // this host's `@blob/artifact` prefix. No blobs are registered yet —
         // the planned diagnostics/support-bundle download will publish through
@@ -521,6 +538,28 @@ impl TcBackend {
                         }
                         Err(e) => {
                             error!("Error receiving introspect query: {}", e);
+                        }
+                    }
+                }
+
+                // Handle describe queries (RFC 08 §7: the SchemaSet JSON)
+                query = describe_queryable.recv_async() => {
+                    match query {
+                        Ok(query) => {
+                            let reply_key = tc::describe_key(&self.local_origin);
+                            if let Err(e) = query
+                                .reply(
+                                    zenoh::key_expr::OwnedKeyExpr::from(reply_key),
+                                    tcgui_shared::schema::SCHEMAS.to_json(),
+                                )
+                                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
+                                .await
+                            {
+                                error!("Failed to reply to describe query: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error receiving describe query: {}", e);
                         }
                     }
                 }
@@ -765,6 +804,7 @@ impl TcBackend {
 
                     publisher
                         .put(payload)
+                        .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                         .await
                         .map_err(|e| TcguiError::ZenohError {
                             message: format!("Failed to publish TC stats: {}", e),
@@ -1152,6 +1192,7 @@ impl TcBackend {
                 let payload = serde_json::to_string(&tc_update)?;
                 publisher
                     .put(payload)
+                    .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                     .await
                     .map_err(|e| TcguiError::ZenohError {
                         message: format!("Failed to publish TC config update: {}", e),

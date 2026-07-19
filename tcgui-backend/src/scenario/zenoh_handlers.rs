@@ -568,7 +568,11 @@ impl ScenarioExecutionHandlers {
 
                     match serde_json::to_vec(&update) {
                         Ok(payload) => {
-                            if let Err(e) = session.put(update_topic.as_keyexpr(), payload).await {
+                            if let Err(e) = session
+                                .put(update_topic.as_keyexpr(), payload)
+                                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
+                                .await
+                            {
                                 error!(
                                     "Failed to publish execution status for {}:{}: {}",
                                     execution.target_namespace, execution.target_interface, e

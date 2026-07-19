@@ -157,10 +157,87 @@ pub mod topics {
     }
 }
 
+/// Producer registration document for the `state/tc/sensor` subject.
+///
+/// Declared in the registry since 1.0 but not yet published by the backend
+/// (a known RFC 08 §6.1 gap, tracked; the type exists so the served schema
+/// set — RFC 08 §7 — and the type table stay total and honest).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SensorDoc {
+    /// Producer base name (`tc`).
+    pub name: String,
+    /// Backend version string.
+    pub version: String,
+    /// Network namespaces this backend can actuate.
+    pub namespaces: Vec<String>,
+}
+
+/// Immutable audit record for the `events/tc/applied/{ulid}` subject.
+///
+/// Declared since 1.0, not yet emitted (same RFC 08 §6.1 note as
+/// [`SensorDoc`]).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TcAppliedEvent {
+    /// The event's ULID (also the key leaf).
+    pub ulid: String,
+    pub namespace: String,
+    pub interface: String,
+    /// The netem configuration that was applied, if any (None = cleared).
+    pub configuration: Option<TcNetemConfig>,
+    pub timestamp: u64,
+}
+
+/// Payload self-description (RFC 08 §7): the schema set served on
+/// `@rpc/tc/describe`, covering every type the registry slice references.
+/// Totality against the generated `TYPE_NAMES` is enforced at first use.
+pub mod schema {
+    use std::sync::LazyLock;
+    use zenkey::schema::{SchemaSet, TypeSchema};
+
+    pub static SCHEMAS: LazyLock<SchemaSet> = LazyLock::new(|| {
+        SchemaSet::builder("tcgui")
+            .json::<crate::BackendHealthStatus>("BackendHealthStatus")
+            .json::<crate::SensorDoc>("SensorDoc")
+            .json::<crate::NetworkInterface>("NetworkInterface")
+            .json::<crate::TcConfigUpdate>("TcConfigUpdate")
+            .json::<crate::scenario::ScenarioExecutionUpdate>("ScenarioExecutionUpdate")
+            .json::<crate::scenario::NetworkScenario>("NetworkScenario")
+            .json::<crate::presets::CustomPreset>("CustomPreset")
+            .json::<crate::BandwidthUpdate>("BandwidthUpdate")
+            .json::<crate::TcStatisticsUpdate>("TcStatisticsUpdate")
+            .json::<crate::TcAppliedEvent>("TcAppliedEvent")
+            .json::<crate::TcResponse>("TcResponse")
+            .json::<crate::InterfaceControlResponse>("InterfaceControlResponse")
+            .json::<crate::scenario::ScenarioResponse>("ScenarioResponse")
+            .json::<crate::scenario::ScenarioExecutionResponse>("ScenarioExecutionResponse")
+            .json::<crate::DiagnosticsResponse>("DiagnosticsResponse")
+            // The describe reply's own envelope: a meta entry so the type
+            // table stays total (the real schema is RFC 08 §7's shape).
+            .entry(
+                "SchemaSet",
+                TypeSchema::json_schema(serde_json::json!({
+                    "type": "object",
+                    "description": "RFC 08 §7 SchemaSet envelope (schema_version/app/types)",
+                })),
+            )
+            .build_verified(&schema_type_names())
+    });
+
+    /// The registry's type names minus the `toml` sentinel (`introspect`'s
+    /// raw-TOML reply is text, not a schema'd payload — RFC 08 §6).
+    pub fn schema_type_names() -> Vec<&'static str> {
+        crate::registry::TYPE_NAMES
+            .iter()
+            .copied()
+            .filter(|n| *n != "toml")
+            .collect()
+    }
+}
+
 /// Interface list update message (pub/sub)
 /// Topic: tcgui/{backend_name}/interfaces/list
 /// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceListUpdate {
     /// List of network namespaces with their interfaces
     pub namespaces: Vec<NetworkNamespace>,
@@ -173,7 +250,7 @@ pub struct InterfaceListUpdate {
 /// Real-time bandwidth statistics (pub/sub)
 /// Topic: tcgui/{backend_name}/bandwidth/{namespace}/{interface}
 /// QoS: Best effort, no history (high frequency updates)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BandwidthUpdate {
     /// Network namespace name
     pub namespace: String,
@@ -188,7 +265,7 @@ pub struct BandwidthUpdate {
 /// Interface state change event (pub/sub)
 /// Topic: tcgui/{backend_name}/interfaces/events
 /// QoS: Reliable delivery, history depth=10
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceStateEvent {
     /// Network namespace name
     pub namespace: String,
@@ -205,7 +282,7 @@ pub struct InterfaceStateEvent {
 /// Backend health and status information (pub/sub)
 /// Topic: tcgui/{backend_name}/health
 /// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BackendHealthStatus {
     /// The host origin (`h-<12hex>`) — THE identity. The frontend builds every
     /// key from this and keys its backend table on it (identity bridge, RFC
@@ -230,7 +307,7 @@ pub struct BackendHealthStatus {
 /// Traffic Control configuration status (pub/sub)
 /// Topic: tcgui/{backend_name}/tc/{namespace}/{interface}
 /// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcConfigUpdate {
     /// Network namespace name
     pub namespace: String,
@@ -247,7 +324,7 @@ pub struct TcConfigUpdate {
 }
 
 /// Basic TC statistics (bytes and packets transmitted)
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatsBasic {
     /// Total bytes transmitted through the qdisc
     pub bytes: u64,
@@ -256,7 +333,7 @@ pub struct TcStatsBasic {
 }
 
 /// Queue statistics from the TC qdisc
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatsQueue {
     /// Current queue length in packets
     pub qlen: u32,
@@ -271,7 +348,7 @@ pub struct TcStatsQueue {
 }
 
 /// Rate estimator statistics from TC qdisc
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatsRateEst {
     /// Current throughput in bytes per second
     pub bps: u32,
@@ -282,7 +359,7 @@ pub struct TcStatsRateEst {
 /// TC Statistics update message (pub/sub)
 /// Topic: tcgui/{backend_name}/tc/stats/{namespace}/{interface}
 /// QoS: Best effort, no history (high frequency updates)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatisticsUpdate {
     /// Network namespace name
     pub namespace: String,
@@ -302,7 +379,7 @@ pub struct TcStatisticsUpdate {
 
 /// Traffic control configuration request (Query)
 /// Query Service: tcgui/{backend_name}/query/tc
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcRequest {
     /// Target network namespace
     pub namespace: String,
@@ -313,7 +390,7 @@ pub struct TcRequest {
 }
 
 /// Structured TC configuration for all netem features
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcNetemConfig {
     pub loss: TcLossConfig,
     pub delay: TcDelayConfig,
@@ -324,7 +401,7 @@ pub struct TcNetemConfig {
 }
 
 /// Packet loss configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcLossConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -332,7 +409,7 @@ pub struct TcLossConfig {
 }
 
 /// Network delay configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcDelayConfig {
     pub enabled: bool,
     pub base_ms: f32,     // 0.0-5000.0
@@ -341,7 +418,7 @@ pub struct TcDelayConfig {
 }
 
 /// Packet duplication configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcDuplicateConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -349,7 +426,7 @@ pub struct TcDuplicateConfig {
 }
 
 /// Packet reordering configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcReorderConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -358,7 +435,7 @@ pub struct TcReorderConfig {
 }
 
 /// Packet corruption configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcCorruptConfig {
     pub enabled: bool,
     pub percentage: f32,  // 0.0-100.0
@@ -366,7 +443,7 @@ pub struct TcCorruptConfig {
 }
 
 /// Rate limiting configuration
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcRateLimitConfig {
     pub enabled: bool,
     pub rate_kbps: u32, // 1-1000000
@@ -892,7 +969,7 @@ impl TcNetemConfig {
 }
 
 /// Traffic control operations with structured configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TcOperation {
     /// Apply comprehensive netem configuration using structured config
     ApplyConfig { config: TcNetemConfig },
@@ -917,7 +994,7 @@ pub enum TcOperation {
 }
 
 /// Traffic control configuration that was applied
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcConfiguration {
     /// Applied packet loss percentage
     pub loss: f32,
@@ -950,7 +1027,7 @@ pub struct TcConfiguration {
 }
 
 /// Traffic control operation response (Reply)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcResponse {
     /// Whether the operation succeeded
     pub success: bool,
@@ -964,7 +1041,7 @@ pub struct TcResponse {
 
 /// Interface control request (enable/disable) (Query)
 /// Query Service: tcgui/{backend_name}/query/interface
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceControlRequest {
     /// Target network namespace
     pub namespace: String,
@@ -975,7 +1052,7 @@ pub struct InterfaceControlRequest {
 }
 
 /// Interface control operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum InterfaceControlOperation {
     /// Bring interface UP
     Enable,
@@ -984,7 +1061,7 @@ pub enum InterfaceControlOperation {
 }
 
 /// Interface control operation response (Reply)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceControlResponse {
     /// Whether the operation succeeded
     pub success: bool,
@@ -1002,7 +1079,7 @@ pub struct InterfaceControlResponse {
 
 /// Network diagnostics request (Query)
 /// Query Service: tcgui/{backend_name}/query/diagnostics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsRequest {
     /// Target network namespace
     pub namespace: String,
@@ -1026,7 +1103,7 @@ impl Default for DiagnosticsRequest {
 }
 
 /// Network diagnostics response (Reply)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsResponse {
     /// Whether diagnostics completed successfully
     pub success: bool,
@@ -1039,7 +1116,7 @@ pub struct DiagnosticsResponse {
 }
 
 /// Comprehensive diagnostic results
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsResults {
     /// Link layer status
     pub link_status: LinkStatus,
@@ -1054,7 +1131,7 @@ pub struct DiagnosticsResults {
 }
 
 /// TC diagnostic statistics showing qdisc effectiveness
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcDiagnosticStats {
     /// Packets dropped by qdisc
     pub drops: u32,
@@ -1071,7 +1148,7 @@ pub struct TcDiagnosticStats {
 }
 
 /// Network link status information
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinkStatus {
     /// Whether the interface is administratively UP
     pub is_up: bool,
@@ -1082,7 +1159,7 @@ pub struct LinkStatus {
 }
 
 /// Connectivity test result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectivityResult {
     /// Target that was tested
     pub target: String,
@@ -1093,7 +1170,7 @@ pub struct ConnectivityResult {
 }
 
 /// Latency measurement result from ping tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LatencyResult {
     /// Target that was tested
     pub target: String,
@@ -1137,7 +1214,7 @@ pub mod qos {
 }
 
 /// Zenoh session configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct ZenohConfig {
     /// Session mode (Peer or Client)
     pub mode: ZenohMode,
@@ -1162,7 +1239,7 @@ impl std::hash::Hash for ZenohConfig {
 }
 
 /// Zenoh session modes
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub enum ZenohMode {
     /// Peer mode - can connect to and be connected from other nodes
     Peer,
@@ -1507,7 +1584,7 @@ impl ZenohConfig {
 /// Represents a single backend instance (uniquely identified by name) and all
 /// the network namespaces it manages. Used for organizing multi-backend display
 /// in the GUI with a hierarchical Backend -> Namespace -> Interface structure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Backend {
     /// Unique backend identifier (e.g., "server1", "edge-node-01")
     pub name: String,
@@ -1525,7 +1602,7 @@ pub struct Backend {
 ///
 /// Contains backend-specific information that may be useful for display
 /// or operational decisions in the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BackendMetadata {
     /// Backend software version (if available)
     pub version: Option<String>,
@@ -1552,7 +1629,7 @@ impl Default for BackendMetadata {
 ///
 /// Used to categorize namespaces for filtering in the frontend UI.
 /// Allows users to show/hide interfaces based on namespace origin.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub enum NamespaceType {
     /// Default/root namespace (host interfaces)
     #[default]
@@ -1600,7 +1677,7 @@ impl NamespaceType {
 ///
 /// Represents a Linux network namespace and all the network interfaces
 /// it contains. Used for organizing interface display in the GUI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NetworkNamespace {
     /// Namespace name ("default" for host namespace, or custom name)
     pub name: String,
@@ -1618,7 +1695,7 @@ pub struct NetworkNamespace {
 ///
 /// Represents a network interface within a specific namespace, including
 /// its current state and traffic control configuration status.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct NetworkInterface {
     /// Interface name (e.g., "eth0", "fo", "wlan0")
     pub name: String,
@@ -1661,7 +1738,7 @@ pub struct NetworkInterface {
 /// Used to categorize interfaces for display and operational purposes
 /// in the GUI. Different interface types may have different capabilities
 /// or restrictions for traffic control operations.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub enum InterfaceType {
     /// Physical hardware network interface (e.g., Ethernet, WiFi)
     Physical,
@@ -1684,7 +1761,7 @@ pub enum InterfaceType {
 /// Contains both cumulative counters (total bytes/packets since interface creation)
 /// and calculated rates (bytes per second) for real-time monitoring. Statistics
 /// are collected from `/proc/net/dev` with additional rate calculations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NetworkBandwidthStats {
     /// Total bytes received since interface creation
     pub rx_bytes: u64,
@@ -1714,7 +1791,7 @@ pub struct NetworkBandwidthStats {
 ///
 /// Used to categorize different types of interface updates sent from
 /// the backend to frontend for real-time interface monitoring.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum InterfaceEventType {
     /// New network interface was detected
     Added,
@@ -1782,6 +1859,25 @@ mod tests {
         assert_eq!(parsed.origin, o.chunk());
         assert_eq!(parsed.subject, tc::Subject::interface("default", "eth0"));
         assert_eq!(parsed.subject.family(), tc::Family::Interface);
+    }
+
+    /// RFC 08 §7 totality: the served SchemaSet covers every type name the
+    /// registry references (build_verified panics otherwise — this test
+    /// forces the static's evaluation in CI).
+    #[test]
+    fn served_schemas_cover_the_registry() {
+        let set = &*crate::schema::SCHEMAS;
+        let names = crate::schema::schema_type_names();
+        assert!(set.len() >= names.len());
+        assert!(
+            set.get("NetworkInterface")
+                .unwrap()
+                .json_document()
+                .is_some()
+        );
+        // The introspect raw-TOML sentinel is deliberately not schema'd.
+        assert!(set.verify_covers(&names).is_ok());
+        assert!(!names.contains(&"toml"));
     }
 
     #[test]

@@ -765,6 +765,7 @@ impl NetworkManager {
             let publisher = self.get_interface_publisher(&ns, &name).await?;
             publisher
                 .put(payload)
+                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                 .await
                 .map_err(|e| TcguiError::ZenohError {
                     message: format!("Failed to publish interface record: {}", e),
