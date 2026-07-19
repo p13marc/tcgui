@@ -14,11 +14,13 @@ use tokio::time::Duration;
 use tracing::{info, instrument, warn};
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
+use tcgui_shared::registry::tc;
 use tcgui_shared::{
     BackendHealthStatus, BackendMetadata, InterfaceControlOperation, InterfaceControlRequest,
     InterfaceControlResponse, NetworkInterface, TcNetemConfig, TcOperation, TcRequest, TcResponse,
-    errors::TcguiError, topics,
+    errors::TcguiError,
 };
+use zenkey::ConcreteOrigin as _;
 
 use crate::TcBackend;
 use crate::{diagnostics, tc_config};
@@ -375,7 +377,12 @@ impl TcBackend {
             let payload = serde_json::to_string(&response)?;
             self.reply_value(
                 &query,
-                topics::rpc_config(&self.local_origin, &request.namespace, &request.interface),
+                tc::config_ns_iface_set_key(
+                    &self.local_origin,
+                    &request.namespace,
+                    &request.interface,
+                )
+                .into(),
                 payload,
             )
             .await?;
@@ -479,7 +486,12 @@ impl TcBackend {
             let payload = serde_json::to_string(&response)?;
             self.reply_value(
                 &query,
-                topics::rpc_interface(&self.local_origin, &request.namespace, &request.interface),
+                tc::interface_ns_iface_set_key(
+                    &self.local_origin,
+                    &request.namespace,
+                    &request.interface,
+                )
+                .into(),
                 payload,
             )
             .await?;
@@ -547,8 +559,12 @@ impl TcBackend {
 
         if response.success {
             let payload = serde_json::to_string(&response)?;
-            self.reply_value(&query, topics::rpc_diagnostics(&self.local_origin), payload)
-                .await?;
+            self.reply_value(
+                &query,
+                tc::diagnostics_key(&self.local_origin).into(),
+                payload,
+            )
+            .await?;
             info!(
                 "Diagnostics completed for {}/{}: {}",
                 request.namespace, request.interface, response.message
@@ -566,7 +582,7 @@ impl TcBackend {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         let health_status = BackendHealthStatus {
-            host_id: self.local_origin.as_str().to_string(),
+            host_id: self.local_origin.chunk().to_string(),
             backend_name: self.backend_name.clone(),
             status: status.to_string(),
             timestamp,
@@ -576,9 +592,10 @@ impl TcBackend {
         };
 
         let payload = serde_json::to_string(&health_status)?;
-        let backend_health_topic = topics::state_health(&self.local_origin);
+        let backend_health_topic = tc::key(&self.local_origin, &tc::Subject::Health);
         self.session
-            .put(&backend_health_topic, payload)
+            .put(backend_health_topic.as_keyexpr(), payload)
+            .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to send backend health status: {}", e),
@@ -598,6 +615,7 @@ impl TcBackend {
             let payload = serde_json::to_string(preset)?;
             publisher
                 .put(payload)
+                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
                 .await
                 .map_err(|e| TcguiError::ZenohError {
                     message: format!("Failed to publish preset '{}': {}", preset.id, e),
@@ -621,7 +639,10 @@ impl TcBackend {
         let key = format!("{}/{}", namespace, interface);
 
         if !self.tc_config_publishers.contains_key(&key) {
-            let tc_config_topic = topics::state_config(&self.local_origin, namespace, interface);
+            let tc_config_topic = tc::key(
+                &self.local_origin,
+                &tc::Subject::config(namespace, interface),
+            );
             info!(
                 "Creating TC config publisher for {}/{} on: {}",
                 namespace,
@@ -631,7 +652,7 @@ impl TcBackend {
 
             let publisher = self
                 .session
-                .declare_publisher(tc_config_topic)
+                .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(tc_config_topic))
                 .cache(CacheConfig::default().max_samples(1))
                 .sample_miss_detection(
                     MissDetectionConfig::default().heartbeat(Duration::from_millis(1000)),

@@ -1,0 +1,55 @@
+# RFC 08 §5 type table (v1.5/H6): every type/request/reply name in tc.toml
+# must resolve here — the zenkey-build lint fails the build otherwise.
+# `kind` names the schema-document kind the describe reply serves (RFC 08 §7).
+
+[types.BackendHealthStatus]
+kind = "json-schema"
+
+[types.SensorDoc]
+kind = "json-schema"
+
+[types.NetworkInterface]
+kind = "json-schema"
+
+[types.TcConfigUpdate]
+kind = "json-schema"
+
+[types.ScenarioExecutionUpdate]
+kind = "json-schema"
+
+[types.NetworkScenario]
+kind = "json-schema"
+
+[types.CustomPreset]
+kind = "json-schema"
+
+[types.BandwidthUpdate]
+kind = "json-schema"
+
+[types.TcStatisticsUpdate]
+kind = "json-schema"
+
+[types.TcAppliedEvent]
+kind = "json-schema"
+
+[types.TcResponse]
+kind = "json-schema"
+
+[types.InterfaceControlResponse]
+kind = "json-schema"
+
+[types.ScenarioResponse]
+kind = "json-schema"
+
+[types.ScenarioExecutionResponse]
+kind = "json-schema"
+
+[types.DiagnosticsResponse]
+kind = "json-schema"
+
+[types.SchemaSet]
+kind = "json-schema"
+# The `introspect` reply sentinel: raw registry TOML, not a schema'd payload
+# (RFC 08 §6). An open `kind` string; generic tools render it as text.
+[types.toml]
+kind = "raw"

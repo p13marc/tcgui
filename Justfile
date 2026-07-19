@@ -227,7 +227,7 @@ security-full:
 # Check for unused dependencies
 unused-deps:
     @echo "🧹 Checking for unused dependencies..."
-    cargo udeps --workspace --all-targets --all-features
+    cargo +nightly udeps --workspace --all-targets --all-features
     @echo "✅ No unused dependencies found"
 
 # Check for outdated dependencies
@@ -256,15 +256,18 @@ deadcode:
 # Miri verification for critical unsafe code and key modules
 miri-key-modules:
     @echo "🧠 Running Miri on key modules for memory safety..."
-    # Test critical networking and concurrency components
-    cargo +nightly miri test -p tcgui-shared --lib
-    cargo +nightly miri test -p tcgui-backend --lib bandwidth::tests
+    # Test critical networking and concurrency components. Isolation is
+    # disabled: these tests read the clock (SystemTime::now in
+    # NetworkScenario::new), which strict isolation rejects outright —
+    # we want Miri's UB detection, not its determinism sandbox.
+    MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test -p tcgui-shared --lib
+    MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test -p tcgui-backend --lib bandwidth::tests
     @echo "✅ Memory safety verification complete"
 
 # Full Miri analysis (slow - use sparingly)
 miri-full:
     @echo "🧠 Running comprehensive Miri analysis..."
-    cargo +nightly miri test --workspace --lib
+    MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --workspace --lib
     @echo "✅ Comprehensive memory safety verification complete"
 
 # === PACKAGING COMMANDS ===

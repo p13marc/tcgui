@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub type ScenarioId = String;
 
 /// Network scenario definition containing a sequence of TC parameter changes over time
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NetworkScenario {
     /// Unique scenario identifier
     pub id: ScenarioId,
@@ -42,7 +42,7 @@ fn default_cleanup_on_failure() -> bool {
 }
 
 /// Metadata for scenario organization and searching
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioMetadata {
     /// Category tags (e.g., "mobile", "congestion", "testing")
     pub tags: Vec<String>,
@@ -55,7 +55,7 @@ pub struct ScenarioMetadata {
 }
 
 /// Individual step in a network scenario
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioStep {
     /// How long to maintain these settings (in milliseconds)
     pub duration_ms: u64,
@@ -66,7 +66,7 @@ pub struct ScenarioStep {
 }
 
 /// Current execution state of a running scenario
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioExecution {
     /// The scenario being executed
     pub scenario: NetworkScenario,
@@ -91,7 +91,7 @@ pub struct ScenarioExecution {
 }
 
 /// Execution statistics for monitoring and debugging
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExecutionStats {
     /// Total number of steps completed
     pub steps_completed: usize,
@@ -106,7 +106,7 @@ pub struct ExecutionStats {
 }
 
 /// Category of error for user guidance
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub enum ScenarioErrorCategory {
     /// Transient error, may succeed on retry (network timeout, temporary unavailability)
     Transient,
@@ -133,7 +133,7 @@ impl std::fmt::Display for ScenarioErrorCategory {
 }
 
 /// Detailed error information for scenario operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioError {
     /// Error category for user guidance
     pub category: ScenarioErrorCategory,
@@ -250,7 +250,7 @@ impl std::fmt::Display for ScenarioError {
 }
 
 /// Current state of scenario execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ExecutionState {
     /// Scenario is actively running
     Running,
@@ -271,7 +271,7 @@ pub enum ExecutionState {
 }
 
 /// Scenario management request messages (Query/Reply pattern)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ScenarioRequest {
     /// Add a new scenario
     Add(NetworkScenario),
@@ -286,7 +286,7 @@ pub enum ScenarioRequest {
 }
 
 /// Information about a scenario file that failed to load
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioLoadError {
     /// File path that failed to load
     pub file_path: String,
@@ -295,7 +295,7 @@ pub struct ScenarioLoadError {
 }
 
 /// Response to scenario management requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ScenarioResponse {
     /// Scenario was successfully added
     Added { id: ScenarioId },
@@ -316,7 +316,7 @@ pub enum ScenarioResponse {
 }
 
 /// Scenario execution control request messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ScenarioExecutionRequest {
     /// Start executing a scenario on specified interface
     Start {
@@ -352,7 +352,7 @@ pub enum ScenarioExecutionRequest {
 }
 
 /// Response to scenario execution requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ScenarioExecutionResponse {
     /// Execution started successfully
     Started {
@@ -376,7 +376,7 @@ pub enum ScenarioExecutionResponse {
 }
 
 /// Scenario execution status update (Pub/Sub)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScenarioExecutionUpdate {
     /// Target namespace
     pub namespace: String,

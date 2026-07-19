@@ -7,8 +7,9 @@ use tcgui_shared::{
     TcConfigUpdate, TcResponse, TcStatisticsUpdate, ZenohConfig,
     identity::RemoteOrigin,
     presets::CustomPreset,
+    registry::tc,
     scenario::{NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionUpdate},
-    topics::{self, StateFamily},
+    topics,
 };
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
@@ -53,22 +54,6 @@ fn deser_payload<T: DeserializeOwned>(sample: &Sample, ctx: &str) -> Option<T> {
     }
 }
 
-/// The telemetry-plane kind chunk (`bandwidth` / `qdisc`) of a
-/// `v1/<origin>/telemetry/tc/<kind>/…` key, tolerating an optional `tcgui` base.
-fn telemetry_kind(key: &str) -> Option<&str> {
-    let mut parts = key.split('/');
-    let mut first = parts.next();
-    if first == Some("tcgui") {
-        first = parts.next();
-    }
-    // first is now the "v1" chunk; advance past origin, "telemetry", "tc".
-    let _v1 = first?;
-    let _origin = parts.next()?;
-    let _telemetry = parts.next()?;
-    let _tc = parts.next()?;
-    parts.next()
-}
-
 /// Route a `state`-plane sample (Put upsert or Delete tombstone).
 ///
 /// Every family must inspect [`Sample::kind`] now that removal is a Delete
@@ -80,18 +65,19 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
     let sk = match topics::parse_state_key(key) {
         Some(sk) => sk,
         None => {
-            error!("Could not parse state key: {}", key);
+            // Foreign producers, the reserved `alive` leaf, and unregistered
+            // subjects all refine to nothing — not an error (RFC 08 §1).
+            trace!("Ignoring non-tc state key: {}", key);
             return None;
         }
     };
     let is_delete = sample.kind() == SampleKind::Delete;
 
-    match sk.family {
-        // Presence is handled by the liveliness subscriber; the sensor document
-        // is not consumed by the GUI. Ignore both here.
-        StateFamily::Alive | StateFamily::Sensor => None,
+    match sk.subject {
+        // The sensor document is not consumed by the GUI.
+        tc::Subject::Sensor => None,
 
-        StateFamily::Health => {
+        tc::Subject::Health => {
             if is_delete {
                 return None;
             }
@@ -107,9 +93,9 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
             Some(ZenohEvent::BackendHealthUpdate(health))
         }
 
-        StateFamily::Interface => {
-            let namespace = sk.ns?;
-            let interface = sk.iface?;
+        tc::Subject::Interface { ns, iface } => {
+            let namespace = ns.to_string();
+            let interface = iface.to_string();
             if is_delete {
                 info!(
                     "Interface removed (tombstone) on '{}': {}/{}",
@@ -129,9 +115,9 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
             }
         }
 
-        StateFamily::Config => {
-            let namespace = sk.ns?;
-            let interface = sk.iface?;
+        tc::Subject::Config { ns, iface } => {
+            let namespace = ns.to_string();
+            let interface = iface.to_string();
             if is_delete {
                 // Clearing config is a Delete, never a `None` payload (04 §1.2).
                 // Synthesize a "no TC" update so the interface UI resets.
@@ -150,25 +136,25 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
             }
         }
 
-        StateFamily::Execution => {
-            let namespace = sk.ns?;
-            let interface = sk.iface?;
-            if is_delete {
-                Some(ZenohEvent::ScenarioExecutionRemoved {
-                    backend_name: sk.origin,
-                    namespace,
-                    interface,
-                })
-            } else {
-                let mut update: ScenarioExecutionUpdate =
-                    deser_payload(&sample, "scenario execution update")?;
-                update.backend_name = sk.origin;
-                Some(ZenohEvent::ScenarioExecutionUpdate(Box::new(update)))
-            }
+        tc::Subject::Execution { .. } if is_delete => {
+            let tc::Subject::Execution { ns, iface } = sk.subject else {
+                return None;
+            };
+            Some(ZenohEvent::ScenarioExecutionRemoved {
+                backend_name: sk.origin,
+                namespace: ns.to_string(),
+                interface: iface.to_string(),
+            })
+        }
+        tc::Subject::Execution { .. } => {
+            let mut update: ScenarioExecutionUpdate =
+                deser_payload(&sample, "scenario execution update")?;
+            update.backend_name = sk.origin;
+            Some(ZenohEvent::ScenarioExecutionUpdate(Box::new(update)))
         }
 
-        StateFamily::Scenario => {
-            let id = sk.id?;
+        tc::Subject::Scenario { id } => {
+            let id = id.to_string();
             if is_delete {
                 Some(ZenohEvent::ScenarioRemoved {
                     backend_name: sk.origin,
@@ -183,8 +169,8 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
             }
         }
 
-        StateFamily::Preset => {
-            let id = sk.id?;
+        tc::Subject::Preset { id } => {
+            let id = id.to_string();
             if is_delete {
                 Some(ZenohEvent::PresetRemoved {
                     backend_name: sk.origin,
@@ -198,6 +184,9 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
                 })
             }
         }
+
+        // Telemetry/events subjects cannot appear under the state class.
+        _ => None,
     }
 }
 
@@ -207,7 +196,7 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
 fn handle_telemetry_sample(sample: Sample) -> Option<ZenohEvent> {
     let key = sample.key_expr().as_str();
     let origin = topics::parse_origin(key)?;
-    match telemetry_kind(key)? {
+    match topics::telemetry_kind(key)? {
         "bandwidth" => {
             let mut update: BandwidthUpdate = deser_payload(&sample, "bandwidth update")?;
             update.backend_name = origin;
@@ -377,7 +366,7 @@ impl ZenohManager {
                         // wide wildcard subscription, where an unaggregated
                         // heartbeat per publisher scales with fleet × interface.
                         let state_subscriber = match session
-                            .declare_subscriber(topics::SEL_STATE)
+                            .declare_subscriber(topics::sel_state())
                             .history(HistoryConfig::default().detect_late_publishers())
                             .recovery(
                                 RecoveryConfig::default()
@@ -387,7 +376,7 @@ impl ZenohManager {
                             .await
                         {
                             Ok(subscriber) => {
-                                info!("Subscribed to state plane: {}", topics::SEL_STATE);
+                                info!("Subscribed to state plane: {}", topics::sel_state());
                                 subscriber
                             }
                             Err(e) => {
@@ -398,11 +387,11 @@ impl ZenohManager {
 
                         // Telemetry-plane subscriber (superseded; best-effort).
                         let telemetry_subscriber = match session
-                            .declare_subscriber(topics::SEL_TELEMETRY)
+                            .declare_subscriber(topics::sel_telemetry())
                             .await
                         {
                             Ok(subscriber) => {
-                                info!("Subscribed to telemetry plane: {}", topics::SEL_TELEMETRY);
+                                info!("Subscribed to telemetry plane: {}", topics::sel_telemetry());
                                 subscriber
                             }
                             Err(e) => {
@@ -414,12 +403,12 @@ impl ZenohManager {
                         // Liveliness subscriber on the reserved alive leaf.
                         let liveliness_subscriber = match session
                             .liveliness()
-                            .declare_subscriber(topics::SEL_ALIVE)
+                            .declare_subscriber(topics::sel_alive())
                             .history(true)
                             .await
                         {
                             Ok(subscriber) => {
-                                info!("Subscribed to backend liveliness: {}", topics::SEL_ALIVE);
+                                info!("Subscribed to backend liveliness: {}", topics::sel_alive());
                                 subscriber
                             }
                             Err(e) => {
@@ -479,18 +468,18 @@ impl ZenohManager {
                                 // Handle outgoing TC queries
                                 Some(tc_query) = tc_query_receiver.recv() => {
                                     let origin = match RemoteOrigin::parse(&tc_query.backend_name) {
-                                        Some(o) => o,
-                                        None => {
+                                        Ok(o) => o,
+                                        Err(_) => {
                                             error!("Refusing TC query: '{}' is not a concrete origin", tc_query.backend_name);
                                             continue;
                                         }
                                     };
-                                    let topic = topics::rpc_config(&origin, &tc_query.request.namespace, &tc_query.request.interface);
+                                    let topic = tc::config_ns_iface_set_key(&origin, &tc_query.request.namespace, &tc_query.request.interface);
                                     let mut output_clone = output.clone();
                                     let backend_name = tc_query.backend_name.clone();
                                     match serde_json::to_string(&tc_query.request) {
                                         Ok(payload) => {
-                                            match session.get(&topic).payload(payload).await {
+                                            match session.get(topic.as_str()).payload(payload).await {
                                                 Ok(replies) => {
                                                     tokio::spawn(async move {
                                                         while let Ok(reply) = replies.recv_async().await {
@@ -532,18 +521,18 @@ impl ZenohManager {
                                 // Handle outgoing interface control queries
                                 Some(interface_query) = interface_control_receiver.recv() => {
                                     let origin = match RemoteOrigin::parse(&interface_query.backend_name) {
-                                        Some(o) => o,
-                                        None => {
+                                        Ok(o) => o,
+                                        Err(_) => {
                                             error!("Refusing interface control query: '{}' is not a concrete origin", interface_query.backend_name);
                                             continue;
                                         }
                                     };
-                                    let topic = topics::rpc_interface(&origin, &interface_query.request.namespace, &interface_query.request.interface);
+                                    let topic = tc::interface_ns_iface_set_key(&origin, &interface_query.request.namespace, &interface_query.request.interface);
                                     let mut output_clone = output.clone();
                                     let backend_name = interface_query.backend_name.clone();
                                     match serde_json::to_string(&interface_query.request) {
                                         Ok(payload) => {
-                                            match session.get(&topic).payload(payload).await {
+                                            match session.get(topic.as_str()).payload(payload).await {
                                                 Ok(replies) => {
                                                     tokio::spawn(async move {
                                                         while let Ok(reply) = replies.recv_async().await {
@@ -586,19 +575,19 @@ impl ZenohManager {
                                 Some(scenario_query) = scenario_query_receiver.recv() => {
                                     use tcgui_shared::scenario::ScenarioResponse;
                                     let origin = match RemoteOrigin::parse(&scenario_query.backend_name) {
-                                        Some(o) => o,
-                                        None => {
+                                        Ok(o) => o,
+                                        Err(_) => {
                                             error!("Refusing scenario query: '{}' is not a concrete origin", scenario_query.backend_name);
                                             continue;
                                         }
                                     };
-                                    let topic = topics::rpc_scenario(&origin);
+                                    let topic = tc::scenario_set_key(&origin);
                                     let backend_name = scenario_query.backend_name.clone();
                                     let mut output_clone = output.clone();
 
                                     match serde_json::to_string(&scenario_query.request) {
                                         Ok(payload) => {
-                                            match session.get(&topic).payload(payload).await {
+                                            match session.get(topic.as_str()).payload(payload).await {
                                                 Ok(replies) => {
                                                     tokio::spawn(async move {
                                                         while let Ok(reply) = replies.recv_async().await {
@@ -642,8 +631,8 @@ impl ZenohManager {
                                 Some(execution_query) = scenario_execution_query_receiver.recv() => {
                                     use tcgui_shared::scenario::ScenarioExecutionResponse;
                                     let origin = match RemoteOrigin::parse(&execution_query.backend_name) {
-                                        Some(o) => o,
-                                        None => {
+                                        Ok(o) => o,
+                                        Err(_) => {
                                             error!("Refusing scenario execution query: '{}' is not a concrete origin", execution_query.backend_name);
                                             continue;
                                         }
@@ -655,12 +644,12 @@ impl ZenohManager {
                                             continue;
                                         }
                                     };
-                                    let topic = topics::rpc_execution(&origin, namespace, interface);
+                                    let topic = tc::execution_ns_iface_set_key(&origin, namespace, interface);
                                     let mut output_clone = output.clone();
                                     let backend_name = execution_query.backend_name.clone();
                                     match serde_json::to_string(&execution_query.request) {
                                         Ok(payload) => {
-                                            match session.get(&topic).payload(payload).await {
+                                            match session.get(topic.as_str()).payload(payload).await {
                                                 Ok(replies) => {
                                                     tokio::spawn(async move {
                                                         while let Ok(reply) = replies.recv_async().await {
@@ -702,13 +691,13 @@ impl ZenohManager {
                                 Some(diag_query) = diagnostics_query_receiver.recv() => {
                                     use tcgui_shared::DiagnosticsResponse;
                                     let origin = match RemoteOrigin::parse(&diag_query.backend_name) {
-                                        Some(o) => o,
-                                        None => {
+                                        Ok(o) => o,
+                                        Err(_) => {
                                             error!("Refusing diagnostics query: '{}' is not a concrete origin", diag_query.backend_name);
                                             continue;
                                         }
                                     };
-                                    let topic = topics::rpc_diagnostics(&origin);
+                                    let topic = tc::diagnostics_key(&origin);
                                     let mut output_clone = output.clone();
                                     let backend_name = diag_query.backend_name.clone();
                                     let namespace = diag_query.request.namespace.clone();
@@ -716,7 +705,7 @@ impl ZenohManager {
 
                                     match serde_json::to_string(&diag_query.request) {
                                         Ok(payload) => {
-                                            match session.get(&topic).payload(payload).await {
+                                            match session.get(topic.as_str()).payload(payload).await {
                                                 Ok(replies) => {
                                                     tokio::spawn(async move {
                                                         while let Ok(reply) = replies.recv_async().await {
@@ -781,43 +770,42 @@ pub fn zenoh_manager_with_arc(config: Arc<ZenohConfig>) -> impl Sipper<Never, Ze
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tcgui_shared::identity::LocalOrigin;
+    use tcgui_shared::identity::ConcreteOrigin as _;
     use tcgui_shared::topics;
 
     #[test]
     fn test_parse_origin_from_state_key() {
-        let origin = LocalOrigin::from_seed("machine-a");
-        let key = topics::state_interface(&origin, "default", "eth0");
+        let origin = tcgui_shared::identity::local_origin_from_seed("machine-a");
+        let key = tc::key(&origin, &tc::Subject::interface("default", "eth0"));
         let parsed = topics::parse_origin(key.as_str());
-        assert_eq!(parsed.as_deref(), Some(origin.as_str()));
+        assert_eq!(parsed.as_deref(), Some(origin.chunk()));
     }
 
     #[test]
     fn test_parse_state_key_interface() {
-        let origin = LocalOrigin::from_seed("machine-a");
-        let key = topics::state_interface(&origin, "default", "eth0");
+        let origin = tcgui_shared::identity::local_origin_from_seed("machine-a");
+        let key = tc::key(&origin, &tc::Subject::interface("default", "eth0"));
         let sk = topics::parse_state_key(key.as_str()).expect("parse");
-        assert_eq!(sk.family, StateFamily::Interface);
-        assert_eq!(sk.ns.as_deref(), Some("default"));
-        assert_eq!(sk.iface.as_deref(), Some("eth0"));
-        assert_eq!(sk.origin, origin.as_str());
+        assert_eq!(sk.subject, tc::Subject::interface("default", "eth0"));
+        assert_eq!(sk.subject.family(), tc::Family::Interface);
+        assert_eq!(sk.origin, origin.chunk());
     }
 
     #[test]
     fn test_telemetry_kind_extraction() {
-        let origin = LocalOrigin::from_seed("machine-a");
-        let bw = topics::telemetry_bandwidth(&origin, "default", "eth0");
-        assert_eq!(telemetry_kind(bw.as_str()), Some("bandwidth"));
-        let qd = topics::telemetry_qdisc(&origin, "default", "eth0");
-        assert_eq!(telemetry_kind(qd.as_str()), Some("qdisc"));
+        let origin = tcgui_shared::identity::local_origin_from_seed("machine-a");
+        let bw = tc::key(&origin, &tc::Subject::bandwidth("default", "eth0"));
+        assert_eq!(topics::telemetry_kind(bw.as_str()), Some("bandwidth"));
+        let qd = tc::key(&origin, &tc::Subject::qdisc("default", "eth0"));
+        assert_eq!(topics::telemetry_kind(qd.as_str()), Some("qdisc"));
     }
 
     #[test]
     fn test_remote_origin_round_trip_builds_rpc_key() {
-        let local = LocalOrigin::from_seed("machine-a");
-        let remote = RemoteOrigin::parse(local.as_str()).expect("valid origin");
-        let key = topics::rpc_config(&remote, "default", "eth0");
-        assert!(key.as_str().contains(local.as_str()));
+        let local = tcgui_shared::identity::local_origin_from_seed("machine-a");
+        let remote = RemoteOrigin::parse(local.chunk()).expect("valid origin");
+        let key = tc::config_ns_iface_set_key(&remote, "default", "eth0");
+        assert!(key.as_str().contains(local.chunk()));
         assert!(key.as_str().ends_with("/set"));
     }
 

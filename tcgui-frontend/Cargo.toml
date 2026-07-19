@@ -46,7 +46,6 @@ json5 = "0.4"
 serde = { workspace = true }
 
 # Process management
-ctrlc = "3.4"
 
 # Package metadata for DEB/RPM generation
 [package.metadata.deb]
