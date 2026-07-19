@@ -35,7 +35,13 @@ notice = "warn"
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
-    # "RUSTSEC-0000-0000",
+    # Kept in lockstep with .cargo/audit.toml — only advisories that cannot
+    # be fixed from this workspace (upstream pins), revisited on every
+    # zenoh / iced (winit) bump.
+    "RUSTSEC-2023-0071", # rsa Marvin sidechannel — no patched release (zenoh-transport)
+    "RUSTSEC-2026-0041", # lz4_flex 0.10 OOB read — zenoh-transport 1.9 pins 0.10.x
+    "RUSTSEC-2026-0194", # quick-xml 0.39 DoS — wayland-scanner (winit build-time) pins 0.39
+    "RUSTSEC-2026-0195", # quick-xml 0.39 DoS — same pin
 ]
 
 # This section is considered when running `cargo deny check licenses`
