@@ -52,15 +52,19 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust toolchain  
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-
-    - name: Install Nightly (for Miri)
+    # Nightly first, stable second: dtolnay/rust-toolchain makes each
+    # installed toolchain the default, and the pipeline's fmt/clippy must run
+    # on stable (nightly ships no rustfmt here). Miri/udeps invoke +nightly
+    # explicitly.
+    - name: Install Nightly (for Miri/udeps)
       uses: dtolnay/rust-toolchain@nightly
       with:
         components: miri, rust-src
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
