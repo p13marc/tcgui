@@ -13,10 +13,11 @@ use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 
 use tcgui_shared::identity::LocalOrigin;
+use tcgui_shared::registry::tc;
 use tcgui_shared::scenario::{
     ExecutionState, ExecutionStats, NetworkScenario, ScenarioError, ScenarioExecution,
 };
-use tcgui_shared::{TcOperation, TcRequest, TcResponse, topics};
+use tcgui_shared::{TcOperation, TcRequest, TcResponse};
 
 use crate::tc_commands::{CapturedTcState, TcCommandManager};
 
@@ -740,13 +741,13 @@ impl ScenarioExecutionEngine {
         tc_request: &TcRequest,
     ) -> Result<TcResponse> {
         let tc_query_topic =
-            topics::rpc_config(local_origin, &tc_request.namespace, &tc_request.interface);
+            tc::config_ns_iface_set_key(local_origin, &tc_request.namespace, &tc_request.interface);
         let request_payload = serde_json::to_vec(tc_request)?;
 
         debug!("Executing TC command via query: {:?}", tc_request);
 
         let replies = session
-            .get(&tc_query_topic)
+            .get(tc_query_topic.as_str())
             .payload(request_payload)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send TC query: {}", e))?;
@@ -773,7 +774,10 @@ impl ScenarioExecutionEngine {
         local_origin: &LocalOrigin,
         update: ScenarioExecutionUpdate,
     ) -> Result<()> {
-        let topic = topics::state_execution(local_origin, &update.namespace, &update.interface);
+        let topic = tc::key(
+            local_origin,
+            &tc::Subject::execution(&update.namespace, &update.interface),
+        );
 
         let payload = serde_json::to_vec(&tcgui_shared::scenario::ScenarioExecutionUpdate {
             namespace: update.namespace,
@@ -787,7 +791,7 @@ impl ScenarioExecutionEngine {
         })?;
 
         session
-            .put(&topic, payload)
+            .put(topic.as_keyexpr(), payload)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to publish execution update: {}", e))?;
         Ok(())
@@ -865,7 +869,7 @@ mod tests {
         let tc_manager = crate::tc_commands::TcCommandManager::new();
         ScenarioExecutionEngine::new(
             session,
-            LocalOrigin::from_seed("test-backend"),
+            tcgui_shared::identity::local_origin_from_seed("test-backend"),
             "test-backend".to_string(),
             tc_manager,
         )

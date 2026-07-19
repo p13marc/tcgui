@@ -21,8 +21,7 @@
 //! [`RemoteOrigin`]s learned from health documents and builds write keys from
 //! them — you cannot format a write key from a name you typed or a wildcard.
 
-use serde::{Deserialize, Serialize};
-use zenkey::{AppProfile, HostId};
+use zenkey::AppProfile;
 
 /// tcgui's application profile (RFC 06 §1): the app name and the origin salt.
 /// The salt is the same domain-separation tag the pre-zenkey derivation used,
@@ -32,119 +31,27 @@ pub static PROFILE: AppProfile = AppProfile::new("tcgui", "tcgui-host-id-v1");
 /// Stable per-host machine-id sources, in priority order.
 const MACHINE_ID_PATHS: [&str; 2] = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
 
-/// An opaque, stable host origin: `h-<12 lowercase hex>`.
-///
-/// This is the *value* that occupies the origin chunk. It is deliberately not
-/// directly constructible from an arbitrary string in publishing code — mint a
-/// [`LocalOrigin`] (this host) or parse a [`RemoteOrigin`] (a peer) instead.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Origin(String);
+/// The typed origins are zenkey's own since 0.3 (RFC 08 §1.1/§1.2): the
+/// `Local`/`Remote` split is a *type* — a backend mints exactly one
+/// [`LocalOrigin`] and publishes under it; the frontend only ever holds
+/// [`RemoteOrigin`]s parsed from wire data and builds call keys from them.
+/// A `*` fleet selector implements neither, which is what keeps a fan-out
+/// write unspellable (G2/G5).
+pub use zenkey::origin::{ConcreteOrigin, HostOrigin, LocalOrigin, RemoteOrigin};
 
-impl Origin {
-    /// The origin chunk as it appears in a key (`h-3fa9c2d41b7e`).
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Derive a host origin from a raw machine-id string — zenkey's reference
-    /// derivation (RFC 06 §1) with tcgui's salt.
-    fn from_machine_id(machine_id: &str) -> Self {
-        Origin(
-            HostId::from_machine_id(machine_id, PROFILE.salt())
-                .as_str()
-                .to_string(),
-        )
-    }
-
-    /// Whether `s` is a well-formed concrete host origin (`h-<12 hex>`).
-    fn is_valid_host(s: &str) -> bool {
-        zenkey::grammar::is_valid_host_origin(s)
-    }
+/// Mint this host's origin from the richest stable seed available: the
+/// machine id, falling back to a persisted random id, falling back to the
+/// hostname. The ladder predates zenkey's built-in minting and additionally
+/// checks `/var/lib/dbus/machine-id` — kept so existing fallback hosts do
+/// not re-key.
+pub fn mint_local_origin() -> LocalOrigin {
+    LocalOrigin::from_seed(&read_stable_host_seed(), PROFILE.salt())
 }
 
-impl std::fmt::Display for Origin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// A **concrete** (never wildcard) origin usable to build an `@rpc` key. Both
-/// [`LocalOrigin`] (a backend serving on its own key) and [`RemoteOrigin`] (the
-/// frontend calling a specific host) implement it; a `*` fleet selector does
-/// not — which is what makes a fan-out *write* unspellable at the type level
-/// (amendments G2/G5).
-pub trait ConcreteOrigin {
-    /// The origin chunk to place in the key.
-    fn as_key_chunk(&self) -> &str;
-
-    /// The zenkey grammar origin for typed key building.
-    fn zk_origin(&self) -> zenkey::Origin {
-        zenkey::Origin::Host(
-            HostId::parse(self.as_key_chunk()).expect("origin validated at construction"),
-        )
-    }
-}
-
-/// This host's own origin. A backend mints exactly one and publishes every
-/// state/telemetry/event key under it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalOrigin(Origin);
-
-impl LocalOrigin {
-    /// Mint this host's origin from the system machine id, falling back to a
-    /// persisted random id if no machine id is readable (containers, minimal
-    /// images). The fallback is still *stable per host* — the invariant the
-    /// origin must preserve — it just is not derivable from the machine id.
-    pub fn mint() -> Self {
-        LocalOrigin(Origin::from_machine_id(&read_stable_host_seed()))
-    }
-
-    /// Construct from an explicit seed (tests, or an operator-provided id).
-    pub fn from_seed(seed: &str) -> Self {
-        LocalOrigin(Origin::from_machine_id(seed))
-    }
-
-    /// Borrow the underlying origin (for key building and the health document).
-    pub fn origin(&self) -> &Origin {
-        &self.0
-    }
-
-    /// The origin chunk as it appears in a key.
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl ConcreteOrigin for LocalOrigin {
-    fn as_key_chunk(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-/// An origin learned from a peer's health document. The frontend builds write
-/// (`@rpc`) keys from these and never from a name it displayed — this is the
-/// identity bridge (06 §6): display the payload `name`, key on the `host_id`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RemoteOrigin(Origin);
-
-impl RemoteOrigin {
-    /// Parse a concrete host origin received over the wire. Returns `None` for a
-    /// malformed value or a wildcard — a `RemoteOrigin` is always a single
-    /// concrete host, which is what keeps a fan-out *write* unspellable (G2).
-    pub fn parse(s: &str) -> Option<Self> {
-        Origin::is_valid_host(s).then(|| RemoteOrigin(Origin(s.to_string())))
-    }
-
-    /// The origin chunk as it appears in a key.
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl ConcreteOrigin for RemoteOrigin {
-    fn as_key_chunk(&self) -> &str {
-        self.0.as_str()
-    }
+/// Construct a local origin from an explicit seed (tests, or an
+/// operator-provided id), with tcgui's salt.
+pub fn local_origin_from_seed(seed: &str) -> LocalOrigin {
+    LocalOrigin::from_seed(seed, PROFILE.salt())
 }
 
 /// Read a stable per-host seed for the origin hash: the machine id if available,
@@ -209,27 +116,27 @@ mod tests {
 
     #[test]
     fn origin_shape_is_h_plus_12_hex() {
-        let o = LocalOrigin::from_seed("abcdef0123456789");
-        let s = o.as_str();
+        let o = local_origin_from_seed("abcdef0123456789");
+        let s = o.chunk();
         assert!(s.starts_with("h-"));
         assert_eq!(s.len(), 14);
-        assert!(Origin::is_valid_host(s));
+        assert!(zenkey::grammar::is_valid_host_origin(s));
     }
 
     #[test]
     fn derivation_is_stable_and_seed_sensitive() {
         assert_eq!(
-            LocalOrigin::from_seed("machine-a").as_str(),
-            LocalOrigin::from_seed("machine-a").as_str()
+            local_origin_from_seed("machine-a").chunk(),
+            local_origin_from_seed("machine-a").chunk()
         );
         assert_ne!(
-            LocalOrigin::from_seed("machine-a").as_str(),
-            LocalOrigin::from_seed("machine-b").as_str()
+            local_origin_from_seed("machine-a").chunk(),
+            local_origin_from_seed("machine-b").chunk()
         );
         // Trimming: trailing newline (as read from /etc/machine-id) is ignored.
         assert_eq!(
-            LocalOrigin::from_seed("machine-a").as_str(),
-            LocalOrigin::from_seed("machine-a\n").as_str()
+            local_origin_from_seed("machine-a").chunk(),
+            local_origin_from_seed("machine-a\n").chunk()
         );
     }
 
@@ -252,16 +159,19 @@ mod tests {
                 s
             })
         );
-        assert_eq!(LocalOrigin::from_seed(machine_id).as_str(), legacy);
+        assert_eq!(local_origin_from_seed(machine_id).chunk(), legacy);
     }
 
+    /// A RemoteOrigin is always one concrete host — wildcards and junk are
+    /// rejected at parse (0.3: Result, was Option), which is what keeps a
+    /// fan-out write unspellable (G2).
     #[test]
     fn remote_origin_parse_rejects_junk_and_wildcards() {
-        let good = LocalOrigin::from_seed("x").as_str().to_string();
-        assert!(RemoteOrigin::parse(&good).is_some());
-        assert!(RemoteOrigin::parse("*").is_none());
-        assert!(RemoteOrigin::parse("h-XYZ").is_none());
-        assert!(RemoteOrigin::parse("lab-router").is_none());
-        assert!(RemoteOrigin::parse("h-3fa9c2d41b7").is_none()); // 11 hex
+        let good = local_origin_from_seed("x").chunk().to_string();
+        assert!(RemoteOrigin::parse(&good).is_ok());
+        assert!(RemoteOrigin::parse("*").is_err());
+        assert!(RemoteOrigin::parse("h-XYZ").is_err());
+        assert!(RemoteOrigin::parse("lab-router").is_err());
+        assert!(RemoteOrigin::parse("h-3fa9c2d41b7").is_err()); // 11 hex
     }
 }
