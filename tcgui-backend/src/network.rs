@@ -20,11 +20,11 @@ use tracing::{debug, error, info, instrument, warn};
 use zenoh::Session;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
+use tcgui_shared::registry::tc;
 use tcgui_shared::{
     InterfaceType, NetworkInterface,
     errors::{BackendError, TcguiError},
     identity::LocalOrigin,
-    topics,
 };
 
 use crate::container::{Container, ContainerManager};
@@ -56,11 +56,11 @@ fn interesting_qdisc_kind(kind: Option<String>) -> Option<String> {
 ///
 /// ```rust,no_run
 /// use tcgui_backend::network::NetworkManager;
-/// use tcgui_shared::identity::LocalOrigin;
+/// use tcgui_shared::identity::mint_local_origin;
 /// use zenoh::Session;
 ///
 /// async fn setup_manager(session: Session) -> anyhow::Result<()> {
-///     let origin = LocalOrigin::mint();
+///     let origin = mint_local_origin();
 ///     let manager = NetworkManager::new(session, origin, "test-backend".to_string()).await?;
 ///     let interfaces = manager.discover_all_interfaces().await?;
 ///     Ok(())
@@ -802,10 +802,13 @@ impl NetworkManager {
     ) -> Result<&AdvancedPublisher<'static>> {
         let key = (namespace.to_string(), interface.to_string());
         if !self.interface_publishers.contains_key(&key) {
-            let topic = topics::state_interface(&self.local_origin, namespace, interface);
+            let topic = tc::key(
+                &self.local_origin,
+                &tc::Subject::interface(namespace, interface),
+            );
             let publisher = self
                 .session
-                .declare_publisher(topic)
+                .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(topic))
                 .cache(CacheConfig::default().max_samples(1))
                 .sample_miss_detection(
                     MissDetectionConfig::default().heartbeat(Duration::from_millis(500)),

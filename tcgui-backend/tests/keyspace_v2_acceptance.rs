@@ -5,8 +5,8 @@
 //! silently disconnected mesh, not isolation.
 
 use std::time::Duration;
-use tcgui_shared::identity::{LocalOrigin, RemoteOrigin};
-use tcgui_shared::topics;
+use tcgui_shared::identity::{ConcreteOrigin as _, RemoteOrigin, mint_local_origin};
+use tcgui_shared::registry::tc;
 
 /// Two isolated peer sessions on one loopback endpoint: multicast off, one
 /// listens, the other connects (gossip on). Namespace `tcgui`, so keys are
@@ -52,17 +52,17 @@ async fn old_root_is_silent_while_v1_carries_traffic() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // The backend emits real v1 traffic across planes.
-    let o = LocalOrigin::mint();
+    let o = mint_local_origin();
     backend
         .put(
-            topics::state_interface(&o, "default", "eth0"),
+            tc::key(&o, &tc::Subject::interface("default", "eth0")).as_keyexpr(),
             b"{}".to_vec(),
         )
         .await
         .unwrap();
     backend
         .put(
-            topics::telemetry_bandwidth(&o, "default", "eth0"),
+            tc::key(&o, &tc::Subject::bandwidth("default", "eth0")).as_keyexpr(),
             b"{}".to_vec(),
         )
         .await
@@ -87,15 +87,17 @@ async fn concrete_key_origin_probe() {
     let backend = make_session(Some(ep), None).await;
     let frontend = make_session(None, Some(ep)).await;
 
-    let local = LocalOrigin::mint();
-    let diag_key = topics::rpc_diagnostics(&local);
+    let local = mint_local_origin();
+    let diag_key = tc::diagnostics_key(&local);
     let cb_key = diag_key.clone();
     let _q = backend
-        .declare_queryable(&diag_key)
+        .declare_queryable(diag_key.as_keyexpr())
         .callback(move |q| {
             let k = cb_key.clone();
             tokio::spawn(async move {
-                let _ = q.reply(k, b"ok".to_vec()).await;
+                let _ = q
+                    .reply(zenoh::key_expr::OwnedKeyExpr::from(k), b"ok".to_vec())
+                    .await;
             });
         })
         .await
@@ -104,11 +106,11 @@ async fn concrete_key_origin_probe() {
 
     // The health document IS the identity bridge: host_id == the origin. A
     // consumer resolves the origin through it and MUST fail if it is empty.
-    let host_id = local.as_str().to_string();
+    let host_id = local.chunk().to_string();
     let remote = RemoteOrigin::parse(&host_id).expect("bridge yielded no origin");
 
     let replies = frontend
-        .get(topics::rpc_diagnostics(&remote))
+        .get(tc::diagnostics_key(&remote).as_str())
         .await
         .unwrap();
     let mut got = 0;
@@ -125,14 +127,15 @@ async fn concrete_key_origin_probe() {
 /// one-character typo cannot degrade the whole fleet.
 #[test]
 fn fleet_wide_write_is_unspellable() {
-    // A wildcard is not a RemoteOrigin, so `rpc_config(&remote, …)` can never be
-    // called with one — the refusal is structural, at the type level.
-    assert!(RemoteOrigin::parse("*").is_none());
-    assert!(RemoteOrigin::parse("**").is_none());
-    assert!(RemoteOrigin::parse("h-*").is_none());
+    // A wildcard is not a RemoteOrigin, so the write builder can never be
+    // called with one — the refusal is structural, at the type level
+    // (0.3: parse is a Result, and zenkey's own sealed traits carry G2).
+    assert!(RemoteOrigin::parse("*").is_err());
+    assert!(RemoteOrigin::parse("**").is_err());
+    assert!(RemoteOrigin::parse("h-*").is_err());
 
     // A concrete origin does build a wildcard-free write key.
-    let o = RemoteOrigin::parse(LocalOrigin::mint().as_str()).unwrap();
-    let key = topics::rpc_config(&o, "default", "eth0");
+    let o = RemoteOrigin::parse(mint_local_origin().chunk()).unwrap();
+    let key = tc::config_ns_iface_set_key(&o, "default", "eth0");
     assert!(!key.as_str().contains('*'));
 }

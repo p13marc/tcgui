@@ -25,6 +25,7 @@ use zenoh::Session;
 use zenoh::pubsub::Publisher;
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
+use tcgui_shared::registry::tc;
 use tcgui_shared::{
     NetworkInterface, TcConfigUpdate, TcConfiguration, TcStatisticsUpdate, ZenohConfig,
     errors::TcguiError,
@@ -93,15 +94,15 @@ impl TcBackend {
         );
 
         // Mint this host's origin once; every published key is built from it.
-        let local_origin = LocalOrigin::mint();
-        info!("[BACKEND] Host origin minted: {}", local_origin.as_str());
+        let local_origin = tcgui_shared::identity::mint_local_origin();
+        info!("[BACKEND] Host origin minted: {}", local_origin.chunk());
 
         // Declare the liveliness token on the reserved `state/alive` leaf — distinct
         // from the health document (which is a normal Put on `state/health`).
         let alive_topic = topics::state_alive(&local_origin);
         let liveliness_token = session
             .liveliness()
-            .declare_token(&alive_topic)
+            .declare_token(alive_topic.as_keyexpr())
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare liveliness: {}", e),
@@ -178,9 +179,9 @@ impl TcBackend {
         // frontends. Each preset is an independent library entry keyed by its id.
         let mut preset_publishers = HashMap::new();
         for preset in preset_list.all() {
-            let preset_topic = topics::state_preset(&local_origin, &preset.id);
+            let preset_topic = tc::key(&local_origin, &tc::Subject::preset(&preset.id));
             let publisher = session
-                .declare_publisher(preset_topic.clone())
+                .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(preset_topic.clone()))
                 .cache(CacheConfig::default().max_samples(1))
                 .sample_miss_detection(
                     MissDetectionConfig::default().heartbeat(Duration::from_millis(2000)),
@@ -246,10 +247,11 @@ impl TcBackend {
         info!("[BACKEND] Starting TC backend");
 
         // Set up TC query handler (serve key wildcards the per-interface subject)
-        let tc_query_topic = topics::rpc_config_serve(&self.local_origin);
+        let tc_query_topic =
+            tc::rpc_serve_key(&self.local_origin, tc::ProcedureId::ConfigNsIfaceSet);
         let tc_queryable = self
             .session
-            .declare_queryable(&tc_query_topic)
+            .declare_queryable(tc_query_topic.as_keyexpr())
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare TC queryable: {}", e),
@@ -261,10 +263,11 @@ impl TcBackend {
         );
 
         // Set up Interface control query handler
-        let interface_query_topic = topics::rpc_interface_serve(&self.local_origin);
+        let interface_query_topic =
+            tc::rpc_serve_key(&self.local_origin, tc::ProcedureId::InterfaceNsIfaceSet);
         let interface_queryable = self
             .session
-            .declare_queryable(&interface_query_topic)
+            .declare_queryable(interface_query_topic.as_keyexpr())
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare Interface queryable: {}", e),
@@ -276,10 +279,10 @@ impl TcBackend {
         );
 
         // Set up Diagnostics query handler
-        let diagnostics_query_topic = topics::rpc_diagnostics(&self.local_origin);
+        let diagnostics_query_topic = tc::diagnostics_key(&self.local_origin);
         let diagnostics_queryable = self
             .session
-            .declare_queryable(&diagnostics_query_topic)
+            .declare_queryable(diagnostics_query_topic.as_keyexpr())
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare Diagnostics queryable: {}", e),
@@ -293,10 +296,10 @@ impl TcBackend {
         // Set up introspect query handler — serves this producer's registry
         // slice as TOML so generic bus tooling (zenctl) needs no compiled-in
         // registry (RFC keyspace-v2 08 §6).
-        let introspect_topic = topics::rpc_introspect(&self.local_origin);
+        let introspect_topic = tc::introspect_key(&self.local_origin);
         let introspect_queryable = self
             .session
-            .declare_queryable(&introspect_topic)
+            .declare_queryable(introspect_topic.as_keyexpr())
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare introspect queryable: {}", e),
@@ -312,7 +315,7 @@ impl TcBackend {
         // the planned diagnostics/support-bundle download will publish through
         // it; serving the (empty) plane from day one keeps the wire contract
         // and the dependency honest.
-        let blob_prefix = zenkey::V1Context::with_origin(self.local_origin.zk_origin(), "tc")
+        let blob_prefix = zenkey::V1Context::with_origin(self.local_origin.to_origin(), "tc")
             .blob_prefix(zenkey::grammar::BlobTier::Artifact);
         let blob_server = zblob::BlobServer::new(
             std::sync::Arc::new(self.session.clone()),
@@ -511,8 +514,8 @@ impl TcBackend {
                 query = introspect_queryable.recv_async() => {
                     match query {
                         Ok(query) => {
-                            let reply_key = topics::rpc_introspect(&self.local_origin);
-                            if let Err(e) = query.reply(reply_key, registry::REGISTRY_TOML).await {
+                            let reply_key = tc::introspect_key(&self.local_origin);
+                            if let Err(e) = query.reply(zenoh::key_expr::OwnedKeyExpr::from(reply_key), registry::REGISTRY_TOML).await {
                                 error!("Failed to reply to introspect query: {}", e);
                             }
                         }
@@ -794,14 +797,19 @@ impl TcBackend {
         let key = format!("{}/{}", namespace, interface);
 
         if !self.tc_stats_publishers.contains_key(&key) {
-            let topic = topics::telemetry_qdisc(&self.local_origin, namespace, interface);
+            let topic = tc::key(
+                &self.local_origin,
+                &tc::Subject::qdisc(namespace, interface),
+            );
             tracing::debug!("Creating TC stats publisher for {}: {}", key, topic);
 
-            let publisher = self.session.declare_publisher(topic).await.map_err(|e| {
-                TcguiError::ZenohError {
+            let publisher = self
+                .session
+                .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(topic))
+                .await
+                .map_err(|e| TcguiError::ZenohError {
                     message: format!("Failed to declare TC stats publisher: {}", e),
-                }
-            })?;
+                })?;
 
             self.tc_stats_publishers.insert(key.clone(), publisher);
         }
