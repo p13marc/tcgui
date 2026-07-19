@@ -75,8 +75,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y pkg-config libssl-dev
 
-    - name: Install quality tools
-      run: just setup-tools
+    # Prebuilt binaries: `just setup-tools` compiles seven tools from source
+    # on every run — slow, and cargo-nextest 0.9.140 no longer compiles on
+    # stable, which is what had this job red. `just ci` only needs these three.
+    - name: Install quality tools (prebuilt)
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-tarpaulin,cargo-audit,cargo-udeps
 
     - name: Run comprehensive quality pipeline
       run: just ci
@@ -251,8 +256,13 @@ jobs:
     - name: Install Just
       uses: extractions/setup-just@v2
 
-    - name: Install quality tools
-      run: just setup-tools
+    # Prebuilt binaries: `just setup-tools` compiles seven tools from source
+    # on every run — slow, and cargo-nextest 0.9.140 no longer compiles on
+    # stable, which is what had this job red. `just ci` only needs these three.
+    - name: Install quality tools (prebuilt)
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-tarpaulin,cargo-audit,cargo-udeps,cargo-machete,cargo-outdated
 
     - name: Run release preparation
       run: just prepare-release
