@@ -227,7 +227,7 @@ security-full:
 # Check for unused dependencies
 unused-deps:
     @echo "🧹 Checking for unused dependencies..."
-    cargo udeps --workspace --all-targets --all-features
+    cargo +nightly udeps --workspace --all-targets --all-features
     @echo "✅ No unused dependencies found"
 
 # Check for outdated dependencies
