@@ -101,7 +101,9 @@ pre-commit: fmt-check check clippy test-fast security-fast
     @echo "🛡️  Pre-commit quality gate passed - safe to commit"
 
 # Continuous Integration pipeline - for automated environments
-ci: fmt-check check clippy test coverage security unused-deps
+# (coverage dropped 2026-07-25 with the move off Codecov; run `just coverage`
+# locally when needed)
+ci: fmt-check check clippy test security unused-deps
     @echo "🏗️  CI pipeline completed successfully"
 
 # === CORE QUALITY CHECKS ===

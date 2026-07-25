@@ -1,0 +1,57 @@
+name: CI
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The repo's quality gates live in the Justfile; CI runs the same recipes
+  # developers run locally.
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      # nightly first (udeps), then stable — dtolnay installs make the last one default
+      - uses: https://github.com/dtolnay/rust-toolchain@nightly
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - uses: https://github.com/taiki-e/install-action@v2
+        with:
+          tool: just,cargo-audit,cargo-udeps
+      - run: just ci
+
+  miri:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - uses: https://github.com/dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - uses: https://github.com/Swatinem/rust-cache@v2
+        with:
+          key: miri
+      - uses: https://github.com/taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just miri-key-modules
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --all-features --no-deps
+      - run: cargo test --doc --workspace
