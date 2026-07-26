@@ -40,4 +40,4 @@ repository = "https://github.com/p13marc/tcgui"
 homepage = "https://github.com/p13marc/tcgui"
 
 [workspace.metadata]
-rust-version = "1.70"
+rust-version = "1.97"
