@@ -47,7 +47,13 @@ jobs:
           image="$REGISTRY/marcpardo/tcgui-backend"
           cd src
           buildah login --tls-verify=false -u marcpardo -p "${{ secrets.REGISTRY_TOKEN }}" "$REGISTRY"
-          buildah build \
+          # layer cache lives in the registry (real TLS via the hairpin fix);
+          # pruned by the Forgejo packages cleanup rule on *-cache
+          buildah login -u marcpardo -p "${{ secrets.REGISTRY_TOKEN }}" git.marcpardo.eu
+          buildah build --layers \
+            --cache-from=git.marcpardo.eu/marcpardo/tcgui-backend-cache \
+            --cache-to=git.marcpardo.eu/marcpardo/tcgui-backend-cache \
+            --cache-ttl=168h \
             --label "org.opencontainers.image.source=https://git.marcpardo.eu/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             -t "$image:${GITHUB_REF_NAME}" -t "$image:latest" -f docker/Dockerfile.backend .
@@ -56,19 +62,31 @@ jobs:
 
   flatpak:
     runs-on: flatpak
+    env:
+      # SDK/runtime installs persist on the runner cache disk
+      FLATPAK_USER_DIR: /srv/cache/flatpak/inst
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
       - name: Build flatpak (unsigned; vm-edge signs on publish)
         run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          # per-repo state dir on the cache disk: incremental module rebuilds
+          # + ccache for C/C++ inside the sandbox. flatpak-builder requires
+          # state dir and build tree on the same filesystem -> stage the
+          # build on the cache disk and copy the bundle back.
+          work=/srv/cache/flatpak/tcgui/work
+          mkdir -p "$work" && rm -rf "$work/src" && cp -a . "$work/src"
+          cd "$work/src"
           flatpak-builder --user --force-clean --disable-rofiles-fuse \
+            --state-dir=/srv/cache/flatpak/tcgui/state --ccache \
             --install-deps-from=flathub \
             --repo=export-repo builddir flatpak/com.github.p13marc.TcGui.yml
-          mkdir -p dist/release
+          mkdir -p "$GITHUB_WORKSPACE/dist/release"
           flatpak build-bundle export-repo \
-            "dist/release/tcgui-${GITHUB_REF_NAME}.flatpak" com.github.p13marc.TcGui
+            "$GITHUB_WORKSPACE/dist/release/tcgui-${GITHUB_REF_NAME}.flatpak" com.github.p13marc.TcGui
       - name: Publish export branch for vm-edge
         run: |
-          cd export-repo
+          cd /srv/cache/flatpak/tcgui/work/src/export-repo
           git init -q -b flatpak-export
           git add -A
           git -c user.name=ci -c user.email=ci@marcpardo.eu commit -q -m "flatpak export ${GITHUB_REF_NAME}"
