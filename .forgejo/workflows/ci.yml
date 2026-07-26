@@ -10,6 +10,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # shared compiler cache: sccache (mounted from the runner VM) -> garage S3
+  # on vm-runner-01; S3 endpoint+credentials come from the runner's env_file
+  RUSTC_WRAPPER: /srv/cache/bin/sccache
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   # The repo's quality gates live in the Justfile; CI runs the same recipes
@@ -25,6 +29,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: https://github.com/Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
       - uses: https://github.com/taiki-e/install-action@v2
         with:
           tool: just,cargo-audit,cargo-udeps
@@ -32,6 +38,9 @@ jobs:
 
   miri:
     runs-on: ubuntu-24.04
+    env:
+      # miri intercepts rustc itself; sccache must stay out of the way
+      RUSTC_WRAPPER: ""
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
@@ -41,6 +50,7 @@ jobs:
       - uses: https://github.com/Swatinem/rust-cache@v2
         with:
           key: miri
+          cache-targets: false
       - uses: https://github.com/taiki-e/install-action@v2
         with:
           tool: just
@@ -53,5 +63,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
       - uses: https://github.com/dtolnay/rust-toolchain@stable
       - uses: https://github.com/Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
       - run: cargo doc --workspace --all-features --no-deps
       - run: cargo test --doc --workspace
