@@ -13,7 +13,7 @@
 # G6): ACL rules discriminate on path chunks, never selector parameters.
 
 [registry]
-version = "1.1"
+version = "1.2"
 app = "tcgui"
 convention = 1
 
@@ -173,3 +173,14 @@ reply = "SchemaSet"
 idempotent = true
 since = "1.1"
 description = "payload self-description: the SchemaSet JSON for every type this slice references (RFC 08 §7)"
+
+# The `@blob` plane (RFC 07 §2, RFC 08 §2 v1.8): the backend serves the
+# Tier-1 artifact channel from day one (empty until the diagnostics/support-
+# bundle feature lands). Endpoints are what zblob 0.2's BlobServer actually
+# serves: no `push` (never enabled — RFC 07 §2.2 keeps it off by default) and
+# no `fanout` (zblob feature off). No Tier-2: tcgui snapshots nothing.
+[[blob]]
+tier = "artifact"
+endpoints = ["manifest", "slice", "have"]
+since = "1.2"
+description = "diagnostics/support bundles (planned) on the backend's artifact channel"
