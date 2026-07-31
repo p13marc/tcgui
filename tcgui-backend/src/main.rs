@@ -331,13 +331,14 @@ impl TcBackend {
         // this host's `@blob/artifact` prefix. No blobs are registered yet —
         // the planned diagnostics/support-bundle download will publish through
         // it; serving the (empty) plane from day one keeps the wire contract
-        // and the dependency honest.
+        // and the dependency honest. zblob 0.2 is wire v2 (BLAKE3 + bao
+        // verified streaming, one postcard encoding — the Format knob is
+        // gone); v1 and v2 peers deliberately do not interoperate.
         let blob_prefix = zenkey::V1Context::with_origin(self.local_origin.to_origin(), "tc")
             .blob_prefix(zenkey::grammar::BlobTier::Artifact);
         let blob_server = zblob::BlobServer::new(
             std::sync::Arc::new(self.session.clone()),
-            blob_prefix.clone(),
-            zblob::Format::Json,
+            blob_prefix.as_str(),
         );
         tokio::spawn(blob_server.run());
         info!(
