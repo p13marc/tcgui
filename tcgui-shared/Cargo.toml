@@ -14,7 +14,7 @@ zenoh = { workspace = true }
 serde = { workspace = true }
 schemars = { workspace = true }
 serde_json = { workspace = true }
-json5 = "0.4"
+json5 = "1.0"
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 nlink = { workspace = true }
