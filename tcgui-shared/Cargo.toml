@@ -18,8 +18,8 @@ json5 = "0.4"
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 nlink = { workspace = true }
-duration-string = "0.4"
-sha2 = "0.10"
+duration-string = "0.5"
+sha2 = "0.11"
 
 [build-dependencies]
 zenkey-build = { workspace = true }

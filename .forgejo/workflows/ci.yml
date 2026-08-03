@@ -21,17 +21,17 @@ jobs:
   quality:
     runs-on: ubuntu-24.04
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@v6.1.0
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
       # nightly first (udeps), then stable — dtolnay installs make the last one default
       - uses: https://github.com/dtolnay/rust-toolchain@nightly
       - uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: https://github.com/Swatinem/rust-cache@v2
+      - uses: https://github.com/Swatinem/rust-cache@v2.9.1
         with:
           cache-targets: false
-      - uses: https://github.com/taiki-e/install-action@v2
+      - uses: https://github.com/taiki-e/install-action@v2.85.7
         with:
           tool: just,cargo-audit,cargo-udeps
       - run: just ci
@@ -42,16 +42,16 @@ jobs:
       # miri intercepts rustc itself; sccache must stay out of the way
       RUSTC_WRAPPER: ""
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@v6.1.0
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
       - uses: https://github.com/dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src
-      - uses: https://github.com/Swatinem/rust-cache@v2
+      - uses: https://github.com/Swatinem/rust-cache@v2.9.1
         with:
           key: miri
           cache-targets: false
-      - uses: https://github.com/taiki-e/install-action@v2
+      - uses: https://github.com/taiki-e/install-action@v2.85.7
         with:
           tool: just
       - run: just miri-key-modules
@@ -59,10 +59,10 @@ jobs:
   docs:
     runs-on: ubuntu-24.04
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://data.forgejo.org/actions/checkout@v6.1.0
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
       - uses: https://github.com/dtolnay/rust-toolchain@stable
-      - uses: https://github.com/Swatinem/rust-cache@v2
+      - uses: https://github.com/Swatinem/rust-cache@v2.9.1
         with:
           cache-targets: false
       - run: cargo doc --workspace --all-features --no-deps
