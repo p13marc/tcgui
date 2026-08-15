@@ -8,8 +8,8 @@ members = [
 
 [workspace.dependencies]
 # Shared dependencies
-zenkey = "0.4"
-zenkey-build = "0.4"
+zenkey = "0.6"
+zenkey-build = "0.6"
 zblob = "0.3.0"
 zenoh = { version = "1.9", features = ["unstable"] }
 zenoh-ext = { version = "1.9", features = ["unstable"] }
