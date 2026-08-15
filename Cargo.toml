@@ -10,7 +10,7 @@ members = [
 # Shared dependencies
 zenkey = "0.4"
 zenkey-build = "0.4"
-zblob = "0.2.0"
+zblob = "0.3.0"
 zenoh = { version = "1.9", features = ["unstable"] }
 zenoh-ext = { version = "1.9", features = ["unstable"] }
 serde = { version = "1.0", features = ["derive"] }
