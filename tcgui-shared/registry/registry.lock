@@ -1,0 +1,22 @@
+# registry.lock — the RFC 08 §3.1 compatibility snapshot.
+# Regenerate with `zenctl registry lock <dir>` after additive edits;
+# an incompatible edit (changed type/class/kind/shape on an existing
+# path) is refused — retire through [[deprecated]] and add a sibling
+# instead (RFC 08 §3).
+procedure	tc	config/{ns}/{iface}/set	write	-	TcResponse
+procedure	tc	describe	read	-	SchemaSet
+procedure	tc	diagnostics	read	-	DiagnosticsResponse
+procedure	tc	execution/{ns}/{iface}/set	write	-	ScenarioExecutionResponse
+procedure	tc	interface/{ns}/{iface}/set	write	-	InterfaceControlResponse
+procedure	tc	introspect	read	-	toml
+procedure	tc	scenario/set	write	-	ScenarioResponse
+subject	tc	applied/{ulid}	events	TcAppliedEvent
+subject	tc	bandwidth/{ns}/{iface}	telemetry	BandwidthUpdate
+subject	tc	config/{ns}/{iface}	state	TcConfigUpdate
+subject	tc	execution/{ns}/{iface}	state	ScenarioExecutionUpdate
+subject	tc	health	state	BackendHealthStatus
+subject	tc	interface/{ns}/{iface}	state	NetworkInterface
+subject	tc	preset/{id}	state	CustomPreset
+subject	tc	qdisc/{ns}/{iface}	telemetry	TcStatisticsUpdate
+subject	tc	scenario/{id}	state	NetworkScenario
+subject	tc	sensor	state	SensorDoc
