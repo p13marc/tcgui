@@ -61,7 +61,7 @@ bollard = "0.21"
 nix = { version = "0.31", features = ["sched", "fs"] }
 
 [dev-dependencies]
-rand = "0.8"
+rand = "0.10"
 tempfile = "3.0"
 
 # Package metadata for DEB/RPM generation
