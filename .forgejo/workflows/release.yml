@@ -2,18 +2,38 @@ name: Release
 on:
   push:
     tags: ['[0-9]+.[0-9]+.[0-9]+']
+  # re-run a failed release without deleting/re-pushing the tag. On dispatch
+  # the run executes on a BRANCH ref (GITHUB_REF_NAME is e.g. "main"), so
+  # every step must use the resolved RELEASE_TAG/RELEASE_SHA env instead.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: existing bare-semver tag to re-release
+        required: true
+
+env:
+  # cap build parallelism -- see ci.yml for the reasoning
+  CARGO_BUILD_JOBS: "2"
 
 jobs:
   release:
     runs-on: ubuntu-24.04
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Resolve release tag
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_SHA=$(git rev-parse "$tag^{commit}")" >> "$GITHUB_ENV"
       - name: Build release artifacts
         run: |
           mkdir -p dist/release
           name="${GITHUB_REPOSITORY#*/}"
-          git archive --format=tar.gz --prefix="${name}-${GITHUB_REF_NAME}/" \
-            -o "dist/release/${name}-${GITHUB_REF_NAME}.tar.gz" "${GITHUB_REF_NAME}"
+          git archive --format=tar.gz --prefix="${name}-${RELEASE_TAG}/" \
+            -o "dist/release/${name}-${RELEASE_TAG}.tar.gz" "${RELEASE_TAG}"
           (cd dist/release && sha256sum * > SHA256SUMS)
       - uses: https://data.forgejo.org/actions/forgejo-release@v2
         with:
@@ -21,52 +41,79 @@ jobs:
           # internal URL: the runner zone cannot hairpin to the public vhost
           url: http://10.10.0.30:3000
           repo: ${{ github.repository }}
-          tag: ${{ github.ref_name }}
-          sha: ${{ github.sha }}
+          tag: ${{ env.RELEASE_TAG }}
+          sha: ${{ env.RELEASE_SHA }}
           release-dir: dist/release
           token: ${{ secrets.GITHUB_TOKEN }}
 
   backend-image:
     runs-on: ubuntu-24.04
     container:
-      # daemonless build+push; no node inside → no JS actions in this job
-      image: quay.io/buildah/stable:latest
+      # daemonless build+push; no node inside → no JS actions in this job.
+      # Pinned version (Renovate may bump) -- never :latest.
+      image: quay.io/buildah/stable:v1.43.2
     env:
       REGISTRY: 10.10.0.30:3000
       BUILDAH_ISOLATION: chroot
       STORAGE_DRIVER: vfs
     steps:
-      - name: Clone
+      - name: Clone release tag
+        # no checkout action in this job -> resolve the tag inline
         run: |
-          git clone --depth 1 --branch "$GITHUB_REF_NAME" \
+          tag="${{ inputs.tag || github.ref_name }}"
+          git clone --depth 1 --branch "$tag" \
             "http://forgejo:${GITHUB_TOKEN}@10.10.0.30:3000/${GITHUB_REPOSITORY}.git" src
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push backend image
         run: |
+          set -eu
           image="$REGISTRY/marcpardo/tcgui-backend"
+          cache="$REGISTRY/marcpardo/tcgui-backend-cache"
           cd src
+          # revision label from the clone's HEAD: GITHUB_SHA is the branch
+          # head on a workflow_dispatch re-run, not the tag commit
+          revision="$(git rev-parse HEAD)"
           buildah login --tls-verify=false -u marcpardo -p "${{ secrets.REGISTRY_TOKEN }}" "$REGISTRY"
-          # layer cache lives in the registry (real TLS via the hairpin fix);
-          # pruned by the Forgejo packages cleanup rule on *-cache
-          buildah login -u marcpardo -p "${{ secrets.REGISTRY_TOKEN }}" git.marcpardo.eu
-          buildah build --layers \
-            --cache-from=git.marcpardo.eu/marcpardo/tcgui-backend-cache \
-            --cache-to=git.marcpardo.eu/marcpardo/tcgui-backend-cache \
-            --cache-ttl=168h \
+          # Layer cache in the SAME internal registry (pruned by the Forgejo
+          # packages cleanup rule on *-cache). A cache miss must never fail a
+          # release: probe first, drop the flags if unreachable (pattern
+          # proven in zenoh-bridge-tcp).
+          cache_args=""
+          if buildah pull --tls-verify=false "$cache" >/dev/null 2>&1 \
+            || buildah manifest inspect --tls-verify=false "$cache" >/dev/null 2>&1; then
+            cache_args="--cache-from=$cache --cache-to=$cache --cache-ttl=168h"
+          else
+            echo "::warning::layer cache $cache unreachable; building without it"
+            cache_args="--cache-to=$cache --cache-ttl=168h"
+          fi
+          # shellcheck disable=SC2086
+          buildah build --layers $cache_args --tls-verify=false \
             --label "org.opencontainers.image.source=https://git.marcpardo.eu/${GITHUB_REPOSITORY}" \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            -t "$image:${GITHUB_REF_NAME}" -t "$image:latest" -f docker/Dockerfile.backend .
-          buildah push --tls-verify=false "$image:${GITHUB_REF_NAME}"
+            --label "org.opencontainers.image.revision=${revision}" \
+            -t "$image:${RELEASE_TAG}" -t "$image:latest" -f docker/Dockerfile.backend .
+          buildah push --tls-verify=false "$image:${RELEASE_TAG}"
           buildah push --tls-verify=false "$image:latest"
 
   flatpak:
     runs-on: flatpak
+    # upload into the release created by the release job -- never runs a
+    # racing create, and never use override: true (it wipes earlier assets)
+    needs: release
     env:
       # SDK/runtime installs persist on the runner cache disk
       FLATPAK_USER_DIR: /srv/cache/flatpak/inst
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Resolve release tag
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_SHA=$(git rev-parse "$tag^{commit}")" >> "$GITHUB_ENV"
       - name: Build flatpak (unsigned; vm-edge signs on publish)
         run: |
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -83,20 +130,20 @@ jobs:
             --repo=export-repo builddir flatpak/com.github.p13marc.TcGui.yml
           mkdir -p "$GITHUB_WORKSPACE/dist/release"
           flatpak build-bundle export-repo \
-            "$GITHUB_WORKSPACE/dist/release/tcgui-${GITHUB_REF_NAME}.flatpak" com.github.p13marc.TcGui
+            "$GITHUB_WORKSPACE/dist/release/tcgui-frontend-${RELEASE_TAG}.flatpak" com.github.p13marc.TcGui
       - name: Publish export branch for vm-edge
         run: |
           cd /srv/cache/flatpak/tcgui/work/src/export-repo
           git init -q -b flatpak-export
           git add -A
-          git -c user.name=ci -c user.email=ci@marcpardo.eu commit -q -m "flatpak export ${GITHUB_REF_NAME}"
+          git -c user.name=ci -c user.email=ci@marcpardo.eu commit -q -m "flatpak export ${RELEASE_TAG}"
           git push --force "http://forgejo:${{ secrets.GITHUB_TOKEN }}@10.10.0.30:3000/${GITHUB_REPOSITORY}.git" HEAD:flatpak-export
       - uses: https://data.forgejo.org/actions/forgejo-release@v2
         with:
           direction: upload
           url: http://10.10.0.30:3000
           repo: ${{ github.repository }}
-          tag: ${{ github.ref_name }}
-          sha: ${{ github.sha }}
+          tag: ${{ env.RELEASE_TAG }}
+          sha: ${{ env.RELEASE_SHA }}
           release-dir: dist/release
           token: ${{ secrets.GITHUB_TOKEN }}
