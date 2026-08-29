@@ -1,6 +1,7 @@
 [package]
 name = "tcgui-backend"
 version.workspace = true
+rust-version.workspace = true
 edition = "2024"
 description = "Privileged backend service for tcgui network operations"
 authors.workspace = true

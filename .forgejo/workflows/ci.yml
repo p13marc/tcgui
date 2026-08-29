@@ -5,6 +5,8 @@ on:
     paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
   pull_request:
     paths-ignore: ['**.md', 'docs/**', 'LICENSE*']
+  # manual re-run path (flaky job, runner was offline, cache experiments)
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -22,7 +24,8 @@ env:
 
 jobs:
   # The repo's quality gates live in the Justfile; CI runs the same recipes
-  # developers run locally.
+  # developers run locally. cargo-audit was retired from this lane -- the
+  # deny job below covers advisories (fleet standard, myserver#33).
   quality:
     runs-on: ubuntu-24.04
     steps:
@@ -38,8 +41,19 @@ jobs:
           cache-targets: false
       - uses: https://github.com/taiki-e/install-action@v2
         with:
-          tool: just,cargo-audit,cargo-udeps
+          tool: just,cargo-udeps
       - run: just ci
+
+  deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      # the docker cargo-deny action cannot see deny.toml -> install directly
+      - uses: https://github.com/taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check
 
   miri:
     runs-on: ubuntu-24.04
