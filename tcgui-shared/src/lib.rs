@@ -1817,7 +1817,12 @@ mod tests {
         // per-interface builder returns a concrete, wildcard-free key.
         use crate::registry::tc;
         let o = crate::identity::local_origin_from_seed("test");
-        for name in ["*", "**", "?", "#", "$x"] {
+        // `_myns` and `ETH0` are the G4 erratum cases: a leading `_` is
+        // charset-illegal, and uppercase must not be folded away (eth0 and ETH0
+        // are different NICs — collapsing them shapes the wrong one).
+        for name in [
+            "*", "**", "?", "#", "$x", "_myns", "ETH0", "eth0:0", "veth@if5", "a b", "café",
+        ] {
             for key in [
                 tc::key(&o, &tc::Subject::bandwidth("myns", name)),
                 tc::key(&o, &tc::Subject::config("myns", name)),
@@ -1831,7 +1836,70 @@ mod tests {
                 );
                 assert!(!s.contains(['?', '#', '$']), "reserved char in key {s:?}");
             }
+
+            // Stronger than a character scan: the key must survive the parse
+            // direction too. A slug that produced a chunk the parser rejects
+            // would pass a "contains no wildcard" check and still be useless.
+            let key = tc::key(&o, &tc::Subject::config("myns", name));
+            let parsed = topics::parse_state_key(key.as_str())
+                .unwrap_or_else(|| panic!("state key {key} did not round-trip for {name:?}"));
+            assert_eq!(
+                parsed.subject,
+                tc::Subject::config("myns", name),
+                "round-trip changed the subject for {name:?}"
+            );
         }
+    }
+
+    /// Pin zenkey's escaping, because it is **wire format**.
+    ///
+    /// zenkey 0.7 rewrote `chunk_slug` and changed the boundary sentinel from
+    /// `e` to `x`, silently re-keying every non-clean name — `ETH0` was
+    /// `e_x45__x54__x48_0` under 0.6. Nothing in this repo would have failed.
+    /// With this test, a future bump that moves the escaping fails `just ci`
+    /// instead of quietly re-keying a fleet.
+    ///
+    /// The first four rows are the ones that matter operationally: every name a
+    /// normal deployment actually has is clean and passes through untouched.
+    #[test]
+    fn zenkey_slug_outputs_are_pinned() {
+        for (name, expected) in [
+            ("eth0", "eth0"),
+            ("eth0.100", "eth0.100"),
+            ("default", "default"),
+            ("myns", "myns"),
+            ("ETH0", "x_x45__x54__x48_0"),
+            ("_myns", "x_x5f_myns"),
+            ("eth0:0", "eth0_x3a_0"),
+            ("veth@if5", "veth_x40_if5"),
+            ("*", "x_x2a_x"),
+            ("**", "x_x2a__x2a_x"),
+            ("?", "x_x3f_x"),
+            ("#", "x_x23_x"),
+            ("$x", "x_x24_x"),
+            ("a b", "a_x20_b"),
+            ("café", "caf_xc3__xa9_x"),
+        ] {
+            assert_eq!(
+                zenkey::Chunk::slug(name).to_string(),
+                expected,
+                "zenkey's escaping moved for {name:?} — this is a wire change"
+            );
+        }
+    }
+
+    /// The namespace position is slugged too, not just the interface. `_myns`
+    /// is the G4 infinite-regress case: escaping a leading `_` naively yields
+    /// another leading `_`.
+    #[test]
+    fn namespace_position_is_slugged_too() {
+        use crate::registry::tc;
+        let o = crate::identity::local_origin_from_seed("test");
+        let key = tc::key(&o, &tc::Subject::config("_myns", "eth0"));
+        assert!(
+            key.as_str().ends_with("/config/x_x5f_myns/eth0"),
+            "namespace was not slugged: {key}"
+        );
     }
 
     #[test]
