@@ -21,6 +21,7 @@ use nlink::netlink::{Connection, Route};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tcgui_shared::errors::TcguiError;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -156,10 +157,10 @@ impl NetlinkEventListener {
     /// # Returns
     ///
     /// Ok(()) if the listener started successfully, Err on failure
-    pub async fn start(self) -> Result<(), String> {
+    pub async fn start(self) -> Result<(), TcguiError> {
         // Create a connection for the default namespace.
         let conn = Connection::<Route>::new()
-            .map_err(|e| format!("Failed to create connection: {}", e))?;
+            .map_err(|e| TcguiError::from_netlink("Failed to create connection", &e))?;
 
         // Build an ENOBUFS-resilient event stream. On overflow the wrapper
         // re-dumps full state on a fresh (default-namespace) connection and
@@ -173,7 +174,7 @@ impl NetlinkEventListener {
         let mut events = conn
             .into_events_with_resync(factory)
             .await
-            .map_err(|e| format!("Failed to start resync event stream: {}", e))?;
+            .map_err(|e| TcguiError::from_netlink("Failed to start resync event stream", &e))?;
 
         info!(
             "Netlink event listener started (links: true, tc: {}, resync: true)",
@@ -337,7 +338,7 @@ impl NamespaceEventManager {
     /// # Returns
     ///
     /// Ok(()) if the stream was started successfully, Err on failure
-    pub async fn add_namespace(&mut self, target: NamespaceTarget) -> Result<(), String> {
+    pub async fn add_namespace(&mut self, target: NamespaceTarget) -> Result<(), TcguiError> {
         let namespace_name = target.name().to_string();
 
         // Don't add duplicate namespaces
@@ -359,7 +360,12 @@ impl NamespaceEventManager {
             None => Connection::<Route>::new(),
             Some(path) => Connection::<Route>::new_in_namespace_path(path),
         }
-        .map_err(|e| format!("Failed to create connection for {}: {}", namespace_name, e))?;
+        .map_err(|e| {
+            TcguiError::from_netlink(
+                &format!("Failed to create connection for {namespace_name}"),
+                &e,
+            )
+        })?;
 
         // Factory used by the resync wrapper to re-dump state on a fresh
         // connection (on the same netns) after an ENOBUFS overflow.
@@ -377,9 +383,9 @@ impl NamespaceEventManager {
         // Build the ENOBUFS-resilient stream (subscribes to all rtnetlink
         // groups internally; we filter in `parse_network_event`).
         let events = conn.into_events_with_resync(factory).await.map_err(|e| {
-            format!(
-                "Failed to start resync event stream for {}: {}",
-                namespace_name, e
+            TcguiError::from_netlink(
+                &format!("Failed to start resync event stream for {namespace_name}"),
+                &e,
             )
         })?;
 
