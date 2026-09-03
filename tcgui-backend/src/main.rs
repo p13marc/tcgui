@@ -252,6 +252,15 @@ impl TcBackend {
         let tc_queryable = self
             .session
             .declare_queryable(tc_query_topic.as_keyexpr())
+            // RFC keyspace-v2 05 §2.1: an `@rpc` queryable MUST NOT be
+            // `complete`. The serve key is a *wildcard* selector — `rpc_serve_key`
+            // puts `*` in the {ns}/{iface} positions — and declaring it complete
+            // tells the router this queryable answers for the whole expression,
+            // which short-circuits routing to the other matching queryables in
+            // the fleet. That is exactly how a `*`-origin fan-in collapses to a
+            // single surviving reply. Zenoh's default is already false; saying
+            // it means a default change cannot silently regress the property.
+            .complete(false)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare TC queryable: {}", e),
@@ -268,6 +277,8 @@ impl TcBackend {
         let interface_queryable = self
             .session
             .declare_queryable(interface_query_topic.as_keyexpr())
+            // Not `complete` — see the TC queryable above (RFC 05 §2.1).
+            .complete(false)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare Interface queryable: {}", e),
@@ -283,6 +294,8 @@ impl TcBackend {
         let diagnostics_queryable = self
             .session
             .declare_queryable(diagnostics_query_topic.as_keyexpr())
+            // Not `complete` — see the TC queryable above (RFC 05 §2.1).
+            .complete(false)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare Diagnostics queryable: {}", e),
@@ -300,6 +313,8 @@ impl TcBackend {
         let introspect_queryable = self
             .session
             .declare_queryable(introspect_topic.as_keyexpr())
+            // Not `complete` — see the TC queryable above (RFC 05 §2.1).
+            .complete(false)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare introspect queryable: {}", e),
@@ -317,6 +332,8 @@ impl TcBackend {
         let describe_queryable = self
             .session
             .declare_queryable(describe_topic.as_keyexpr())
+            // Not `complete` — see the TC queryable above (RFC 05 §2.1).
+            .complete(false)
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare describe queryable: {}", e),
