@@ -96,6 +96,8 @@ impl ScenarioZenohHandlers {
         let queryable = self
             .session
             .declare_queryable(scenario_query_topic.as_keyexpr())
+            // Not `complete` — see the TC queryable in main.rs (RFC 05 §2.1).
+            .complete(false)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to declare scenario queryable: {}", e))?;
 
@@ -290,6 +292,9 @@ impl ScenarioExecutionHandlers {
         let queryable = self
             .session
             .declare_queryable(execution_query_topic.as_keyexpr())
+            // Not `complete` — see the TC queryable in main.rs (RFC 05 §2.1).
+            // This one wildcards {ns}/{iface} in its serve key too.
+            .complete(false)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to declare execution queryable: {}", e))?;
 

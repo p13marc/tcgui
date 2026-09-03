@@ -5,7 +5,9 @@
 //! silently disconnected mesh, not isolation.
 
 use std::time::Duration;
-use tcgui_shared::identity::{ConcreteOrigin as _, RemoteOrigin, mint_local_origin};
+use tcgui_shared::identity::{
+    ConcreteOrigin as _, RemoteOrigin, local_origin_from_seed, mint_local_origin,
+};
 use tcgui_shared::registry::tc;
 
 /// Two isolated peer sessions on one loopback endpoint: multicast off, one
@@ -138,4 +140,91 @@ fn fleet_wide_write_is_unspellable() {
     let o = RemoteOrigin::parse(mint_local_origin().chunk()).unwrap();
     let key = tc::config_ns_iface_set_key(&o, "default", "eth0");
     assert!(!key.as_str().contains('*'));
+}
+
+/// (4) A `*`-origin fan-in reaches EVERY backend (issue #41; RFC 05 §2.1).
+///
+/// Two backends answer one wildcard-origin query. Each replies on its OWN
+/// concrete key, so the two replies have two distinct reply keys and both
+/// survive. If either echoed `query.key_expr()` — the wildcard the caller
+/// spelled — both replies would carry the SAME key, and consolidation would
+/// keep exactly one. Hence `ConsolidationMode::Latest` is set explicitly here:
+/// it is the mode that collapses by reply key, i.e. the one that makes the bug
+/// observable. A test on the default mode could pass with the bug present.
+///
+/// `diagnostics` is the only procedure a fan-in is legal for at all
+/// (`registry/tc.toml`: `fanout = "allowed"`, and it is a read). Every `write`
+/// procedure is `fanout = "forbidden"` and its key is unspellable with a
+/// wildcard origin — that is test (3) above.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fanin_reaches_every_backend() {
+    let ep = "tcp/127.0.0.1:17453";
+
+    // Seeded, NOT minted: `mint_local_origin()` reads /etc/machine-id, so two
+    // calls in one process return the SAME origin and the test would pass
+    // vacuously with one backend answering twice.
+    let a = local_origin_from_seed("fanin-backend-a");
+    let b = local_origin_from_seed("fanin-backend-b");
+    assert_ne!(a.chunk(), b.chunk(), "seeded origins must differ");
+
+    let backend_a = make_session(Some(ep), None).await;
+    let backend_b = make_session(None, Some(ep)).await;
+    let frontend = make_session(None, Some(ep)).await;
+
+    let key_a = tc::diagnostics_key(&a);
+    let key_b = tc::diagnostics_key(&b);
+
+    let mut queryables = Vec::new();
+    for (session, key) in [(&backend_a, key_a.clone()), (&backend_b, key_b.clone())] {
+        let reply_key = key.clone();
+        queryables.push(
+            session
+                .declare_queryable(key.as_keyexpr())
+                // The property under test: not complete, so the router does not
+                // treat either backend as answering for the whole expression.
+                .complete(false)
+                .callback(move |q| {
+                    let k = reply_key.clone();
+                    tokio::spawn(async move {
+                        // Reply on our OWN concrete key, never on q.key_expr().
+                        let _ = q
+                            .reply(zenoh::key_expr::OwnedKeyExpr::from(k), b"ok".to_vec())
+                            .await;
+                    });
+                })
+                .await
+                .unwrap(),
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Hand-spelled: there is deliberately no builder for a `*` origin
+    // (RemoteOrigin::parse("*") is an Err — see test 3), so a fan-in selector
+    // can only be written out literally.
+    let replies = frontend
+        .get("v1/*/@rpc/tc/diagnostics")
+        .consolidation(zenoh::query::ConsolidationMode::Latest)
+        .await
+        .unwrap();
+
+    let mut keys = std::collections::BTreeSet::new();
+    while let Ok(r) = replies.recv_async().await {
+        let sample = r.result().expect("diagnostics probe should not reply_err");
+        keys.insert(sample.key_expr().as_str().to_string());
+    }
+
+    assert_eq!(
+        keys.len(),
+        2,
+        "consolidation collapsed the fan-in — a backend replied on the echoed \
+         wildcard key instead of its own concrete key: {keys:?}"
+    );
+    // Compare by suffix: whether the session namespace is stripped from a
+    // received key varies, and the origin-bearing tail is what matters.
+    for expected in [key_a.as_str(), key_b.as_str()] {
+        assert!(
+            keys.iter().any(|k| k.ends_with(expected)),
+            "no reply on {expected}; got {keys:?}"
+        );
+    }
 }
