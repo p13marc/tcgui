@@ -32,6 +32,15 @@ pub struct InterfaceState {
     /// Physical link speed in Mbit/s (ethtool), if known.
     pub link_speed_mbps: Option<u32>,
 
+    /// Duplex mode (ethtool), if known.
+    pub duplex: Option<tcgui_shared::LinkDuplex>,
+
+    /// Wi-Fi signal strength in dBm, for associated wireless interfaces.
+    pub wifi_signal_dbm: Option<i8>,
+
+    /// Wi-Fi transmit bitrate in units of 100 kbit/s.
+    pub wifi_tx_bitrate_100kbps: Option<u32>,
+
     /// User's desired interface enable state
     pub interface_enabled: bool,
 
@@ -84,6 +93,9 @@ impl InterfaceState {
             addresses: Vec::new(),
             qdisc_kind: None,
             link_speed_mbps: None,
+            duplex: None,
+            wifi_signal_dbm: None,
+            wifi_tx_bitrate_100kbps: None,
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,

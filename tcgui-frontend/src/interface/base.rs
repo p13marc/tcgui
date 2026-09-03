@@ -430,17 +430,37 @@ impl TcInterface {
             } else {
                 format!("link: {mbps} Mbit/s")
             };
-            tip_lines.push(speed);
+            // Duplex rides the existing speed line — half duplex on a shaped
+            // link explains latency the netem numbers alone do not.
+            tip_lines.push(match self.state.duplex {
+                Some(d) => format!("{speed} ({d} duplex)"),
+                None => speed,
+            });
+        }
+        if let Some(dbm) = self.state.wifi_signal_dbm {
+            let mut wifi = format!("wifi: {dbm} dBm");
+            if let Some(rate) = self.state.wifi_tx_bitrate_100kbps {
+                wifi.push_str(&format!(", {:.1} Mbit/s tx", rate as f64 / 10.0));
+            }
+            tip_lines.push(wifi);
         }
         if let Some(kind) = &self.state.qdisc_kind {
             tip_lines.push(format!("qdisc: {kind}"));
         }
         // Warn when a configured rate cap can't actually take effect because it
         // exceeds the physical link speed.
+        // On wifi, ethtool reports no speed — fall back to the negotiated tx
+        // bitrate so the warning is not silently dead on wireless interfaces.
+        let effective_link_mbps = self.state.link_speed_mbps.or_else(|| {
+            self.state
+                .wifi_tx_bitrate_100kbps
+                .map(|r| (r as f64 / 10.0).round() as u32)
+                .filter(|m| *m > 0)
+        });
         if self.state.features.rate_limit.enabled
             && rate_cap_exceeds_link(
                 self.state.features.rate_limit.config.rate_kbps,
-                self.state.link_speed_mbps,
+                effective_link_mbps,
             )
         {
             tip_lines.push("⚠ rate cap exceeds link speed (no effect)".to_string());
@@ -1261,6 +1281,9 @@ impl TcInterface {
         self.state.addresses = interface.addresses.clone();
         self.state.qdisc_kind = interface.qdisc_kind.clone();
         self.state.link_speed_mbps = interface.link_speed_mbps;
+        self.state.duplex = interface.duplex;
+        self.state.wifi_signal_dbm = interface.wifi_signal_dbm;
+        self.state.wifi_tx_bitrate_100kbps = interface.wifi_tx_bitrate_100kbps;
     }
 
     /// Get bandwidth stats (compatibility method)

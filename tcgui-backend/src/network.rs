@@ -13,6 +13,7 @@
 //! * **Robust error handling**: Graceful handling of namespace access permissions
 
 use anyhow::Result;
+use nlink::netlink::namespace::NamespaceSpec;
 use nlink::netlink::{Connection, Route, namespace};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -22,7 +23,7 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 
 use tcgui_shared::registry::tc;
 use tcgui_shared::{
-    InterfaceType, NetworkInterface,
+    InterfaceType, LinkDuplex, NetworkInterface,
     errors::{BackendError, TcguiError},
     identity::LocalOrigin,
 };
@@ -192,11 +193,18 @@ impl NetworkManager {
             })?;
 
         let addr_map = Self::address_map(conn).await;
-        let names: Vec<String> = links
+        let probe_targets: Vec<(String, InterfaceType)> = links
             .iter()
-            .map(|l| l.name_or(&format!("unknown{}", l.ifindex())).to_string())
+            .map(|l| {
+                let name = l.name_or(&format!("unknown{}", l.ifindex())).to_string();
+                let kind = Self::determine_interface_type(&name, l);
+                (name, kind)
+            })
             .collect();
-        let speed_map = self.link_speed_map(&names).await;
+        // This path only ever runs for the default namespace — the named case
+        // early-returns above.
+        let ethtool_map = Self::ethtool_facts(NamespaceSpec::Default, &probe_targets).await;
+        let wifi_map = Self::wifi_facts(NamespaceSpec::Default, &probe_targets).await;
 
         for link in links {
             let index = link.ifindex();
@@ -223,7 +231,10 @@ impl NetworkManager {
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                     qdisc_kind,
-                    link_speed_mbps: speed_map.get(&name).copied(),
+                    link_speed_mbps: ethtool_map.get(&name).and_then(|(s, _)| *s),
+                    duplex: ethtool_map.get(&name).and_then(|(_, d)| *d),
+                    wifi_signal_dbm: wifi_map.get(&name).and_then(|(s, _)| *s),
+                    wifi_tx_bitrate_100kbps: wifi_map.get(&name).and_then(|(_, b)| *b),
                 },
             );
         }
@@ -251,6 +262,19 @@ impl NetworkManager {
 
         let mut interfaces = HashMap::new();
         let addr_map = Self::address_map(&conn).await;
+        let probe_targets: Vec<(String, InterfaceType)> = links
+            .iter()
+            .map(|l| {
+                let name = l.name_or(&format!("unknown{}", l.ifindex())).to_string();
+                let kind = Self::determine_interface_type(&name, l);
+                (name, kind)
+            })
+            .collect();
+        // Probes now run INSIDE the namespace, so speed/duplex/wifi are no
+        // longer hardcoded `None` outside the host namespace.
+        let ethtool_map =
+            Self::ethtool_facts(NamespaceSpec::Named(namespace), &probe_targets).await;
+        let wifi_map = Self::wifi_facts(NamespaceSpec::Named(namespace), &probe_targets).await;
 
         for link in links {
             let index = link.ifindex();
@@ -268,7 +292,7 @@ impl NetworkManager {
             interfaces.insert(
                 index,
                 NetworkInterface {
-                    name,
+                    name: name.clone(),
                     index,
                     namespace: namespace.to_string(),
                     is_up,
@@ -277,7 +301,10 @@ impl NetworkManager {
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                     qdisc_kind,
-                    link_speed_mbps: None,
+                    link_speed_mbps: ethtool_map.get(&name).and_then(|(s, _)| *s),
+                    duplex: ethtool_map.get(&name).and_then(|(_, d)| *d),
+                    wifi_signal_dbm: wifi_map.get(&name).and_then(|(s, _)| *s),
+                    wifi_tx_bitrate_100kbps: wifi_map.get(&name).and_then(|(_, b)| *b),
                 },
             );
         }
@@ -312,31 +339,97 @@ impl NetworkManager {
         }
     }
 
-    /// Best-effort map of interface name -> physical link speed (Mbit/s) via
-    /// the ethtool GENL family, for the namespace this process runs in.
+    /// Best-effort ethtool facts (speed + duplex) per interface name, for one
+    /// namespace.
     ///
-    /// Read-only and graceful: if the ethtool family is unavailable (older
-    /// kernel) the map is empty; interfaces without a link speed (loopback,
-    /// veth, bridges) are simply absent. Only queried for the default namespace
-    /// — ethtool connections are netns-bound and virtual interfaces in other
-    /// namespaces rarely report a meaningful speed.
-    async fn link_speed_map(&self, names: &[String]) -> HashMap<String, u32> {
+    /// Both values come from a single `get_link_modes` call, so duplex costs no
+    /// extra round trip.
+    ///
+    /// Graceful by design, matching the rest of discovery: if the ethtool GENL
+    /// family is unavailable (pre-5.6 kernel) the map is empty and every field
+    /// stays `None`; interfaces that report no speed are simply absent. The
+    /// family-level failure is logged once per namespace — never per interface,
+    /// or a 40-interface host would spam the log on every discovery cycle.
+    ///
+    /// Takes a `NamespaceSpec` rather than `&self`: `Connection::<Ethtool>::new_async()`
+    /// is hard-wired to the default netns, which is why speed used to be `None`
+    /// everywhere except the host namespace. `NamespaceSpec::connection_async`
+    /// opens the socket *inside* the target namespace and resolves the family
+    /// through it — no thread-level `setns`, so no async hazard. Being
+    /// `self`-free also keeps it callable without a Zenoh session.
+    async fn ethtool_facts(
+        spec: NamespaceSpec<'_>,
+        interfaces: &[(String, InterfaceType)],
+    ) -> HashMap<String, (Option<u32>, Option<LinkDuplex>)> {
         use nlink::netlink::Ethtool;
+        use nlink::netlink::genl::ethtool::Duplex;
 
         let mut map = HashMap::new();
-        let conn = match Connection::<Ethtool>::new_async().await {
+        let conn = match spec.connection_async::<Ethtool>().await {
             Ok(conn) => conn,
             Err(e) => {
-                debug!("ethtool link-speed probe unavailable: {}", e);
+                debug!("ethtool probe unavailable for this namespace: {e}");
                 return map;
             }
         };
-        for name in names {
-            if let Ok(modes) = conn.get_link_modes_by_name(name).await
-                && let Some(speed) = modes.speed
-                && speed > 0
-            {
-                map.insert(name.clone(), speed);
+        for (name, kind) in interfaces {
+            // Loopback never reports a link mode; skip the round trip.
+            if matches!(kind, InterfaceType::Loopback) {
+                continue;
+            }
+            if let Ok(modes) = conn.get_link_modes_by_name(name).await {
+                let speed = modes.speed.filter(|s| *s > 0);
+                let duplex = match modes.duplex {
+                    Some(Duplex::Full) => Some(LinkDuplex::Full),
+                    Some(Duplex::Half) => Some(LinkDuplex::Half),
+                    // `Unknown` collapses to None so "could not tell" has one
+                    // spelling, not two.
+                    _ => None,
+                };
+                if speed.is_some() || duplex.is_some() {
+                    map.insert(name.clone(), (speed, duplex));
+                }
+            }
+        }
+        map
+    }
+
+    /// Best-effort nl80211 station facts (signal, tx bitrate) per interface
+    /// name, for one namespace.
+    ///
+    /// Only queried for interfaces that could plausibly be wireless — every
+    /// virtual kind is skipped, so a container host with many veths pays
+    /// nothing. A non-wireless interface simply yields no entry, and that is
+    /// NOT logged per interface for the same reason as above.
+    async fn wifi_facts(
+        spec: NamespaceSpec<'_>,
+        interfaces: &[(String, InterfaceType)],
+    ) -> HashMap<String, (Option<i8>, Option<u32>)> {
+        use nlink::netlink::Nl80211;
+
+        let candidates: Vec<&String> = interfaces
+            .iter()
+            .filter(|(_, kind)| matches!(kind, InterfaceType::Physical))
+            .map(|(name, _)| name)
+            .collect();
+        let mut map = HashMap::new();
+        if candidates.is_empty() {
+            return map;
+        }
+
+        let conn = match spec.connection_async::<Nl80211>().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                debug!("nl80211 probe unavailable for this namespace: {e}");
+                return map;
+            }
+        };
+        for name in candidates {
+            if let Ok(Some(station)) = conn.get_station(name).await {
+                let bitrate = station.tx_bitrate.as_ref().and_then(|b| b.bitrate_100kbps);
+                if station.signal_dbm.is_some() || bitrate.is_some() {
+                    map.insert(name.clone(), (station.signal_dbm, bitrate));
+                }
             }
         }
         map
@@ -620,6 +713,18 @@ impl NetworkManager {
 
         let mut interfaces = HashMap::new();
         let addr_map = Self::address_map(&conn).await;
+        let probe_targets: Vec<(String, InterfaceType)> = links
+            .iter()
+            .map(|l| {
+                let name = l.name_or(&format!("eth{}", l.ifindex())).to_string();
+                let kind = Self::determine_interface_type(&name, l);
+                (name, kind)
+            })
+            .collect();
+        // Container namespaces are addressed by path, which NamespaceSpec
+        // handles — so their interfaces get the same facts as the host's.
+        let ethtool_map = Self::ethtool_facts(NamespaceSpec::Path(ns_path), &probe_targets).await;
+        let wifi_map = Self::wifi_facts(NamespaceSpec::Path(ns_path), &probe_targets).await;
 
         for link in links {
             let index = link.ifindex();
@@ -643,7 +748,7 @@ impl NetworkManager {
             interfaces.insert(
                 index,
                 NetworkInterface {
-                    name,
+                    name: name.clone(),
                     index,
                     namespace: namespace_name.clone(),
                     is_up,
@@ -652,7 +757,10 @@ impl NetworkManager {
                     interface_type,
                     addresses: addr_map.get(&index).cloned().unwrap_or_default(),
                     qdisc_kind,
-                    link_speed_mbps: None,
+                    link_speed_mbps: ethtool_map.get(&name).and_then(|(s, _)| *s),
+                    duplex: ethtool_map.get(&name).and_then(|(_, d)| *d),
+                    wifi_signal_dbm: wifi_map.get(&name).and_then(|(s, _)| *s),
+                    wifi_tx_bitrate_100kbps: wifi_map.get(&name).and_then(|(_, b)| *b),
                 },
             );
         }
