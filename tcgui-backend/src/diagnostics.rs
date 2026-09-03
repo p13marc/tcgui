@@ -13,6 +13,7 @@ use nlink::netlink::{Connection, Route};
 use std::process::Stdio;
 
 use std::time::Duration;
+use tcgui_shared::errors::TcguiError;
 use tcgui_shared::{
     ConnectivityResult, DiagnosticsRequest, DiagnosticsResponse, DiagnosticsResults, LatencyResult,
     LinkStatus, TcCorruptConfig, TcDelayConfig, TcDiagnosticStats, TcDuplicateConfig, TcLossConfig,
@@ -42,7 +43,7 @@ impl<'a> DiagnosticsService<'a> {
     pub async fn run_diagnostics(
         &self,
         request: &DiagnosticsRequest,
-    ) -> Result<DiagnosticsResponse, String> {
+    ) -> Result<DiagnosticsResponse, TcguiError> {
         info!(
             "Running diagnostics on {}/{}",
             request.namespace, request.interface
@@ -141,22 +142,23 @@ impl<'a> DiagnosticsService<'a> {
         &self,
         namespace: &str,
         interface: &str,
-    ) -> Result<LinkStatus, String> {
+    ) -> Result<LinkStatus, TcguiError> {
         use nlink::Connection;
         use nlink::netlink::Route;
 
         let conn = if namespace == "default" {
             Connection::<Route>::new()
-                .map_err(|e| format!("Failed to create netlink connection: {}", e))?
+                .map_err(|e| TcguiError::from_netlink("Failed to create netlink connection", &e))?
         } else {
-            namespace::connection_for(namespace)
-                .map_err(|e| format!("Failed to connect to namespace {}: {}", namespace, e))?
+            namespace::connection_for(namespace).map_err(|e| {
+                TcguiError::from_netlink(&format!("Failed to connect to namespace {namespace}"), &e)
+            })?
         };
 
         let links = conn
             .get_links()
             .await
-            .map_err(|e| format!("Failed to get links: {}", e))?;
+            .map_err(|e| TcguiError::from_netlink("Failed to get links", &e))?;
 
         for link in &links {
             let name = link.name_or("").to_string();
@@ -169,7 +171,9 @@ impl<'a> DiagnosticsService<'a> {
             }
         }
 
-        Err(format!("Interface {} not found", interface))
+        Err(TcguiError::InterfaceNotFound {
+            interface: interface.to_string(),
+        })
     }
 
     /// Get the current TC netem configuration for an interface.
@@ -177,12 +181,14 @@ impl<'a> DiagnosticsService<'a> {
         &self,
         namespace: &str,
         interface: &str,
-    ) -> Result<Option<TcNetemConfig>, String> {
+    ) -> Result<Option<TcNetemConfig>, TcguiError> {
         let netem_opts = self
             .tc_manager
             .get_netem_options(namespace, interface)
             .await
-            .map_err(|e| format!("Failed to get TC config: {}", e))?;
+            .map_err(|e| TcguiError::TcCommandError {
+                message: format!("Failed to get TC config: {e}"),
+            })?;
 
         match netem_opts {
             Some(opts) => {
@@ -293,7 +299,7 @@ impl<'a> DiagnosticsService<'a> {
         target: &str,
         count: u32,
         timeout_secs: u32,
-    ) -> Result<(ConnectivityResult, Option<LatencyResult>), String> {
+    ) -> Result<(ConnectivityResult, Option<LatencyResult>), TcguiError> {
         let timeout = Duration::from_secs(timeout_secs as u64 + count as u64);
 
         let output = if namespace == "default" {
@@ -314,8 +320,9 @@ impl<'a> DiagnosticsService<'a> {
                     .output(),
             )
             .await
-            .map_err(|_| "Ping timed out".to_string())?
-            .map_err(|e| format!("Failed to run ping: {}", e))?
+            .map_err(|_| TcguiError::NetworkError {
+                message: "Ping timed out".to_string(),
+            })??
         } else {
             tokio::time::timeout(
                 timeout,
@@ -338,8 +345,9 @@ impl<'a> DiagnosticsService<'a> {
                     .output(),
             )
             .await
-            .map_err(|_| "Ping timed out".to_string())?
-            .map_err(|e| format!("Failed to run ping: {}", e))?
+            .map_err(|_| TcguiError::NetworkError {
+                message: "Ping timed out".to_string(),
+            })??
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);

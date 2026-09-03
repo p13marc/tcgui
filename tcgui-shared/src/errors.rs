@@ -25,6 +25,24 @@ pub enum TcguiError {
     SystemTimeError(#[from] std::time::SystemTimeError),
 }
 
+impl TcguiError {
+    /// Build a `NetworkError` from a failed netlink operation.
+    ///
+    /// nlink's `Display` folds the kernel's `NETLINK_EXT_ACK` explanation in
+    /// since 0.16, so `{e}` already carries the precise reason and no separate
+    /// `ext_ack()` call is needed here.
+    ///
+    /// The sibling for the TC path is `tc_commands::tc_kernel_err`, which stays
+    /// where it is: it additionally logs `ext_ack()` at `warn` so failed applies
+    /// are visible in backend logs, and that needs `tracing`, which this crate
+    /// deliberately does not depend on.
+    pub fn from_netlink(context: &str, e: &nlink::netlink::Error) -> Self {
+        TcguiError::NetworkError {
+            message: format!("{context}: {e}"),
+        }
+    }
+}
+
 /// Backend-specific errors
 #[derive(Error, Debug)]
 pub enum BackendError {
