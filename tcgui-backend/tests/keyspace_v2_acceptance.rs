@@ -9,6 +9,7 @@ use tcgui_shared::identity::{
     ConcreteOrigin as _, RemoteOrigin, local_origin_from_seed, mint_local_origin,
 };
 use tcgui_shared::registry::tc;
+use tcgui_shared::{BackendHealthStatus, BackendMetadata};
 
 /// Two isolated peer sessions on one loopback endpoint: multicast off, one
 /// listens, the other connects (gossip on). Namespace `tcgui`, so keys are
@@ -29,9 +30,26 @@ async fn make_session(listen: Option<&str>, connect: Option<&str>) -> zenoh::Ses
     zenoh::open(c).await.unwrap()
 }
 
-/// (1) The retired key family is provably silent. Because the version chunk is
-/// plain `v1`, the check states its meaning explicitly — anything OUTSIDE
-/// `tcgui/v1/` — rather than riding on key algebra.
+/// (1) The retired key family is provably silent.
+///
+/// Because the version chunk is plain `v1`, the check states its meaning
+/// explicitly — anything OUTSIDE `tcgui/v1/` — rather than riding on key
+/// algebra.
+///
+/// Two things make this more than a re-assertion of a couple of literals:
+///
+/// - A **positive control** runs first: one deliberately pre-cutover key is
+///   published and the leak buffer must catch it. Without that, a subscriber
+///   that silently failed to declare would make the whole test pass.
+/// - The v1 traffic enumerates the **entire generated key surface** — every
+///   subject family, every procedure, the liveliness leaf and the blob prefix —
+///   so a future registry entry or builder that emitted an off-root key would
+///   fail here. `every_family_is_covered` keeps that enumeration honest.
+///
+/// Ceiling, stated so it is not overclaimed: this proves the *builders* never
+/// leave `tcgui/v1/`. Proving the running daemon is silent on the old root
+/// needs a spawned `tcgui-backend`, which needs CAP_NET_ADMIN and
+/// /var/run/netns, so it cannot live in `cargo test`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn old_root_is_silent_while_v1_carries_traffic() {
     let ep = "tcp/127.0.0.1:17451";
@@ -53,23 +71,29 @@ async fn old_root_is_silent_while_v1_carries_traffic() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // The backend emits real v1 traffic across planes.
-    let o = mint_local_origin();
+    // Positive control: a genuinely pre-cutover key MUST be caught.
     backend
-        .put(
-            tc::key(&o, &tc::Subject::interface("default", "eth0")).as_keyexpr(),
-            b"{}".to_vec(),
-        )
-        .await
-        .unwrap();
-    backend
-        .put(
-            tc::key(&o, &tc::Subject::bandwidth("default", "eth0")).as_keyexpr(),
-            b"{}".to_vec(),
-        )
+        .put("tcgui/lab-router/interfaces/list", b"{}".to_vec())
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
+    {
+        let mut caught = leaked.lock().unwrap();
+        assert_eq!(
+            caught.len(),
+            1,
+            "the observer did not see a deliberately leaked old-root key — \
+             this test cannot detect anything: {caught:?}"
+        );
+        caught.clear();
+    }
+
+    // Now the real thing: every key this producer can build.
+    let o = mint_local_origin();
+    for key in every_generated_key(&o) {
+        backend.put(key.as_str(), b"{}".to_vec()).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let leaked = leaked.lock().unwrap();
     assert!(
@@ -78,11 +102,66 @@ async fn old_root_is_silent_while_v1_carries_traffic() {
     );
 }
 
-/// (2) A consumer-shaped, concrete-key probe: resolve an origin through the same
-/// bridge the GUI uses (the health doc's `host_id`), then issue an
-/// ORIGIN-SCOPED call. A `tcgui/v1/*/@rpc/…` probe is forbidden here — it would
-/// pass even with a broken origin path. The probe MUST fail if the bridge
-/// yields nothing.
+/// Every key the generated registry can build for one origin: one subject per
+/// family, every `@rpc` procedure, the liveliness leaf and the blob prefix.
+fn every_generated_key(o: &tcgui_shared::identity::LocalOrigin) -> Vec<String> {
+    let mut keys: Vec<String> = vec![
+        tc::key(o, &tc::Subject::Health).to_string(),
+        tc::key(o, &tc::Subject::Sensor).to_string(),
+        tc::key(o, &tc::Subject::interface("default", "eth0")).to_string(),
+        tc::key(o, &tc::Subject::config("default", "eth0")).to_string(),
+        tc::key(o, &tc::Subject::execution("default", "eth0")).to_string(),
+        tc::key(o, &tc::Subject::scenario("demo")).to_string(),
+        tc::key(o, &tc::Subject::preset("demo")).to_string(),
+        tc::key(o, &tc::Subject::bandwidth("default", "eth0")).to_string(),
+        tc::key(o, &tc::Subject::qdisc("default", "eth0")).to_string(),
+        tc::key(o, &tc::Subject::applied("01jabcdefghijkmnpqrstvwxyz")).to_string(),
+        tcgui_shared::topics::state_alive(o).to_string(),
+    ];
+    for p in tc::ProcedureId::ALL {
+        keys.push(tc::rpc_serve_key(o, *p).to_string());
+    }
+    keys.push(format!(
+        "{}/manifest",
+        zenkey::V1Context::with_producer(o.to_origin(), tc::producer())
+            .blob_prefix(zenkey::grammar::BlobTier::Artifact)
+    ));
+    keys
+}
+
+/// The enumeration above must cover every registered family. If someone adds a
+/// subject to `registry/tc.toml`, this fails and the silence test above is
+/// extended rather than silently leaving the new family unchecked.
+#[test]
+fn every_family_is_covered() {
+    let o = mint_local_origin();
+    assert_eq!(
+        tc::Family::ALL.len(),
+        10,
+        "a subject family was added or removed — extend every_generated_key()"
+    );
+    assert_eq!(
+        tc::ProcedureId::ALL.len(),
+        7,
+        "a procedure was added or removed — extend every_generated_key()"
+    );
+    // 10 families + 1 alive leaf + 7 procedures + 1 blob prefix
+    assert_eq!(every_generated_key(&o).len(), 19);
+}
+
+/// (2) A consumer-shaped, concrete-key probe that genuinely uses the identity
+/// bridge.
+///
+/// A `tcgui/v1/*/@rpc/…` probe cannot catch a broken origin path — the `*`
+/// matches any origin, so a caller whose origin concept is garbage still gets
+/// replies. So this resolves the origin the way the GUI does: subscribe to
+/// `topics::sel_state()` (the *exact* selector the GUI uses), receive a real
+/// `BackendHealthStatus`, take `host_id`, and only then issue an
+/// origin-scoped, concrete-key call.
+///
+/// Every step MUST-fails if the bridge is broken: no health sample → the
+/// timeout fires; an unparseable key → `parse_state_key` is `None`; an empty or
+/// junk `host_id` → `RemoteOrigin::parse` errors.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concrete_key_origin_probe() {
     let ep = "tcp/127.0.0.1:17452";
@@ -94,6 +173,7 @@ async fn concrete_key_origin_probe() {
     let cb_key = diag_key.clone();
     let _q = backend
         .declare_queryable(diag_key.as_keyexpr())
+        .complete(false)
         .callback(move |q| {
             let k = cb_key.clone();
             tokio::spawn(async move {
@@ -104,13 +184,56 @@ async fn concrete_key_origin_probe() {
         })
         .await
         .unwrap();
+
+    // The GUI's own state subscription — not a hand-written key.
+    let health_sub = frontend
+        .declare_subscriber(tcgui_shared::topics::sel_state())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // The health document IS the identity bridge: host_id == the origin. A
-    // consumer resolves the origin through it and MUST fail if it is empty.
-    let host_id = local.chunk().to_string();
-    let remote = RemoteOrigin::parse(&host_id).expect("bridge yielded no origin");
+    // The backend publishes a real health document.
+    let health = BackendHealthStatus {
+        host_id: local.chunk().to_string(),
+        backend_name: "display-label-only".to_string(),
+        status: "running".to_string(),
+        timestamp: 0,
+        metadata: BackendMetadata::default(),
+        namespace_count: 0,
+        interface_count: 0,
+    };
+    backend
+        .put(
+            tc::key(&local, &tc::Subject::Health).as_keyexpr(),
+            serde_json::to_vec(&health).unwrap(),
+        )
+        .await
+        .unwrap();
 
+    // A subscriber channel never closes, so a bare recv would hang CI forever
+    // if the bridge were broken. Time it out and fail instead.
+    let sample = tokio::time::timeout(Duration::from_secs(2), health_sub.recv_async())
+        .await
+        .expect("no health document arrived — the identity bridge yielded nothing")
+        .expect("state subscription closed");
+
+    let parsed = tcgui_shared::topics::parse_state_key(sample.key_expr().as_str())
+        .expect("health key did not parse through the registry");
+    assert_eq!(parsed.subject, tc::Subject::Health);
+
+    let doc: BackendHealthStatus =
+        serde_json::from_slice(sample.payload().to_bytes().as_ref()).expect("health doc decodes");
+
+    // The assertion that earns its keep: the GUI backfills host_id from the key
+    // when it is empty, which would paper over exactly this divergence.
+    assert_eq!(
+        doc.host_id, parsed.origin,
+        "payload host_id diverged from the key origin — the bridge would misroute"
+    );
+
+    let remote = RemoteOrigin::parse(&doc.host_id).expect("bridge yielded no usable origin");
+
+    // Origin-scoped, concrete key — built from what came off the wire.
     let replies = frontend
         .get(tc::diagnostics_key(&remote).as_str())
         .await
