@@ -1,6 +1,8 @@
 # Build artifacts
 /target
 **/target/
+# separate target dir for the root-run live tests (`just test-live`)
+/target-live
 
 # Package build artifacts
 *.deb

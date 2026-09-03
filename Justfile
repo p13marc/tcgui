@@ -183,6 +183,24 @@ test:
     cargo test --workspace --all-targets --all-features
     @echo "✅ Full test suite passed"
 
+# Live tc/netlink tests against the real kernel (#21).
+#
+# Creates throwaway network namespaces with dummy interfaces, so it needs root.
+# `just ci` never runs these: they are `#[ignore]`d, so `cargo test` compiles
+# them and skips them regardless of which user CI runs as.
+#
+# The build happens unprivileged and into a SEPARATE target dir, then only the
+# test binary runs under sudo. Pointing `sudo cargo` at the normal `target/`
+# leaves root-owned fingerprint files behind, after which ordinary builds fail
+# with a confusing permission error.
+test-live:
+    @echo "🧪 Building live tc tests (unprivileged)..."
+    CARGO_TARGET_DIR=target-live cargo test -p tcgui-backend --test live_tc --no-run
+    @echo "🧪 Running live tc tests (requires root)..."
+    sudo -E $(ls -t target-live/debug/deps/live_tc-* | grep -v '\.d$' | head -1) \
+        --ignored --test-threads=1
+    @echo "✅ Live tc tests passed"
+
 # Next-generation fast testing (requires cargo-nextest)
 test-nextest:
     @echo "⚡ Running tests with nextest (parallel execution)..."

@@ -32,6 +32,7 @@ just check                    # Compile check (zero warnings policy)
 just clippy                   # Lint (strict, warnings as errors)
 just test                     # Full test suite
 just test-fast                # Fast tests (lib targets only)
+just test-live                # Live tc tests against the kernel (needs root; skipped by `just ci`)
 just coverage                 # Code coverage with tarpaulin
 
 # Pre-commit
