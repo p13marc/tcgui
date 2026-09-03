@@ -7,9 +7,11 @@
 use crate::backend_manager::BackendManager;
 use crate::messages::TcGuiMessage;
 use crate::theme::Theme;
-use crate::view::{ColorPalette, scaled, scaled_spacing};
+use crate::ui_state::UiStateManager;
+use crate::view::{ColorPalette, interface_matches_search, scaled, scaled_spacing};
 use iced::widget::{container, scrollable, table, text};
 use iced::{Color, Element, Length};
+use tcgui_shared::NamespaceType;
 
 /// Data structure representing a row in the interface table
 #[derive(Clone)]
@@ -51,8 +53,17 @@ impl InterfaceTableRow {
 }
 
 /// Collect all interfaces from the backend manager into table rows
-pub fn collect_interface_rows(backend_manager: &BackendManager) -> Vec<InterfaceTableRow> {
+///
+/// Honours the same filter row the card view does — the interface search, the
+/// host/namespace/container type checkboxes, and per-namespace hiding. Without
+/// this the whole filter row above the table was inert in Table mode.
+pub fn collect_interface_rows(
+    backend_manager: &BackendManager,
+    ui_state: &UiStateManager,
+) -> Vec<InterfaceTableRow> {
     let mut rows = Vec::new();
+    let search = ui_state.interface_search();
+    let filter = ui_state.namespace_filter();
 
     for (backend_name, backend_group) in backend_manager.backends() {
         if !backend_group.is_connected {
@@ -60,7 +71,24 @@ pub fn collect_interface_rows(backend_manager: &BackendManager) -> Vec<Interface
         }
 
         for (namespace_name, namespace_group) in &backend_group.namespaces {
+            let should_show = match &namespace_group.namespace.namespace_type {
+                NamespaceType::Default => filter.show_host,
+                NamespaceType::Traditional => filter.show_namespaces,
+                NamespaceType::Container { .. } => filter.show_containers,
+            };
+            if !should_show {
+                continue;
+            }
+            // A hidden namespace collapses its section in the card view; the
+            // table is flat, so the equivalent is to omit its rows.
+            if ui_state.is_namespace_hidden(backend_name, namespace_name) {
+                continue;
+            }
+
             for (interface_name, tc_interface) in &namespace_group.tc_interfaces {
+                if !interface_matches_search(interface_name, search) {
+                    continue;
+                }
                 let bandwidth = tc_interface.bandwidth_stats();
 
                 rows.push(InterfaceTableRow {
@@ -105,10 +133,11 @@ fn header_cell(content: &'static str, size: f32, color: Color) -> Element<'stati
 /// Render the interface table view
 pub fn render_interface_table(
     backend_manager: &BackendManager,
+    ui_state: &UiStateManager,
     theme: &Theme,
     zoom: f32,
 ) -> Element<'static, TcGuiMessage> {
-    let rows = collect_interface_rows(backend_manager);
+    let rows = collect_interface_rows(backend_manager, ui_state);
     let colors = ColorPalette::from_theme(theme);
 
     if rows.is_empty() {
@@ -265,5 +294,69 @@ mod tests {
     #[test]
     fn test_format_rate_none() {
         assert_eq!(InterfaceTableRow::format_rate(None), "-");
+    }
+
+    fn iface(name: &str, namespace: &str) -> tcgui_shared::NetworkInterface {
+        tcgui_shared::NetworkInterface {
+            name: name.to_string(),
+            index: 1,
+            namespace: namespace.to_string(),
+            is_up: true,
+            is_oper_up: true,
+            has_tc_qdisc: false,
+            interface_type: tcgui_shared::InterfaceType::Virtual,
+            addresses: Vec::new(),
+            qdisc_kind: None,
+            link_speed_mbps: None,
+        }
+    }
+
+    fn manager_with(names: &[&str]) -> BackendManager {
+        let mut m = BackendManager::new();
+        for n in names {
+            m.handle_interface_upsert("h-000000000001", iface(n, "default"));
+        }
+        m
+    }
+
+    fn row_names(rows: &[InterfaceTableRow]) -> Vec<String> {
+        rows.iter().map(|r| r.interface_name.clone()).collect()
+    }
+
+    /// The regression this module had: the table ignored the search box, so
+    /// the whole filter row above it was decorative in Table mode.
+    #[test]
+    fn rows_honour_the_interface_search() {
+        let manager = manager_with(&["eth0", "eth1", "wlan0"]);
+        let mut ui = UiStateManager::new();
+
+        assert_eq!(row_names(&collect_interface_rows(&manager, &ui)).len(), 3);
+
+        ui.set_interface_search("eth".to_string());
+        assert_eq!(
+            row_names(&collect_interface_rows(&manager, &ui)),
+            vec!["eth0", "eth1"]
+        );
+
+        // Case-insensitive, like the card view.
+        ui.set_interface_search("WLAN".to_string());
+        assert_eq!(
+            row_names(&collect_interface_rows(&manager, &ui)),
+            vec!["wlan0"]
+        );
+    }
+
+    /// The namespace-type checkboxes apply to the table too.
+    #[test]
+    fn rows_honour_the_namespace_type_filter() {
+        let manager = manager_with(&["eth0"]);
+        let mut ui = UiStateManager::new();
+        assert_eq!(collect_interface_rows(&manager, &ui).len(), 1);
+
+        ui.toggle_host_filter();
+        assert!(
+            collect_interface_rows(&manager, &ui).is_empty(),
+            "unchecking Host left default-namespace rows in the table"
+        );
     }
 }
