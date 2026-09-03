@@ -73,32 +73,18 @@ impl TcBackend {
 
     #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
     pub(crate) async fn handle_tc_query(&mut self, query: zenoh::query::Query) -> Result<()> {
-        let payload = query.payload().ok_or_else(|| {
-            TcguiError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "TC query missing payload",
-            ))
-        })?;
-        let payload_bytes = payload.to_bytes();
-        if payload_bytes.len() > tcgui_shared::validation::MAX_REQUEST_PAYLOAD_BYTES {
-            return self
-                .reply_tc_error(
-                    &query,
-                    format!(
-                        "TC request payload too large ({} bytes)",
-                        payload_bytes.len()
-                    ),
-                )
-                .await;
-        }
-        let payload_str = std::str::from_utf8(&payload_bytes).map_err(|e| {
-            TcguiError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {}", e),
-            ))
-        })?;
-
-        let request = serde_json::from_str::<TcRequest>(payload_str)?;
+        // A decode failure MUST reply on the error channel, not `?` out of here:
+        // the caller only logs, so bailing produced no reply at all and the GUI
+        // simply timed out (RFC keyspace-v2 05 §3).
+        let request: TcRequest = match tcgui_shared::rpc::decode_request(query.payload(), "tc") {
+            Ok(request) => request,
+            Err(fault) => {
+                warn!("Rejecting malformed TC request: {}", fault.message);
+                return self
+                    .reply_query_error(&query, &fault.name, &fault.message)
+                    .await;
+            }
+        };
         info!("Received TC query: {:?}", request);
 
         // Validate the request target before any privileged operation.
@@ -114,7 +100,11 @@ impl TcBackend {
                 .await;
         }
 
-        let response = match &request.operation {
+        // `Ok` is a success value for the value channel; `Err` is the detail
+        // for `reply_err`. Previously both rode a `TcResponse` with a `success`
+        // flag, which meant the type could spell a failure that a consumer had
+        // to remember to check (RFC 05 §3).
+        let result: std::result::Result<TcResponse, String> = match &request.operation {
             TcOperation::ApplyConfig { config } => {
                 let result = self
                     .tc_manager
@@ -170,22 +160,15 @@ impl TcBackend {
                             warn!("Failed to publish TC config update: {}", e);
                         }
 
-                        TcResponse {
-                            success: true,
+                        Ok(TcResponse {
                             message: format!(
                                 "Structured TC config applied successfully to {}:{}",
                                 request.namespace, request.interface
                             ),
                             applied_config: Some(applied_config),
-                            error_code: None,
-                        }
+                        })
                     }
-                    Err(e) => TcResponse {
-                        success: false,
-                        message: format!("Failed to apply structured TC config: {}", e),
-                        applied_config: None,
-                        error_code: Some(-1),
-                    },
+                    Err(e) => Err(format!("Failed to apply structured TC config: {e}")),
                 }
             }
             TcOperation::Apply {
@@ -289,15 +272,13 @@ impl TcBackend {
                                 warn!("Failed to publish TC config update: {}", e);
                             }
 
-                            TcResponse {
-                                success: true,
+                            Ok(TcResponse {
                                 message: format!(
                                     "TC applied successfully to {}:{}",
                                     request.namespace, request.interface
                                 ),
                                 applied_config: Some(applied_config),
-                                error_code: None,
-                            }
+                            })
                         } else {
                             // No meaningful parameters - TC qdisc was removed
                             // Publish TC configuration removal (None config)
@@ -308,31 +289,23 @@ impl TcBackend {
                                 warn!("Failed to publish TC config removal: {}", e);
                             }
 
-                            TcResponse {
-                                success: true,
+                            Ok(TcResponse {
                                 message: format!(
                                     "TC removed from {}:{} (no meaningful parameters)",
                                     request.namespace, request.interface
                                 ),
                                 applied_config: None,
-                                error_code: None,
-                            }
+                            })
                         }
                     }
-                    Err(e) => TcResponse {
-                        success: false,
-                        message: format!(
-                            "Failed to {} TC: {}",
-                            if has_meaningful_params {
-                                "apply"
-                            } else {
-                                "remove"
-                            },
-                            e
-                        ),
-                        applied_config: None,
-                        error_code: Some(-1),
-                    },
+                    Err(e) => Err(format!(
+                        "Failed to {} TC: {e}",
+                        if has_meaningful_params {
+                            "apply"
+                        } else {
+                            "remove"
+                        }
+                    )),
                 }
             }
             TcOperation::Remove => {
@@ -351,44 +324,40 @@ impl TcBackend {
                             warn!("Failed to publish TC config removal: {}", e);
                         }
 
-                        TcResponse {
-                            success: true,
+                        Ok(TcResponse {
                             message: format!(
                                 "TC removed successfully from {}:{}",
                                 request.namespace, request.interface
                             ),
                             applied_config: None,
-                            error_code: None,
-                        }
+                        })
                     }
-                    Err(e) => TcResponse {
-                        success: false,
-                        message: format!("Failed to remove TC: {}", e),
-                        applied_config: None,
-                        error_code: Some(-1),
-                    },
+                    Err(e) => Err(format!("Failed to remove TC: {e}")),
                 }
             }
         };
 
         // Success rides the value channel on our concrete key; failure rides
         // reply_err (RFC 05 §2.1 / §3).
-        if response.success {
-            let payload = serde_json::to_string(&response)?;
-            self.reply_value(
-                &query,
-                tc::config_ns_iface_set_key(
-                    &self.local_origin,
-                    &request.namespace,
-                    &request.interface,
+        match result {
+            Ok(response) => {
+                let payload = serde_json::to_string(&response)?;
+                self.reply_value(
+                    &query,
+                    tc::config_ns_iface_set_key(
+                        &self.local_origin,
+                        &request.namespace,
+                        &request.interface,
+                    )
+                    .into(),
+                    payload,
                 )
-                .into(),
-                payload,
-            )
-            .await?;
-        } else {
-            self.reply_query_error(&query, "error/tc/apply", &response.message)
                 .await?;
+            }
+            Err(message) => {
+                self.reply_query_error(&query, "error/tc/apply", &message)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -399,21 +368,18 @@ impl TcBackend {
         &mut self,
         query: zenoh::query::Query,
     ) -> Result<()> {
-        let payload = query.payload().ok_or_else(|| {
-            TcguiError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Interface query missing payload",
-            ))
-        })?;
-        let payload_bytes = payload.to_bytes();
-        let payload_str = std::str::from_utf8(&payload_bytes).map_err(|e| {
-            TcguiError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {}", e),
-            ))
-        })?;
-
-        let request = serde_json::from_str::<InterfaceControlRequest>(payload_str)?;
+        // Decode failures ride the error channel; this handler also had no
+        // payload size guard at all, which `decode_request` now supplies.
+        let request: InterfaceControlRequest =
+            match tcgui_shared::rpc::decode_request(query.payload(), "interface") {
+                Ok(request) => request,
+                Err(fault) => {
+                    warn!("Rejecting malformed interface request: {}", fault.message);
+                    return self
+                        .reply_query_error(&query, &fault.name, &fault.message)
+                        .await;
+                }
+            };
         info!("Received Interface control query: {:?}", request);
 
         // Validate the request target before any privileged operation.
@@ -433,71 +399,53 @@ impl TcBackend {
                 .await;
         }
 
-        let response = match &request.operation {
-            InterfaceControlOperation::Enable => {
-                match self
-                    .network_manager
-                    .enable_interface(&request.namespace, &request.interface)
-                    .await
-                {
-                    Ok(_) => InterfaceControlResponse {
-                        success: true,
-                        message: format!(
-                            "Interface {} enabled successfully in namespace {}",
-                            request.interface, request.namespace
-                        ),
-                        new_state: true,
-                        error_code: None,
-                    },
-                    Err(e) => InterfaceControlResponse {
-                        success: false,
-                        message: format!("Failed to enable interface: {}", e),
-                        new_state: false,
-                        error_code: Some(-1),
-                    },
-                }
-            }
-            InterfaceControlOperation::Disable => {
-                match self
-                    .network_manager
-                    .disable_interface(&request.namespace, &request.interface)
-                    .await
-                {
-                    Ok(_) => InterfaceControlResponse {
-                        success: true,
-                        message: format!(
-                            "Interface {} disabled successfully in namespace {}",
-                            request.interface, request.namespace
-                        ),
-                        new_state: false,
-                        error_code: None,
-                    },
-                    Err(e) => InterfaceControlResponse {
-                        success: false,
-                        message: format!("Failed to disable interface: {}", e),
-                        new_state: true,
-                        error_code: Some(-1),
-                    },
-                }
-            }
+        let result: std::result::Result<InterfaceControlResponse, String> = match &request.operation
+        {
+            InterfaceControlOperation::Enable => self
+                .network_manager
+                .enable_interface(&request.namespace, &request.interface)
+                .await
+                .map(|_| InterfaceControlResponse {
+                    message: format!(
+                        "Interface {} enabled successfully in namespace {}",
+                        request.interface, request.namespace
+                    ),
+                    new_state: true,
+                })
+                .map_err(|e| format!("Failed to enable interface: {e}")),
+            InterfaceControlOperation::Disable => self
+                .network_manager
+                .disable_interface(&request.namespace, &request.interface)
+                .await
+                .map(|_| InterfaceControlResponse {
+                    message: format!(
+                        "Interface {} disabled successfully in namespace {}",
+                        request.interface, request.namespace
+                    ),
+                    new_state: false,
+                })
+                .map_err(|e| format!("Failed to disable interface: {e}")),
         };
 
-        if response.success {
-            let payload = serde_json::to_string(&response)?;
-            self.reply_value(
-                &query,
-                tc::interface_ns_iface_set_key(
-                    &self.local_origin,
-                    &request.namespace,
-                    &request.interface,
+        match result {
+            Ok(response) => {
+                let payload = serde_json::to_string(&response)?;
+                self.reply_value(
+                    &query,
+                    tc::interface_ns_iface_set_key(
+                        &self.local_origin,
+                        &request.namespace,
+                        &request.interface,
+                    )
+                    .into(),
+                    payload,
                 )
-                .into(),
-                payload,
-            )
-            .await?;
-        } else {
-            self.reply_query_error(&query, "error/interface", &response.message)
                 .await?;
+            }
+            Err(message) => {
+                self.reply_query_error(&query, "error/interface", &message)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -505,73 +453,65 @@ impl TcBackend {
 
     #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
     pub(crate) async fn handle_diagnostics_query(&self, query: zenoh::query::Query) -> Result<()> {
-        use tcgui_shared::{DiagnosticsRequest, DiagnosticsResponse, DiagnosticsResults};
+        use tcgui_shared::DiagnosticsRequest;
 
-        let payload = query.payload().ok_or_else(|| {
-            TcguiError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Diagnostics query missing payload",
-            ))
-        })?;
-        let payload_bytes = payload.to_bytes();
-        let payload_str = std::str::from_utf8(&payload_bytes).map_err(|e| {
-            TcguiError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {}", e),
-            ))
-        })?;
-
-        let request = serde_json::from_str::<DiagnosticsRequest>(payload_str)?;
+        // Same as above: reply on the error channel, and gain the size guard
+        // this handler never had.
+        let request: DiagnosticsRequest =
+            match tcgui_shared::rpc::decode_request(query.payload(), "diagnostics") {
+                Ok(request) => request,
+                Err(fault) => {
+                    warn!("Rejecting malformed diagnostics request: {}", fault.message);
+                    return self
+                        .reply_query_error(&query, &fault.name, &fault.message)
+                        .await;
+                }
+            };
         info!(
             "Received Diagnostics query for {}/{}",
             request.namespace, request.interface
         );
 
         // Validate the request target before touching the namespace/interface.
-        let response = if let Err(reason) =
+        // A bad target is an invalid *request*, so it gets the invalid-request
+        // name — previously it was misfiled under the generic error/diagnostics.
+        if let Err(reason) =
             tcgui_shared::validation::validate_target(&request.namespace, &request.interface)
         {
             warn!(
                 "Rejecting diagnostics request for {}/{}: {}",
                 request.namespace, request.interface, reason
             );
-            DiagnosticsResponse {
-                success: false,
-                message: format!("Invalid request: {reason}"),
-                results: DiagnosticsResults::default(),
-                error_code: Some(22), // EINVAL
-            }
-        } else {
-            // Create diagnostics service and run diagnostics
-            let diagnostics_service =
-                diagnostics::DiagnosticsService::new(&self.network_manager, &self.tc_manager);
+            return self
+                .reply_query_error(
+                    &query,
+                    "error/diagnostics/invalid-request",
+                    &format!("Invalid request: {reason}"),
+                )
+                .await;
+        }
 
-            match diagnostics_service.run_diagnostics(&request).await {
-                Ok(result) => result,
-                Err(e) => DiagnosticsResponse {
-                    success: false,
-                    message: format!("Diagnostics failed: {}", e),
-                    results: DiagnosticsResults::default(),
-                    error_code: Some(-1),
-                },
-            }
-        };
+        let diagnostics_service =
+            diagnostics::DiagnosticsService::new(&self.network_manager, &self.tc_manager);
 
-        if response.success {
-            let payload = serde_json::to_string(&response)?;
-            self.reply_value(
-                &query,
-                tc::diagnostics_key(&self.local_origin).into(),
-                payload,
-            )
-            .await?;
-            info!(
-                "Diagnostics completed for {}/{}: {}",
-                request.namespace, request.interface, response.message
-            );
-        } else {
-            self.reply_query_error(&query, "error/diagnostics", &response.message)
+        match diagnostics_service.run_diagnostics(&request).await {
+            Ok(response) => {
+                let payload = serde_json::to_string(&response)?;
+                self.reply_value(
+                    &query,
+                    tc::diagnostics_key(&self.local_origin).into(),
+                    payload,
+                )
                 .await?;
+                info!(
+                    "Diagnostics completed for {}/{}: {}",
+                    request.namespace, request.interface, response.message
+                );
+            }
+            Err(e) => {
+                self.reply_query_error(&query, "error/diagnostics", &format!("{e}"))
+                    .await?;
+            }
         }
 
         Ok(())

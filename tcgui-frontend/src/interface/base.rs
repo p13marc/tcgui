@@ -811,7 +811,7 @@ impl TcInterface {
                 .state
                 .diagnostics_result
                 .as_ref()
-                .map(|r| r.success)
+                .map(|r| r.results.is_healthy())
                 .unwrap_or(false)
             {
                 theme.colors.success
@@ -835,7 +835,7 @@ impl TcInterface {
         let tooltip_text = if self.state.diagnostics_running {
             "Running diagnostics..."
         } else if let Some(ref result) = self.state.diagnostics_result {
-            if result.success {
+            if result.results.is_healthy() {
                 "Diagnostics passed - click to re-run"
             } else {
                 "Diagnostics failed - click to re-run"
@@ -962,7 +962,7 @@ impl TcInterface {
             .padding(scaled_spacing(2, zoom));
 
         // Build the panel
-        let panel_bg = if result.success {
+        let panel_bg = if result.results.is_healthy() {
             Color::from_rgba(success_color.r, success_color.g, success_color.b, 0.1)
         } else {
             Color::from_rgba(error_color.r, error_color.g, error_color.b, 0.1)
@@ -1017,7 +1017,7 @@ impl TcInterface {
                 border: iced::Border {
                     radius: 4.0.into(),
                     width: 1.0,
-                    color: if result.success {
+                    color: if result.results.is_healthy() {
                         success_color
                     } else {
                         error_color

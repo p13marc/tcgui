@@ -46,6 +46,7 @@ pub mod identity;
 pub mod preset_json;
 pub mod presets;
 pub mod registry;
+pub mod rpc;
 pub mod scenario;
 pub mod scenario_json;
 pub mod validation;
@@ -1029,14 +1030,10 @@ pub struct TcConfiguration {
 /// Traffic control operation response (Reply)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcResponse {
-    /// Whether the operation succeeded
-    pub success: bool,
     /// Detailed message about the operation result
     pub message: String,
-    /// Configuration that was applied (if successful)
+    /// Configuration that was applied
     pub applied_config: Option<TcConfiguration>,
-    /// Error details (if failed)
-    pub error_code: Option<i32>,
 }
 
 /// Interface control request (enable/disable) (Query)
@@ -1063,14 +1060,10 @@ pub enum InterfaceControlOperation {
 /// Interface control operation response (Reply)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceControlResponse {
-    /// Whether the operation succeeded
-    pub success: bool,
     /// Detailed message about the operation result
     pub message: String,
     /// New interface state after operation (true = up, false = down)
     pub new_state: bool,
-    /// Error details (if failed)
-    pub error_code: Option<i32>,
 }
 
 // ============================================================================
@@ -1105,14 +1098,10 @@ impl Default for DiagnosticsRequest {
 /// Network diagnostics response (Reply)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsResponse {
-    /// Whether diagnostics completed successfully
-    pub success: bool,
     /// Summary message
     pub message: String,
     /// Detailed diagnostic results
     pub results: DiagnosticsResults,
-    /// Error code if diagnostics failed
-    pub error_code: Option<i32>,
 }
 
 /// Comprehensive diagnostic results
@@ -1128,6 +1117,24 @@ pub struct DiagnosticsResults {
     pub configured_tc: Option<TcNetemConfig>,
     /// TC qdisc statistics (if netem is configured)
     pub tc_stats: Option<TcDiagnosticStats>,
+}
+
+impl DiagnosticsResults {
+    /// Whether the interface actually passed: the link is up with carrier and,
+    /// where a connectivity probe ran, the target was reachable.
+    ///
+    /// This replaces the old `DiagnosticsResponse::success` flag as the input to
+    /// the GUI's red/green rendering — and is strictly more useful. `success`
+    /// meant "the diagnostics run completed", so a **down** link with a failed
+    /// ping rendered the panel *green*. It was also already dead: since the
+    /// cutover a failed run rides `reply_err`, which the GUI routes to a
+    /// notification and never into a `DiagnosticsResponse`, so every value the
+    /// GUI ever read was `true`.
+    pub fn is_healthy(&self) -> bool {
+        self.link_status.is_up
+            && self.link_status.has_carrier
+            && self.connectivity.as_ref().is_none_or(|c| c.reachable)
+    }
 }
 
 /// TC diagnostic statistics showing qdisc effectiveness
