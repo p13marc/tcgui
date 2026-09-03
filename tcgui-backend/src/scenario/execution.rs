@@ -386,51 +386,9 @@ impl ScenarioExecutionEngine {
                     };
 
                     match Self::execute_tc_command(&session, &local_origin, &tc_request).await {
-                        Ok(response) if response.success => {
+                        Ok(_) => {
                             debug!("Successfully applied TC config for step {}", step_index + 1);
                             execution.stats.tc_operations += 1;
-                        }
-                        Ok(response) => {
-                            warn!(
-                                "TC operation failed for step {}: {}",
-                                step_index + 1,
-                                response.message
-                            );
-                            execution.stats.failed_operations += 1;
-                            execution.stats.last_error = Some(response.message.clone());
-
-                            // Mark as failed and trigger rollback
-                            execution.state = ExecutionState::Failed {
-                                error: ScenarioError::permanent(&response.message)
-                                    .at_step(step_index)
-                                    .during("applying TC configuration"),
-                            };
-
-                            // Perform rollback
-                            if cleanup_on_failure
-                                && let Some(ref captured_state) = pre_execution_state
-                            {
-                                info!("Performing TC state rollback due to execution failure");
-                                match tc_manager.restore_tc_state(captured_state).await {
-                                    Ok(msg) => info!("TC rollback successful: {}", msg),
-                                    Err(e) => error!("TC rollback failed: {}", e),
-                                }
-                            }
-
-                            // Remove from active executions
-                            {
-                                let mut executions = active_executions.write().await;
-                                executions.remove(&execution_key);
-                            }
-
-                            // Send failure update
-                            let _ = update_sender.send(ScenarioExecutionUpdate {
-                                namespace: execution.target_namespace.clone(),
-                                interface: execution.target_interface.clone(),
-                                execution: execution.clone(),
-                                backend_name: backend_name.clone(),
-                            });
-                            return;
                         }
                         Err(e) => {
                             error!(
@@ -764,7 +722,13 @@ impl ScenarioExecutionEngine {
                     serde_json::from_slice(sample.payload().to_bytes().as_ref())?;
                 Ok(response)
             }
-            Err(e) => Err(anyhow::anyhow!("TC query failed: {:?}", e)),
+            // Surface the backend's own namespaced error string rather than a
+            // Debug-formatted ReplyError, so the scenario's `last_error` reads
+            // the same as the toast the GUI shows: "error/tc/apply: <detail>".
+            Err(e) => Err(anyhow::anyhow!(
+                "TC query failed: {}",
+                tcgui_shared::rpc::reply_error_message(e)
+            )),
         }
     }
 

@@ -60,11 +60,12 @@ impl<'a> DiagnosticsService<'a> {
                 results.link_status = status;
             }
             Err(e) => {
-                return Ok(DiagnosticsResponse {
-                    success: false,
-                    message: format!("Failed to check link status: {}", e),
-                    results,
-                    error_code: Some(-1),
+                // A failed run is an Err now, not an Ok carrying success:false —
+                // the caller puts it on the reply-error channel (RFC 05 §3).
+                // This is only expressible because #19 gave this fn a real
+                // error type.
+                return Err(TcguiError::NetworkError {
+                    message: format!("Failed to check link status: {e}"),
                 });
             }
         }
@@ -129,12 +130,7 @@ impl<'a> DiagnosticsService<'a> {
         // Build response message
         let message = self.build_summary_message(&results);
 
-        Ok(DiagnosticsResponse {
-            success: true,
-            message,
-            results,
-            error_code: None,
-        })
+        Ok(DiagnosticsResponse { message, results })
     }
 
     /// Check link status for an interface.

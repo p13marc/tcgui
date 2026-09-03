@@ -30,6 +30,19 @@ All notable changes to this project will be documented in this file.
   `cardinality = 1024`, matching the `state` subjects that address the same
   interface population — `zenkey-build` 0.7 extends the key-population budget
   lint (RFC 08 §2) from subjects to procedures.
+- **BREAKING (wire):** `TcResponse`, `InterfaceControlResponse` and
+  `DiagnosticsResponse` lost their `success: bool` and `error_code:
+  Option<i32>` fields. A value reply now always means success and a failure
+  always rides Zenoh's reply-error channel with a namespaced `error/...` name
+  (RFC keyspace-v2 05 §3), so both fields were dead — `success` was `true` and
+  `error_code` `None` on every reply a consumer could ever observe. There are
+  no `#[serde(default)]`s on them, so a 0.8 peer cannot deserialize a 0.9
+  reply.
+- Every request-decode failure now answers on the reply-error channel.
+  Missing, oversize, non-UTF-8 and malformed-JSON payloads previously
+  propagated out of their handler into a caller that only logged, so the
+  querier received **no reply at all** and timed out. The interface and
+  diagnostics handlers also gained the payload size guard they never had.
 
 ## [0.8.0] - 2026-05-05
 
