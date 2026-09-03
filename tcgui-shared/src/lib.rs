@@ -1,41 +1,42 @@
 //! Shared types and message definitions for TC GUI.
 //!
-//! This crate contains all the shared data structures and message types
-//! used for communication between the TC GUI frontend and backend components.
-//! It provides a unified interface for network interface management, traffic control
-//! operations, and real-time monitoring across multiple network namespaces.
+//! This crate contains the data structures the frontend and backend exchange,
+//! plus the key vocabulary they exchange them on.
 //!
-//! # New Architecture
+//! # Keyspace
 //!
-//! The communication uses separate topics and query/reply patterns with Zenoh:
-//! - **Pub/Sub**: Interface discovery, bandwidth updates, health status
-//! - **Query/Reply**: TC operations, interface control (request/reply pattern)
+//! Every key follows the keyspace-v2 grammar
+//! `<base>/v1/<origin>/<class>/<producer>/<subject…>`, with `base = tcgui`
+//! (the Zenoh session namespace, so app code never spells it) and
+//! `producer = tc`. The subject and procedure vocabulary lives in
+//! `registry/tc.toml` and is compiled by `zenkey-build` into typed builders;
+//! [`topics`] wraps them. **Never build a key with `format!`** — go through
+//! [`topics`] or the generated registry, both of which slug hostile
+//! netlink-supplied names at the boundary.
 //!
-//! # Key Components
+//! The backend serves the same registry file on `@rpc/tc/introspect`, and the
+//! schema set for every type below on `@rpc/tc/describe`, so the vocabulary has
+//! exactly one source of truth and generic tooling needs no compiled-in copy.
 //!
-//! * [`topics`] - Key expressions for different communication channels
-//! * [`InterfaceListUpdate`] - Interface discovery updates (pub/sub)
-//! * [`BandwidthUpdate`] - Real-time bandwidth statistics (pub/sub)
-//! * [`TcRequest`]/[`TcResponse`] - Traffic control operations (query/reply)
-//! * [`InterfaceControlRequest`]/[`InterfaceControlResponse`] - Interface control (query/reply)
-//! * [`NetworkInterface`] - Network interface representation with namespace context
-//! * [`NetworkBandwidthStats`] - Real-time bandwidth statistics and rates
-//! * [`NetworkNamespace`] - Network namespace grouping for interface organization
+//! # Classes
 //!
-//! # Communication Patterns
+//! * `state/` — last-writer-wins documents; removal is a `SampleKind::Delete`
+//!   tombstone, never a `None` payload.
+//! * `telemetry/` — superseded samples (bandwidth, qdisc stats).
+//! * `events/` — immutable, rate-budgeted audit records.
+//! * `@rpc/` — the verbatim procedure plane. A value reply always means
+//!   success; a failure always rides the reply-error channel with a namespaced
+//!   `error/…` name (see [`rpc`]).
 //!
-//! ```text
-//! Frontend                           Backend
-//!    │ ──── Query: TcRequest ──────► │
-//!    │ ◄──── Reply: TcResponse ───── │
-//!    │                              │
-//!    │ ──── Query: InterfaceControl ► │
-//!    │ ◄──── Reply: InterfaceResponse │
-//!    │                              │
-//!    │ ◄─── Pub: InterfaceList ──── │
-//!    │ ◄─── Pub: BandwidthUpdate ─── │
-//!    │ ◄─── Pub: BackendHealth ───── │
-//! ```
+//! # Key components
+//!
+//! * [`topics`] - key builders and parsers over the generated registry
+//! * [`identity`] - the host-origin mint and the `Local`/`Remote` origin split
+//! * [`NetworkInterface`] - one interface record (`state/tc/interface/{ns}/{if}`)
+//! * [`BandwidthUpdate`] - bandwidth samples (`telemetry/tc/bandwidth/{ns}/{if}`)
+//! * [`TcRequest`]/[`TcResponse`] - traffic control (`@rpc/tc/config/{ns}/{if}/set`)
+//! * [`InterfaceControlRequest`]/[`InterfaceControlResponse`] - interface enable/disable
+//! * [`BackendHealthStatus`] - the identity bridge: display name plus `host_id`
 //!
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -235,21 +236,8 @@ pub mod schema {
     }
 }
 
-/// Interface list update message (pub/sub)
-/// Topic: tcgui/{backend_name}/interfaces/list
-/// QoS: Reliable delivery, history depth=1
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct InterfaceListUpdate {
-    /// List of network namespaces with their interfaces
-    pub namespaces: Vec<NetworkNamespace>,
-    /// Unix timestamp when this list was generated
-    pub timestamp: u64,
-    /// Backend name that generated this list
-    pub backend_name: String,
-}
-
 /// Real-time bandwidth statistics (pub/sub)
-/// Topic: tcgui/{backend_name}/bandwidth/{namespace}/{interface}
+/// Subject: `telemetry/tc/bandwidth/{ns}/{iface}` — see `registry/tc.toml`.
 /// QoS: Best effort, no history (high frequency updates)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BandwidthUpdate {
@@ -263,25 +251,8 @@ pub struct BandwidthUpdate {
     pub backend_name: String,
 }
 
-/// Interface state change event (pub/sub)
-/// Topic: tcgui/{backend_name}/interfaces/events
-/// QoS: Reliable delivery, history depth=10
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct InterfaceStateEvent {
-    /// Network namespace name
-    pub namespace: String,
-    /// Interface details
-    pub interface: NetworkInterface,
-    /// Type of state change that occurred
-    pub event_type: InterfaceEventType,
-    /// Unix timestamp when event occurred
-    pub timestamp: u64,
-    /// Backend name that detected this event
-    pub backend_name: String,
-}
-
 /// Backend health and status information (pub/sub)
-/// Topic: tcgui/{backend_name}/health
+/// Subject: `state/tc/health` — see `registry/tc.toml`.
 /// QoS: Reliable delivery, history depth=1
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BackendHealthStatus {
@@ -306,7 +277,7 @@ pub struct BackendHealthStatus {
 }
 
 /// Traffic Control configuration status (pub/sub)
-/// Topic: tcgui/{backend_name}/tc/{namespace}/{interface}
+/// Subject: `state/tc/config/{ns}/{iface}` — see `registry/tc.toml`.
 /// QoS: Reliable delivery, history depth=1
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcConfigUpdate {
@@ -358,7 +329,7 @@ pub struct TcStatsRateEst {
 }
 
 /// TC Statistics update message (pub/sub)
-/// Topic: tcgui/{backend_name}/tc/stats/{namespace}/{interface}
+/// Subject: `telemetry/tc/qdisc/{ns}/{iface}` — see `registry/tc.toml`.
 /// QoS: Best effort, no history (high frequency updates)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcStatisticsUpdate {
@@ -379,7 +350,7 @@ pub struct TcStatisticsUpdate {
 }
 
 /// Traffic control configuration request (Query)
-/// Query Service: tcgui/{backend_name}/query/tc
+/// Procedure: `@rpc/tc/config/{ns}/{iface}/set` — see `registry/tc.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TcRequest {
     /// Target network namespace
@@ -1037,7 +1008,7 @@ pub struct TcResponse {
 }
 
 /// Interface control request (enable/disable) (Query)
-/// Query Service: tcgui/{backend_name}/query/interface
+/// Procedure: `@rpc/tc/interface/{ns}/{iface}/set` — see `registry/tc.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InterfaceControlRequest {
     /// Target network namespace
@@ -1071,7 +1042,7 @@ pub struct InterfaceControlResponse {
 // ============================================================================
 
 /// Network diagnostics request (Query)
-/// Query Service: tcgui/{backend_name}/query/diagnostics
+/// Procedure: `@rpc/tc/diagnostics` — see `registry/tc.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticsRequest {
     /// Target network namespace
@@ -1792,24 +1763,6 @@ pub struct NetworkBandwidthStats {
     pub rx_bytes_per_sec: f64,
     /// Current transmit rate in bytes per second (calculated from deltas)
     pub tx_bytes_per_sec: f64,
-}
-
-/// Type of network interface state change event.
-///
-/// Used to categorize different types of interface updates sent from
-/// the backend to frontend for real-time interface monitoring.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum InterfaceEventType {
-    /// New network interface was detected
-    Added,
-    /// Network interface was removed/deleted
-    Removed,
-    /// Interface state changed (UP/DOWN, IP address, etc.)
-    StateChanged,
-    /// Traffic control qdisc was added to interface
-    QdiscAdded,
-    /// Traffic control qdisc was removed from interface
-    QdiscRemoved,
 }
 
 #[cfg(test)]

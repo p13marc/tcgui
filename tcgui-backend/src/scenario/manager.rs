@@ -6,10 +6,11 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use zenoh::Session;
 
 use tcgui_shared::identity::LocalOrigin;
+use tcgui_shared::registry::tc;
 use tcgui_shared::scenario::{NetworkScenario, ScenarioLoadError};
 
 use super::{ScenarioExecutionEngine, ScenarioLoader, ScenarioStore};
@@ -29,6 +30,10 @@ pub struct ScenarioManager {
     cached_load_errors: Vec<ScenarioLoadError>,
     /// Backend name for identification
     backend_name: String,
+    /// Session used to publish the scenario library onto the state plane.
+    session: Arc<Session>,
+    /// This host's origin — every published key is built from it.
+    local_origin: LocalOrigin,
 }
 
 impl ScenarioManager {
@@ -92,7 +97,7 @@ impl ScenarioManager {
 
         let execution_engine = ScenarioExecutionEngine::new(
             session.clone(),
-            local_origin,
+            local_origin.clone(),
             backend_name.clone(),
             tc_manager,
         );
@@ -116,6 +121,8 @@ impl ScenarioManager {
             cached_templates,
             cached_load_errors,
             backend_name,
+            session,
+            local_origin,
         }
     }
 
@@ -173,12 +180,79 @@ impl ScenarioManager {
         scenario
             .validate()
             .map_err(|e| anyhow::anyhow!("invalid scenario: {e}"))?;
-        self.storage.put_scenario(&scenario).await
+
+        // The id becomes a key chunk. Requiring it to be chunk-clean means
+        // slugging is the identity, so the Put path (which keys on the raw id)
+        // and the Delete path (which reads the id back off the key) cannot
+        // disagree — see #66.
+        if zenkey::Chunk::parse(&scenario.id).is_err() {
+            return Err(anyhow::anyhow!(
+                "invalid scenario id {:?}: must be a plain key chunk ([a-z0-9] with . _ - inside)",
+                scenario.id
+            ));
+        }
+
+        self.storage.put_scenario(&scenario).await?;
+        self.publish_scenario(&scenario).await;
+        Ok(())
+    }
+
+    /// Publish one scenario onto `state/tc/scenario/{id}`.
+    ///
+    /// A plain `put` rather than a declared publisher: every method here takes
+    /// `&self` behind an `Arc`, so a publisher map would need a lock, and the
+    /// late-joiner cache it would buy is already covered by the
+    /// `ScenarioRequest::List` query the GUI issues on connect.
+    async fn publish_scenario(&self, scenario: &NetworkScenario) {
+        let key = tc::key(&self.local_origin, &tc::Subject::scenario(&scenario.id));
+        match serde_json::to_string(scenario) {
+            Ok(payload) => {
+                if let Err(e) = self
+                    .session
+                    .put(key.as_keyexpr(), payload)
+                    .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
+                    .await
+                {
+                    warn!("Failed to publish scenario {} state: {e}", scenario.id);
+                }
+            }
+            Err(e) => warn!("Failed to serialize scenario {}: {e}", scenario.id),
+        }
+    }
+
+    /// Publish every scenario the backend knows about — file templates included.
+    ///
+    /// Publishing only user-created scenarios would be worse than publishing
+    /// none: a GUI would then see a partial library on the state plane and a
+    /// full one from `ScenarioRequest::List`, and which it showed would depend
+    /// on which arrived last.
+    pub async fn publish_all_scenarios(&self) {
+        for scenario in &self.cached_templates {
+            self.publish_scenario(scenario).await;
+        }
+        match self.storage.list_scenarios().await {
+            Ok(scenarios) => {
+                for scenario in &scenarios {
+                    self.publish_scenario(scenario).await;
+                }
+            }
+            Err(e) => warn!("Failed to list scenarios for publishing: {e}"),
+        }
     }
 
     /// Delete a scenario
     pub async fn delete_scenario(&self, id: &str) -> Result<bool> {
-        self.storage.delete_scenario(id).await
+        let removed = self.storage.delete_scenario(id).await?;
+        if removed {
+            // A removal is a Delete tombstone, never a None-payload Put: the
+            // registry says "delete = removed", the GUI branches on is_delete,
+            // and RFC 04 §1.2 forbids the payload encoding.
+            let key = tc::key(&self.local_origin, &tc::Subject::scenario(id));
+            if let Err(e) = self.session.delete(key.as_keyexpr()).await {
+                warn!("Failed to publish scenario {id} tombstone: {e}");
+            }
+        }
+        Ok(removed)
     }
 
     /// Start executing a scenario on specified interface

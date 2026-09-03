@@ -43,6 +43,32 @@ All notable changes to this project will be documented in this file.
   propagated out of their handler into a caller that only logged, so the
   querier received **no reply at all** and timed out. The interface and
   diagnostics handlers also gained the payload size guard they never had.
+- **BREAKING (wire):** migrated to the keyspace-v2 `tcgui/v1/<origin>/<class>/tc/<subject…>`
+  grammar (this records the cutover in 125e46c, which never got an entry).
+  The Zenoh session namespace is `tcgui`, so app code never spells the base.
+  Keys are now built from a **host origin** (`h-<12 hex>`, derived from the
+  machine id) instead of the operator-chosen backend name, which becomes a
+  display label in the health document and is never a key discriminator.
+  Liveliness moved to its own `state/tc/alive` leaf, split from the health
+  document. Per-interface `state/tc/interface/{ns}/{if}` records with Delete
+  tombstones replace the `interfaces/list` + `interfaces/events` pair, and a
+  cleared TC config is a `SampleKind::Delete` rather than a `None` payload.
+  `@rpc/tc/introspect` serves the registry and `@rpc/tc/describe` the schema
+  set. **0.8.x and 0.9.0 peers do not interoperate.**
+- Three subjects the registry declared since 1.0 but nothing ever published are
+  now live: `state/tc/sensor` (producer registration — version and the raw
+  namespace list, which is the one place a non-chunk-clean namespace name
+  survives losslessly), `events/tc/applied/{ulid}` (an audit record for
+  operator-driven applies only — a scenario step is excluded, or a scenario
+  stepping every 500ms would blow the events class rate budget), and
+  `state/tc/scenario/{id}` (the scenario library, file templates included).
+- Removing an interface now retracts its `state/tc/config/{ns}/{if}` key with a
+  Delete. Previously the publisher was dropped without a tombstone, so the last
+  config written for a vanished NIC stood on the state plane forever and a
+  late-joining GUI showed shaping for an interface that no longer existed.
+- Removed the dead pre-cutover types `InterfaceListUpdate`,
+  `InterfaceStateEvent` and `InterfaceEventType`, and repointed the stale
+  `Topic: tcgui/{backend_name}/…` doc comments at `registry/tc.toml`.
 
 ## [0.8.0] - 2026-05-05
 
