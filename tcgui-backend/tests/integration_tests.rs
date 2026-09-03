@@ -611,7 +611,6 @@ mod zenoh_message_tests {
     #[test]
     fn test_tc_response_serialization() {
         let response = TcResponse {
-            success: true,
             message: "TC configuration applied successfully".to_string(),
             applied_config: Some(TcConfiguration {
                 loss: 5.0,
@@ -630,13 +629,13 @@ mod zenoh_message_tests {
                 command: "tc qdisc replace dev eth0 root netem loss 5% delay 100ms rate 1mbit"
                     .to_string(),
             }),
-            error_code: None,
         };
 
         let serialized = serde_json::to_string(&response).unwrap();
         let deserialized: TcResponse = serde_json::from_str(&serialized).unwrap();
 
-        assert!(deserialized.success);
+        // A value reply always means success now, so there is no flag to check —
+        // reaching a TcResponse at all IS the success signal (RFC 05 §3).
         assert!(deserialized.message.contains("successfully"));
         assert!(deserialized.applied_config.is_some());
         let config = deserialized.applied_config.unwrap();

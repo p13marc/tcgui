@@ -195,34 +195,28 @@ impl TcGui {
             TcGuiMessage::TcStatisticsUpdate(tc_stats_update) => {
                 handle_tc_statistics_update(&mut self.backend_manager, tc_stats_update)
             }
+            // A value reply now always means success (RFC keyspace-v2 05 §3),
+            // so reaching here is confirmation, not something to surface — a
+            // failure arrives as QueryError below instead. Successes are
+            // already reflected by the TC config update that follows.
             TcGuiMessage::TcOperationResult {
                 backend_name,
                 response,
             } => {
-                // Only surface failures — successes are already reflected by the
-                // Tc config update that follows.
-                if !response.success {
-                    tracing::warn!(
-                        "TC operation failed on '{}': {}",
-                        backend_name,
-                        response.message
-                    );
-                    self.notify(response.message);
-                }
+                tracing::debug!(
+                    "TC operation succeeded on '{backend_name}': {}",
+                    response.message
+                );
                 Task::none()
             }
             TcGuiMessage::InterfaceControlResult {
                 backend_name,
                 response,
             } => {
-                if !response.success {
-                    tracing::warn!(
-                        "Interface control failed on '{}': {}",
-                        backend_name,
-                        response.message
-                    );
-                    self.notify(response.message);
-                }
+                tracing::debug!(
+                    "Interface control succeeded on '{backend_name}': {}",
+                    response.message
+                );
                 Task::none()
             }
             TcGuiMessage::QueryError {

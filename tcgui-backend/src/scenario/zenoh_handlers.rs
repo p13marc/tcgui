@@ -139,22 +139,26 @@ impl ScenarioZenohHandlers {
             query.key_expr().as_str()
         );
 
-        // Parse the request
-        let request: ScenarioRequest = match query.payload() {
-            Some(payload) => serde_json::from_slice(payload.to_bytes().as_ref())?,
-            None => {
-                warn!("Received scenario query without payload");
-                let error_response = ScenarioResponse::Error {
-                    error: ScenarioError::validation("Missing request payload"),
-                };
-                return reply_scenario(
-                    &query,
-                    tc::scenario_set_key(local_origin).into(),
-                    &error_response,
-                )
-                .await;
-            }
-        };
+        // Parse the request. A malformed payload used to `?` out of here into a
+        // caller that only logs, so the GUI got no reply at all — the missing
+        // payload case was already handled, but a truncated or non-JSON one was
+        // not (RFC keyspace-v2 05 §3).
+        let request: ScenarioRequest =
+            match tcgui_shared::rpc::decode_request(query.payload(), "scenario") {
+                Ok(request) => request,
+                Err(fault) => {
+                    warn!("Rejecting malformed scenario request: {}", fault.message);
+                    let error_response = ScenarioResponse::Error {
+                        error: ScenarioError::validation(&fault.message),
+                    };
+                    return reply_scenario(
+                        &query,
+                        tc::scenario_set_key(local_origin).into(),
+                        &error_response,
+                    )
+                    .await;
+                }
+            };
 
         // Process the request
         let response = Self::process_scenario_request(scenario_manager, request).await;
@@ -366,23 +370,25 @@ impl ScenarioExecutionHandlers {
             query.key_expr().as_str()
         );
 
-        // Parse the request
-        let request: ScenarioExecutionRequest = match query.payload() {
-            Some(payload) => serde_json::from_slice(payload.to_bytes().as_ref())?,
-            None => {
-                warn!("Received execution query without payload");
-                let error_response = ScenarioExecutionResponse::Error {
-                    error: ScenarioError::validation("Missing request payload"),
-                };
-                // Error rides reply_err; the key is unused for the Error variant.
-                return reply_execution(
-                    &query,
-                    tc::execution_ns_iface_set_key(local_origin, "all", "all").into(),
-                    &error_response,
-                )
-                .await;
-            }
-        };
+        // Same as the scenario handler: every decode failure replies, rather
+        // than bailing into a caller that only logs.
+        let request: ScenarioExecutionRequest =
+            match tcgui_shared::rpc::decode_request(query.payload(), "execution") {
+                Ok(request) => request,
+                Err(fault) => {
+                    warn!("Rejecting malformed execution request: {}", fault.message);
+                    let error_response = ScenarioExecutionResponse::Error {
+                        error: ScenarioError::validation(&fault.message),
+                    };
+                    // Error rides reply_err; the key is unused for the Error variant.
+                    return reply_execution(
+                        &query,
+                        tc::execution_ns_iface_set_key(local_origin, "all", "all").into(),
+                        &error_response,
+                    )
+                    .await;
+                }
+            };
 
         // Concrete reply key derived from the request's target interface.
         let (ns, iface) = Self::request_target(&request);
