@@ -115,6 +115,8 @@ description = "immutable audit record of a TC apply"
 path = "config/{ns}/{iface}/set"
 kind = "write"
 fanout = "forbidden"
+# Same bounded interface population as the matching `state` subject (P5).
+cardinality = 1024
 reply = "TcResponse"
 idempotent = false
 since = "1.0"
@@ -124,6 +126,8 @@ description = "apply or clear TC/netem on one interface"
 path = "interface/{ns}/{iface}/set"
 kind = "write"
 fanout = "forbidden"
+# Same bounded interface population as the matching `state` subject (P5).
+cardinality = 1024
 reply = "InterfaceControlResponse"
 idempotent = false
 since = "1.0"
@@ -142,6 +146,8 @@ description = "scenario CRUD (add/remove/update/get/list)"
 path = "execution/{ns}/{iface}/set"
 kind = "write"
 fanout = "forbidden"
+# Same bounded interface population as the matching `state` subject (P5).
+cardinality = 1024
 reply = "ScenarioExecutionResponse"
 idempotent = false
 since = "1.0"

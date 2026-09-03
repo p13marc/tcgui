@@ -335,8 +335,13 @@ impl TcBackend {
         // verified streaming, one postcard encoding, typed serve/query
         // prefixes); v2 and v3 peers deliberately do not interoperate, and
         // chunk addresses are unchanged across the cut.
-        let blob_prefix = zenkey::V1Context::with_origin(self.local_origin.to_origin(), "tc")
-            .blob_prefix(zenkey::grammar::BlobTier::Artifact);
+        // `with_producer` takes an already-validated `Producer` — the generated
+        // `tc::producer()` — so the whole expression stays infallible. The
+        // fallible `with_origin(.., "tc")` would only re-validate a chunk the
+        // registry already proved legal at build time.
+        let blob_prefix =
+            zenkey::V1Context::with_producer(self.local_origin.to_origin(), tc::producer())
+                .blob_prefix(zenkey::grammar::BlobTier::Artifact);
         let blob_server = zblob::BlobServer::new(
             &self.session,
             zblob::ServePrefix::new(blob_prefix.as_str())
