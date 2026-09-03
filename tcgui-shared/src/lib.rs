@@ -133,7 +133,7 @@ pub mod topics {
         let zenkey::ClassOrPlane::Class(zenkey::Class::State) = parsed.class else {
             return None;
         };
-        if parsed.producer.as_ref()?.name() != "tc" {
+        if parsed.producer()?.name() != "tc" {
             return None;
         }
         if parsed.subject == ["alive"] {

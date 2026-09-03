@@ -86,7 +86,7 @@ This grants only network administration privileges, not full root access.
 ## Requirements
 
 - Linux with tc/netem support
-- Rust 1.70+
+- Rust 1.98+ (pinned by `rust-toolchain.toml`)
 - `just` command runner
 
 ## Documentation
