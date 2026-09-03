@@ -18,6 +18,18 @@ All notable changes to this project will be documented in this file.
 - Added `zblob` (crates.io): the backend serves the `@blob/artifact` plane
   (empty for now — the diagnostics/support-bundle download will publish
   through it).
+- Upgraded `zenkey` / `zenkey-build` 0.6 → 0.7. Machine-id-derived host
+  origins are **unchanged** (0.7's `HostId::digest` is byte-identical). But
+  0.7 rewrote the chunk slugger's boundary sentinel from `e` to `x`, so the
+  key for any interface or namespace name that *starts or ends with a
+  non-`[a-z0-9]` character* changes — `ETH0` was `e_x45__x54__x48_0` and is
+  now `x_x45__x54__x48_0`; `_myns` was `e_myns` and is now `x_x5f_myns`.
+  Clean names (`eth0`, `eth0.100`, `default`) are byte-identical, so a normal
+  deployment sees no wire change at all.
+- The `@rpc` procedures whose path carries `{ns}/{iface}` now declare
+  `cardinality = 1024`, matching the `state` subjects that address the same
+  interface population — `zenkey-build` 0.7 extends the key-population budget
+  lint (RFC 08 §2) from subjects to procedures.
 
 ## [0.8.0] - 2026-05-05
 
