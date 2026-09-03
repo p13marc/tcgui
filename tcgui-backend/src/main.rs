@@ -56,6 +56,8 @@ struct TcBackend {
     preset_list: PresetList,
     /// Per-preset state publishers keyed by preset id (`state/tc/preset/{id}`).
     preset_publishers: HashMap<String, AdvancedPublisher<'static>>,
+    /// The producer registration document (`state/tc/sensor`, cardinality 1).
+    sensor_publisher: AdvancedPublisher<'static>,
     exclude_loopback: bool,
     /// This host's minted origin — the identity every published key is built from.
     local_origin: LocalOrigin,
@@ -199,6 +201,27 @@ impl TcBackend {
             preset_publishers.insert(preset.id.clone(), publisher);
         }
 
+        // The producer registration document (RFC 08 §6.1). Declared in the
+        // registry since 1.0 but never published — so `zenctl topic info` and
+        // any generic bus tooling saw a producer with no registration. Same
+        // cache/heartbeat shape as the presets: cardinality 1, ttl 3600.
+        let sensor_topic = tc::key(&local_origin, &tc::Subject::Sensor);
+        let sensor_publisher = session
+            .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(sensor_topic.clone()))
+            .cache(CacheConfig::default().max_samples(1))
+            .sample_miss_detection(
+                MissDetectionConfig::default().heartbeat(Duration::from_millis(2000)),
+            )
+            .publisher_detection()
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to create sensor publisher: {e}"),
+            })?;
+        info!(
+            "[BACKEND] Sensor registration published on: {}",
+            sensor_topic.as_str()
+        );
+
         Ok(Self {
             session,
             interfaces: HashMap::new(),
@@ -212,6 +235,7 @@ impl TcBackend {
             _preset_loader: preset_loader,
             preset_list,
             preset_publishers,
+            sensor_publisher,
             exclude_loopback,
             local_origin,
             backend_name,
@@ -381,6 +405,9 @@ impl TcBackend {
                     "Scenario manager initialized for backend: {}",
                     scenario_manager.backend_name()
                 );
+                // Seed the scenario library onto the state plane so the GUI
+                // sees it without querying, and so `zenctl` can read it.
+                scenario_manager.publish_all_scenarios().await;
             }
 
             // Start scenario query handlers
@@ -419,6 +446,11 @@ impl TcBackend {
         self.network_manager
             .send_interface_list(&self.interfaces)
             .await?;
+
+        // Publish the registration document only now: its namespace list comes
+        // from the discovered interfaces, so publishing it at startup (next to
+        // "Backend started") would advertise an empty fleet.
+        self.publish_sensor_doc().await?;
 
         // One-time probe: can the kernel + NIC drivers offload rate limiting to
         // hardware (net_shaper, kernel 6.13+)? Detection only — read-only and a
@@ -711,7 +743,13 @@ impl TcBackend {
                                     .map(|i| (i.namespace.clone(), i.name.clone()))
                                     .collect();
 
-                                self.cleanup_stale_publishers(&updated_interfaces);
+                                self.cleanup_stale_publishers(&updated_interfaces).await;
+                    if let Err(e) = self.publish_sensor_doc().await {
+                        warn!("Failed to refresh sensor doc: {e}");
+                    }
+                                if let Err(e) = self.publish_sensor_doc().await {
+                                    warn!("Failed to refresh sensor doc: {e}");
+                                }
                                 self.interfaces = updated_interfaces;
 
                                 if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
@@ -749,7 +787,13 @@ impl TcBackend {
                                     .map(|i| (i.namespace.clone(), i.name.clone()))
                                     .collect();
 
-                                self.cleanup_stale_publishers(&updated_interfaces);
+                                self.cleanup_stale_publishers(&updated_interfaces).await;
+                    if let Err(e) = self.publish_sensor_doc().await {
+                        warn!("Failed to refresh sensor doc: {e}");
+                    }
+                                if let Err(e) = self.publish_sensor_doc().await {
+                                    warn!("Failed to refresh sensor doc: {e}");
+                                }
                                 self.interfaces = updated_interfaces;
 
                                 if let Err(e) = self.network_manager.send_interface_list(&self.interfaces).await {
@@ -896,7 +940,10 @@ impl TcBackend {
                         .map(|i| (i.namespace.clone(), i.name.clone()))
                         .collect();
 
-                    self.cleanup_stale_publishers(&updated_interfaces);
+                    self.cleanup_stale_publishers(&updated_interfaces).await;
+                    if let Err(e) = self.publish_sensor_doc().await {
+                        warn!("Failed to refresh sensor doc: {e}");
+                    }
                     self.interfaces = updated_interfaces;
 
                     if let Err(e) = self

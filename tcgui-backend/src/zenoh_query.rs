@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use tokio::time::Duration;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, MissDetectionConfig};
 
 use tcgui_shared::registry::tc;
@@ -341,6 +341,17 @@ impl TcBackend {
         // reply_err (RFC 05 §2.1 / §3).
         match result {
             Ok(response) => {
+                // Audit record for an operator-driven change only — a scenario
+                // step is excluded by `is_auditable` (rate budget).
+                if Self::is_auditable(&request.operation) {
+                    self.publish_applied_event(
+                        &request.namespace,
+                        &request.interface,
+                        Self::audited_config(&request.operation),
+                    )
+                    .await;
+                }
+
                 let payload = serde_json::to_string(&response)?;
                 self.reply_value(
                     &query,
@@ -517,6 +528,158 @@ impl TcBackend {
         Ok(())
     }
 
+    /// Whether an operation earns an immutable audit record on
+    /// `events/tc/applied/{ulid}`.
+    ///
+    /// Operator-driven applies do; a scenario **step** does not. This is the
+    /// RFC 04 §1.3 rate budget — the `events` class is `rate = "low"` (<=1/min),
+    /// and a scenario stepping every 500ms would blow it by two orders of
+    /// magnitude. A step's state belongs in the LWW execution doc, which is
+    /// where it already goes.
+    ///
+    /// The split is structural rather than a heuristic: `ApplyConfig` is
+    /// constructed in exactly one place in the workspace — the scenario
+    /// executor (`scenario/execution.rs`) — while the GUI only ever sends
+    /// `Apply` and `Remove`.
+    fn is_auditable(operation: &TcOperation) -> bool {
+        match operation {
+            TcOperation::Apply { .. } | TcOperation::Remove => true,
+            TcOperation::ApplyConfig { .. } => false,
+        }
+    }
+
+    /// The configuration to record in the audit event: what was applied, or
+    /// `None` when the operation cleared shaping.
+    ///
+    /// An `Apply` carrying no enabled feature IS a clear — the handler routes
+    /// it to `remove_tc_config_in_namespace` — so it records `None` too.
+    fn audited_config(operation: &TcOperation) -> Option<TcNetemConfig> {
+        match operation {
+            TcOperation::Apply {
+                loss,
+                correlation,
+                delay_ms,
+                delay_jitter_ms,
+                delay_correlation,
+                duplicate_percent,
+                duplicate_correlation,
+                reorder_percent,
+                reorder_correlation,
+                reorder_gap,
+                corrupt_percent,
+                corrupt_correlation,
+                rate_limit_kbps,
+            } => {
+                let config = TcNetemConfig::from_legacy_params(
+                    *loss,
+                    *correlation,
+                    *delay_ms,
+                    *delay_jitter_ms,
+                    *delay_correlation,
+                    *duplicate_percent,
+                    *duplicate_correlation,
+                    *reorder_percent,
+                    *reorder_correlation,
+                    *reorder_gap,
+                    *corrupt_percent,
+                    *corrupt_correlation,
+                    *rate_limit_kbps,
+                );
+                config.has_any_enabled().then_some(config)
+            }
+            TcOperation::Remove | TcOperation::ApplyConfig { .. } => None,
+        }
+    }
+
+    /// A lowercase Crockford-base32 ULID, safe to use as a key leaf.
+    ///
+    /// `Ulid::to_string()` is UPPERCASE, and `is_valid_plain_chunk` is
+    /// lowercase-only — so an unlowered ULID would be slugged into a
+    /// `x_x30__x31_…` string five times the length, unsortable, and still
+    /// *valid*, meaning nothing would fail and it would only be noticed in
+    /// production. Lowercasing is injective and order-preserving over the
+    /// Crockford alphabet, so the leaf stays sortable and byte-identical to the
+    /// `ulid` field in the payload.
+    fn applied_ulid() -> String {
+        ulid::Ulid::new().to_string().to_lowercase()
+    }
+
+    /// Emit the immutable audit record for an applied/removed TC config.
+    ///
+    /// A one-shot `put`, deliberately not a declared publisher: the key leaf is
+    /// unique per event, so a publisher map would leak one publisher per apply
+    /// for the lifetime of the process.
+    async fn publish_applied_event(
+        &self,
+        namespace: &str,
+        interface: &str,
+        configuration: Option<TcNetemConfig>,
+    ) {
+        let ulid = Self::applied_ulid();
+        let event = tcgui_shared::TcAppliedEvent {
+            ulid: ulid.clone(),
+            namespace: namespace.to_string(),
+            interface: interface.to_string(),
+            configuration,
+            // Milliseconds since the epoch, matching ScenarioExecutionUpdate.
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        };
+        let key = tc::key(&self.local_origin, &tc::Subject::applied(&ulid));
+        let payload = match serde_json::to_string(&event) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to serialize applied event: {e}");
+                return;
+            }
+        };
+        if let Err(e) = self
+            .session
+            .put(key.as_keyexpr(), payload)
+            .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
+            .await
+        {
+            // Audit is best-effort: never fail the actual TC operation because
+            // its record could not be published.
+            warn!("Failed to publish applied event on {key}: {e}");
+        }
+    }
+
+    /// Publish the producer registration document (`state/tc/sensor`).
+    ///
+    /// The namespace list is the instance-to-netns binding RFC 08 §6.1 asks
+    /// for, and it carries the **raw** names: this document is the one place a
+    /// non-chunk-clean namespace name survives losslessly, since the key
+    /// position slugs it.
+    pub(crate) async fn publish_sensor_doc(&self) -> Result<()> {
+        let mut namespaces: Vec<String> = self
+            .interfaces
+            .values()
+            .map(|i| i.namespace.clone())
+            .collect();
+        namespaces.push("default".to_string());
+        namespaces.sort();
+        namespaces.dedup();
+
+        let doc = tcgui_shared::SensorDoc {
+            // The producer chunk, not the literal "tc", so a future instance
+            // suffix (`tc-2`) shows up here.
+            name: tc::producer().chunk().to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            namespaces,
+        };
+        self.sensor_publisher
+            .put(serde_json::to_string(&doc)?)
+            .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to publish sensor doc: {e}"),
+            })?;
+        Ok(())
+    }
+
     #[instrument(skip(self), fields(backend_name = %self.backend_name, status))]
     pub(crate) async fn send_backend_status(&self, status: &str) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -609,8 +772,18 @@ impl TcBackend {
         Ok(self.tc_config_publishers.get(&key).unwrap())
     }
 
-    /// Remove publishers for interfaces that no longer exist
-    pub(crate) fn cleanup_stale_publishers(
+    /// Retract state and drop publishers for interfaces that no longer exist.
+    ///
+    /// The `state/tc/config/{ns}/{if}` key is LWW, so dropping the publisher
+    /// without a Delete leaves the last-written config for a vanished NIC
+    /// standing on the state plane forever — a late-joining GUI would show
+    /// shaping for an interface that is gone. `network.rs` already tombstones
+    /// the interface record itself; this does the same for its config.
+    ///
+    /// Telemetry publishers need no tombstone (superseded class, no LWW) but
+    /// are dropped here too, so they stop leaking one publisher per vanished
+    /// interface for the lifetime of the process.
+    pub(crate) async fn cleanup_stale_publishers(
         &mut self,
         current_interfaces: &HashMap<u32, NetworkInterface>,
     ) {
@@ -620,7 +793,6 @@ impl TcBackend {
             .map(|iface| format!("{}/{}", iface.namespace, iface.name))
             .collect();
 
-        // Find stale publishers
         let stale_keys: Vec<String> = self
             .tc_config_publishers
             .keys()
@@ -628,10 +800,136 @@ impl TcBackend {
             .cloned()
             .collect();
 
-        // Remove stale publishers
         for key in stale_keys {
-            info!("Removing stale TC config publisher for: {}", key);
-            self.tc_config_publishers.remove(&key);
+            info!("Interface {key} is gone — retracting its TC config state");
+            if let Some(publisher) = self.tc_config_publishers.remove(&key)
+                && let Err(e) = publisher.delete().await
+            {
+                warn!("Failed to publish TC config tombstone for {key}: {e}");
+            }
         }
+
+        let stale_stats: Vec<String> = self
+            .tc_stats_publishers
+            .keys()
+            .filter(|key| !valid_keys.contains(*key))
+            .cloned()
+            .collect();
+        for key in stale_stats {
+            debug!("Dropping stale TC statistics publisher for {key}");
+            self.tc_stats_publishers.remove(&key);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The events class is rate-budgeted (RFC 04 §1.3, `rate = "low"`, <=1/min).
+    /// A scenario stepping every 500ms must never emit an audit record, and a
+    /// new `TcOperation` variant must not start emitting one by accident — this
+    /// match is exhaustive, so adding a variant fails the build here.
+    #[test]
+    fn only_operator_driven_operations_are_audited() {
+        assert!(TcBackend::is_auditable(&TcOperation::Remove));
+        assert!(TcBackend::is_auditable(&TcOperation::Apply {
+            loss: 5.0,
+            correlation: None,
+            delay_ms: None,
+            delay_jitter_ms: None,
+            delay_correlation: None,
+            duplicate_percent: None,
+            duplicate_correlation: None,
+            reorder_percent: None,
+            reorder_correlation: None,
+            reorder_gap: None,
+            corrupt_percent: None,
+            corrupt_correlation: None,
+            rate_limit_kbps: None,
+        }));
+        // The scenario executor's operation — its only constructor is
+        // scenario/execution.rs. A 200-step scenario must produce zero events.
+        assert!(!TcBackend::is_auditable(&TcOperation::ApplyConfig {
+            config: TcNetemConfig::new(),
+        }));
+    }
+
+    /// `Ulid::to_string()` is UPPERCASE and `is_valid_plain_chunk` is
+    /// lowercase-only, so an unlowered ULID would be slugged into `x_x30_…`
+    /// soup — five times the length, unsortable, and still *valid*, so nothing
+    /// would fail and it would only be noticed in production.
+    #[test]
+    fn applied_ulid_is_a_legal_key_chunk_verbatim() {
+        for _ in 0..32 {
+            let id = TcBackend::applied_ulid();
+            assert_eq!(id, id.to_lowercase(), "ULID leaked uppercase: {id}");
+            assert!(
+                zenkey::Chunk::parse(&id).is_ok(),
+                "ULID is not a legal plain chunk: {id}"
+            );
+            // Slugging must be the identity, so the key leaf is byte-identical
+            // to the `ulid` field in the payload.
+            assert_eq!(
+                zenkey::Chunk::slug(&id).to_string(),
+                id,
+                "ULID would be escaped in the key: {id}"
+            );
+        }
+    }
+
+    /// Lowercasing must stay order-preserving, or audit keys stop sorting by
+    /// time — the one property a ULID exists for.
+    #[test]
+    fn applied_ulids_sort_in_generation_order() {
+        let mut previous = TcBackend::applied_ulid();
+        for _ in 0..16 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            let next = TcBackend::applied_ulid();
+            assert!(next > previous, "{next} did not sort after {previous}");
+            previous = next;
+        }
+    }
+
+    /// An `Apply` with nothing enabled IS a clear — the handler routes it to
+    /// `remove_tc_config_in_namespace` — so the audit record must say so.
+    #[test]
+    fn audited_config_reports_a_clear_as_none() {
+        assert!(TcBackend::audited_config(&TcOperation::Remove).is_none());
+        let empty = TcOperation::Apply {
+            loss: 0.0,
+            correlation: None,
+            delay_ms: None,
+            delay_jitter_ms: None,
+            delay_correlation: None,
+            duplicate_percent: None,
+            duplicate_correlation: None,
+            reorder_percent: None,
+            reorder_correlation: None,
+            reorder_gap: None,
+            corrupt_percent: None,
+            corrupt_correlation: None,
+            rate_limit_kbps: None,
+        };
+        assert!(TcBackend::audited_config(&empty).is_none());
+
+        let shaped = TcOperation::Apply {
+            loss: 5.0,
+            correlation: None,
+            delay_ms: Some(20.0),
+            delay_jitter_ms: None,
+            delay_correlation: None,
+            duplicate_percent: None,
+            duplicate_correlation: None,
+            reorder_percent: None,
+            reorder_correlation: None,
+            reorder_gap: None,
+            corrupt_percent: None,
+            corrupt_correlation: None,
+            rate_limit_kbps: None,
+        };
+        let config = TcBackend::audited_config(&shaped).expect("shaped apply records its config");
+        assert!(config.loss.enabled);
+        assert!(config.delay.enabled);
     }
 }
