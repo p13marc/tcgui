@@ -43,7 +43,7 @@ clap = { workspace = true }
 
 # Settings persistence
 dirs = "6.0"
-json5 = "0.4"
+json5 = "1.0"
 serde = { workspace = true }
 
 # Process management
