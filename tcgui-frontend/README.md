@@ -160,15 +160,23 @@ Frontend ──────► Backend
 
 ### Communication Patterns
 
-**Subscribed Topics** (Backend → Frontend):
-- `tcgui/{backend}/interfaces/list` - Interface discovery updates
-- `tcgui/{backend}/bandwidth/{namespace}/{interface}` - Real-time bandwidth statistics
-- `tcgui/{backend}/interfaces/events` - Interface state changes
-- `tcgui/{backend}/health` - Backend health monitoring
+The frontend subscribes with **fleet selectors** and calls with
+**origin-scoped, concrete** keys:
 
-**Query Services** (Frontend → Backend):
-- `tcgui/{backend}/query/tc` - Traffic control operations
-- `tcgui/{backend}/query/interface` - Interface enable/disable operations
+```
+tcgui/v1/*/state/**            all hosts' state plane
+tcgui/v1/*/telemetry/**        all hosts' telemetry
+tcgui/v1/*/state/*/alive       liveliness — the whole presence protocol
+tcgui/v1/{origin}/**           one host, for drill-down
+```
+
+Writes are never wildcarded: an origin comes from a backend's health document
+(`host_id`) via `RemoteOrigin::parse`, which rejects `*`, so a fleet-wide write
+has no spelling at all.
+
+The subject and procedure vocabulary is **not duplicated here** — it lives in
+`tcgui-shared/registry/tc.toml` and is served on `@rpc/tc/introspect`. Read it
+with `zenctl topic list --base tcgui`.
 
 ### Message Types
 

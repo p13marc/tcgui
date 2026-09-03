@@ -57,23 +57,41 @@ tcgui/
 
 ### Communication Pattern (Zenoh)
 
-**Pub/Sub (Backend → Frontend):**
-- `tcgui/{backend}/interfaces/list` - Interface discovery
-- `tcgui/{backend}/bandwidth/{namespace}/{interface}` - Real-time stats
-- `tcgui/{backend}/interfaces/events` - State changes
-- `tcgui/{backend}/health` - Backend health
+Every key follows the keyspace-v2 grammar:
 
-**Query/Reply (Frontend → Backend):**
-- `tcgui/{backend}/query/tc` - TC operations (TcRequest/TcResponse)
-- `tcgui/{backend}/query/interface` - Interface enable/disable
-- `tcgui/{backend}/query/scenario` - Scenario CRUD operations
-- `tcgui/{backend}/query/scenario/execution` - Start/stop/pause/resume scenarios
+```
+<base>/v1/<origin>/<class>/<producer>/<subject…>
+  tcgui   v1  h-<12hex>  state|telemetry|events|@rpc   tc   …
+```
 
-**Pub/Sub (Scenario Updates):**
-- `tcgui/{backend}/scenario/execution/{namespace}/{interface}` - Execution status updates
+`base = tcgui` is the Zenoh session **namespace**, so app code never spells it.
+`origin` is the host id minted from the machine id — **not** the backend name,
+which is a display label in the health document and never a key discriminator.
 
-**Pub/Sub (Preset Updates):**
-- `tcgui/{backend}/presets/list` - Available presets (built-in + custom)
+**Do not enumerate the keys here.** The vocabulary lives in exactly one place,
+`tcgui-shared/registry/tc.toml`, which `zenkey-build` compiles into typed
+builders and which the backend serves verbatim on `@rpc/tc/introspect`. Four
+files each keeping their own copy of this table is why they all drifted after
+the cutover. To see the live vocabulary:
+
+```bash
+zenctl topic list --base tcgui          # from the bus, via introspect
+cat tcgui-shared/registry/tc.toml       # the source of truth
+```
+
+Classes, and what they mean for a writer:
+
+- `state/` — last-writer-wins documents. **Removal is a `SampleKind::Delete`
+  tombstone, never a `None` payload.**
+- `telemetry/` — superseded samples; no history, best effort.
+- `events/` — immutable, rate-budgeted (`rate = "low"`, ≤1/min). An operator
+  action earns a record; a scenario step does not.
+- `@rpc/` — the verbatim procedure plane. **A value reply always means success;
+  a failure always rides the reply-error channel** with a namespaced `error/…`
+  name. Queryables here are never `complete`.
+
+Writes are origin-scoped and concrete, always: `RemoteOrigin::parse` rejects a
+wildcard, so a fleet-wide write has no spelling.
 
 ### Key Backend Components
 

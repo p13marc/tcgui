@@ -1,5 +1,21 @@
 # TC GUI Communication Architecture Refactor
 
+> **⚠️ Superseded — retained as the historical design record.**
+>
+> This document describes the `tcgui/{backend_name}/…` keyspace, which the
+> keyspace-v2 cutover (commit `125e46c`) replaced with
+> `tcgui/v1/<origin>/<class>/tc/<subject…>`. **Every topic and service name
+> below is retired.** The message *types* it describes are largely still
+> accurate; the keys are not.
+>
+> For the current keyspace see `CLAUDE.md` and, authoritatively,
+> `tcgui-shared/registry/tc.toml` — which the backend also serves on
+> `@rpc/tc/introspect`, so `zenctl topic list --base tcgui` reads it live.
+>
+> This file is kept because the reasoning behind the message-type split is
+> still the reasoning in force. It is not kept as a description of the wire.
+
+
 ## Current Architecture Issues
 
 The current system uses a single large enum (`FrontendMessage`, `BackendMessage`) for all communication, which has several limitations:

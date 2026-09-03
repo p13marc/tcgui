@@ -1,5 +1,13 @@
 # Should tcgui adopt the ZenSight keyspace-v2 convention?
 
+> **Status: the assessment that produced the migration, retained as the record.**
+>
+> This is the pre-work analysis (revision 2, against tcgui at `e95983d`), not a
+> description of the current system. The migration it recommended has landed —
+> see the CHANGELOG and the closed issues #39-#49. Code locations and defect
+> descriptions below refer to the pre-cutover tree and are deliberately left
+> as they were; the retired key literals it quotes are part of that record.
+
 **An assessment of** [`p13marc/zensight/docs/rfcs/keyspace-v2`](https://github.com/p13marc/zensight/tree/master/docs/rfcs/keyspace-v2)
 (13 chapters, status **v1.2 — RATIFIED**, last amended 2026-07-14)
 **against tcgui at `e95983d`.**
