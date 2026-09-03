@@ -735,7 +735,7 @@ fn render_backend_content<'a>(
     match ui_state.interface_view_mode() {
         InterfaceViewMode::Table => {
             // Render compact table view
-            table_view::render_interface_table(backend_manager, theme, zoom)
+            table_view::render_interface_table(backend_manager, ui_state, theme, zoom)
         }
         InterfaceViewMode::Cards => {
             // Render full card view with namespace sections
@@ -1215,7 +1215,7 @@ fn render_namespace_bandwidth_summary<'a>(
 
 /// Case-insensitive substring match for the interface-name search filter.
 /// An empty filter matches every interface.
-fn interface_matches_search(name: &str, search: &str) -> bool {
+pub(crate) fn interface_matches_search(name: &str, search: &str) -> bool {
     search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
 }
 

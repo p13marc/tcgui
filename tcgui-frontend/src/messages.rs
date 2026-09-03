@@ -123,9 +123,22 @@ pub enum TcGuiMessage {
     ToggleNamespaceVisibility(String, String), // (backend_name, namespace_name)
     ShowAllNamespaces,                         // Show all hidden namespaces
     ResetUiState,                              // Reset all UI visibility state
-    ShowAllBackends,                           // Show all hidden backends
-    SwitchTab(crate::ui_state::AppTab),        // Switch application tab
-    SetInterfaceSearch(String),                // Update the interface-name search filter
+    // Confirmation dialog for destructive actions. `RequestConfirm` is raised by
+    // `update` when it intercepts a destructive entry message; accepting replays
+    // the carried message verbatim.
+    RequestConfirm(Box<crate::confirm::ConfirmRequest>),
+    ConfirmAccepted,
+    ConfirmCancelled,
+    /// An action the user has already confirmed. Handled in one arm that
+    /// performs the gated messages directly, so replaying one cannot re-enter
+    /// its own confirmation gate.
+    ConfirmedAction(Box<TcGuiMessage>),
+    // Shortcut help overlay (F1 / Ctrl+/), and Escape.
+    ToggleShortcutHelp,
+    DismissTopOverlay,
+    ShowAllBackends,                    // Show all hidden backends
+    SwitchTab(crate::ui_state::AppTab), // Switch application tab
+    SetInterfaceSearch(String),         // Update the interface-name search filter
     // Zoom controls
     ZoomIn,
     ZoomOut,

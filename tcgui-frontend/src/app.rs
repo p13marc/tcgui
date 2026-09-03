@@ -13,13 +13,15 @@ use tracing::info;
 
 use crate::backend_manager::BackendManager;
 use crate::bandwidth_history::BandwidthHistoryManager;
+use crate::confirm::{ConfirmRequest, ConfirmState};
 use crate::message_handlers::*;
-use crate::messages::{TcGuiMessage, ZenohEvent};
+use crate::messages::{TcGuiMessage, TcInterfaceMessage, ZenohEvent};
 use crate::query_manager::QueryManager;
 use crate::scenario_manager::ScenarioManager;
 use crate::settings::FrontendSettings;
+use crate::shortcuts::{self};
 use crate::ui_state::UiStateManager;
-use crate::view::render_main_view;
+use crate::view::{ColorPalette, render_main_view};
 use crate::zenoh_manager::ZenohManager;
 
 /// Main application state for the TC GUI frontend with modular architecture.
@@ -68,6 +70,10 @@ pub struct TcGui {
     ui_state: UiStateManager,
     /// Zenoh session management
     zenoh_manager: ZenohManager,
+    /// Pending confirmation for a destructive action, if any
+    confirm: ConfirmState,
+    /// Whether the keyboard-shortcut help overlay is open
+    show_shortcut_help: bool,
 }
 
 impl TcGui {
@@ -87,6 +93,8 @@ impl TcGui {
             scenario_manager: ScenarioManager::new(),
             ui_state: UiStateManager::from_settings(&settings),
             zenoh_manager: ZenohManager::new(ZenohConfig::default()),
+            confirm: ConfirmState::default(),
+            show_shortcut_help: false,
         };
 
         (app, Task::none())
@@ -108,6 +116,8 @@ impl TcGui {
             scenario_manager: ScenarioManager::new(),
             ui_state: UiStateManager::from_settings(&settings),
             zenoh_manager: ZenohManager::new(zenoh_config),
+            confirm: ConfirmState::default(),
+            show_shortcut_help: false,
         };
 
         (app, Task::none())
@@ -252,19 +262,80 @@ impl TcGui {
                 handle_bandwidth_update(&mut self.backend_manager, bandwidth_update)
             }
 
-            // Interface messages
+            // Interface messages. Destructive ones are intercepted HERE, at the
+            // entry message — not at the effect they produce. `ClearAllFeatures`
+            // wipes the local checkbox state inside `TcInterface::update` before
+            // the `RemoveTc` task is issued, so gating `RemoveTc` would leave a
+            // cancelled dialog showing "cleared" while the kernel still has
+            // netem on the interface. Same for `InterfaceToggled(false)`.
             TcGuiMessage::TcInterfaceMessage(
                 backend_name,
                 namespace,
                 interface_name,
                 tc_message,
-            ) => handle_tc_interface_message(
-                &mut self.backend_manager,
-                backend_name,
-                namespace,
-                interface_name,
-                tc_message,
-            ),
+            ) => {
+                if let Some(request) =
+                    Self::confirmation_for(&backend_name, &namespace, &interface_name, &tc_message)
+                {
+                    self.confirm.request(request);
+                    return Task::none();
+                }
+                handle_tc_interface_message(
+                    &mut self.backend_manager,
+                    backend_name,
+                    namespace,
+                    interface_name,
+                    tc_message,
+                )
+            }
+
+            // Already confirmed. Every message that has a confirmation gate is
+            // performed directly here, so replaying it cannot re-enter its own
+            // gate and loop. Anything ungated falls through to normal handling.
+            TcGuiMessage::ConfirmedAction(inner) => match *inner {
+                TcGuiMessage::TcInterfaceMessage(
+                    backend_name,
+                    namespace,
+                    interface_name,
+                    tc_message,
+                ) => handle_tc_interface_message(
+                    &mut self.backend_manager,
+                    backend_name,
+                    namespace,
+                    interface_name,
+                    tc_message,
+                ),
+                TcGuiMessage::ResetUiState => handle_reset_ui_state(&mut self.ui_state),
+                other => self.update(other),
+            },
+
+            TcGuiMessage::RequestConfirm(request) => {
+                self.confirm.request(*request);
+                Task::none()
+            }
+            TcGuiMessage::ConfirmAccepted => self
+                .confirm
+                .take()
+                .map_or_else(Task::none, |m| Task::done(*m)),
+            TcGuiMessage::ConfirmCancelled => {
+                self.confirm.cancel();
+                Task::none()
+            }
+            TcGuiMessage::ToggleShortcutHelp => {
+                self.show_shortcut_help = !self.show_shortcut_help;
+                Task::none()
+            }
+            // Escape closes the topmost overlay, in render order.
+            TcGuiMessage::DismissTopOverlay => {
+                if self.show_shortcut_help {
+                    self.show_shortcut_help = false;
+                } else if self.confirm.is_open() {
+                    self.confirm.cancel();
+                } else {
+                    self.ui_state.hide_interface_selection_dialog();
+                }
+                Task::none()
+            }
 
             // Query channel setup
             TcGuiMessage::SetupTcQueryChannel(sender) => {
@@ -411,6 +482,21 @@ impl TcGui {
                     tracing::error!("Failed to request scenarios: {}", e);
                     self.scenario_manager.set_loading(&backend_name, false);
                 }
+                Task::none()
+            }
+            TcGuiMessage::StopScenarioExecution {
+                backend_name,
+                namespace,
+                interface,
+            } if !self.confirm.is_open() => {
+                self.confirm.request(ConfirmRequest::stop_scenario(
+                    &interface,
+                    TcGuiMessage::ConfirmedAction(Box::new(TcGuiMessage::StopScenarioExecution {
+                        backend_name,
+                        namespace,
+                        interface: interface.clone(),
+                    })),
+                ));
                 Task::none()
             }
             TcGuiMessage::StopScenarioExecution {
@@ -592,7 +678,12 @@ impl TcGui {
                 handle_toggle_namespace_visibility(&mut self.ui_state, backend_name, namespace_name)
             }
             TcGuiMessage::ShowAllNamespaces => handle_show_all_namespaces(&mut self.ui_state),
-            TcGuiMessage::ResetUiState => handle_reset_ui_state(&mut self.ui_state),
+            TcGuiMessage::ResetUiState => {
+                self.confirm.request(ConfirmRequest::reset_ui_state(
+                    TcGuiMessage::ConfirmedAction(Box::new(TcGuiMessage::ResetUiState)),
+                ));
+                Task::none()
+            }
             TcGuiMessage::ShowAllBackends => handle_show_all_backends(&mut self.ui_state),
             TcGuiMessage::SetInterfaceSearch(search) => {
                 self.ui_state.set_interface_search(search);
@@ -717,7 +808,7 @@ impl TcGui {
         );
 
         if self.notifications.is_empty() {
-            return main;
+            return self.with_overlays(main);
         }
 
         // Stack dismissable error banners above the main view.
@@ -749,7 +840,108 @@ impl TcGui {
             banners = banners.push(banner);
         }
 
-        Column::new().push(banners).push(main).into()
+        let stacked: Element<'_, TcGuiMessage> = Column::new().push(banners).push(main).into();
+        self.with_overlays(stacked)
+    }
+
+    /// Stack the modal overlays above the page, in Escape precedence order:
+    /// help sits above the confirmation, which sits above everything else.
+    fn with_overlays<'a>(&'a self, base: Element<'a, TcGuiMessage>) -> Element<'a, TcGuiMessage> {
+        use iced::widget::stack;
+
+        let colors = ColorPalette::from_theme(self.ui_state.theme());
+        let zoom = self.ui_state.zoom_level();
+        let mut layers = vec![base];
+
+        if let Some(pending) = self.confirm.pending() {
+            layers.push(crate::confirm::render_confirm(
+                pending,
+                colors.clone(),
+                zoom,
+            ));
+        }
+        if self.show_shortcut_help {
+            layers.push(Self::render_shortcut_help(colors, zoom));
+        }
+
+        if layers.len() == 1 {
+            layers.pop().expect("one layer")
+        } else {
+            stack(layers).into()
+        }
+    }
+
+    /// The shortcut help overlay, rendered from the same `SHORTCUTS` table the
+    /// dispatcher matches on, so the two cannot drift apart.
+    fn render_shortcut_help<'a>(colors: ColorPalette, zoom: f32) -> Element<'a, TcGuiMessage> {
+        use crate::view::{scaled, scaled_padding, scaled_spacing};
+        use iced::widget::{button, column, container, row, text};
+        use iced::{Color, Length};
+
+        let mut rows =
+            column![
+                text("Keyboard shortcuts")
+                    .size(scaled(18, zoom))
+                    .style(move |_| text::Style {
+                        color: Some(colors.text_primary),
+                    })
+            ]
+            .spacing(scaled_spacing(12, zoom));
+
+        for s in shortcuts::SHORTCUTS {
+            rows = rows.push(
+                row![
+                    text(s.combo)
+                        .size(scaled(13, zoom))
+                        .width(Length::Fixed(scaled(110, zoom)))
+                        .style(move |_| text::Style {
+                            color: Some(colors.primary_blue),
+                        }),
+                    text(s.description)
+                        .size(scaled(13, zoom))
+                        .width(Length::Fill)
+                        .style(move |_| text::Style {
+                            color: Some(colors.text_secondary),
+                        }),
+                ]
+                .spacing(scaled_spacing(12, zoom)),
+            );
+        }
+
+        rows = rows.push(
+            button(text("Close").size(scaled(13, zoom)))
+                .on_press(TcGuiMessage::ToggleShortcutHelp)
+                .style(move |_, _| button::Style {
+                    background: Some(iced::Background::Color(colors.background_card)),
+                    text_color: colors.text_primary,
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        width: 1.0,
+                        color: colors.text_secondary,
+                    },
+                    ..button::Style::default()
+                }),
+        );
+
+        let card = container(rows)
+            .padding(scaled_padding(24, zoom))
+            .max_width(520)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(colors.background_card)),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: colors.text_secondary,
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                    offset: iced::Vector::new(0.0, 8.0),
+                    blur_radius: 16.0,
+                },
+                ..container::Style::default()
+            });
+
+        crate::confirm::modal_backdrop(card.into(), zoom)
     }
 
     /// Sets up subscriptions for Zenoh events and periodic cleanup.
@@ -919,25 +1111,40 @@ impl TcGui {
         }
     }
 
-    /// Handles keyboard shortcuts for zoom and tab switching.
+    /// Resolves a key press against the shortcut table in `shortcuts.rs`, which
+    /// is the same table the help overlay renders — so a binding cannot exist
+    /// undocumented, and the documentation cannot drift from the binding.
     fn handle_keyboard_shortcut(key: Key, modifiers: Modifiers) -> Option<TcGuiMessage> {
-        if !modifiers.control() {
-            return None;
-        }
+        shortcuts::dispatch(&key, modifiers).map(shortcuts::action_message)
+    }
 
-        use crate::ui_state::AppTab;
-        match key {
-            Key::Character(c) => {
-                let c_str = c.as_str();
-                match c_str {
-                    "+" | "=" => Some(TcGuiMessage::ZoomIn),
-                    "-" | "_" | ")" => Some(TcGuiMessage::ZoomOut),
-                    "0" => Some(TcGuiMessage::ZoomReset),
-                    // Tab switching: Ctrl+1 = Interfaces, Ctrl+2 = Scenarios.
-                    "1" => Some(TcGuiMessage::SwitchTab(AppTab::Interfaces)),
-                    "2" => Some(TcGuiMessage::SwitchTab(AppTab::Scenarios)),
-                    _ => None,
-                }
+    /// The confirmation a destructive interface action needs, if it needs one.
+    ///
+    /// Returning `None` means the message proceeds untouched, which is the case
+    /// for every non-destructive interface message.
+    fn confirmation_for(
+        backend_name: &str,
+        namespace: &str,
+        interface_name: &str,
+        message: &TcInterfaceMessage,
+    ) -> Option<ConfirmRequest> {
+        let replay = || {
+            TcGuiMessage::ConfirmedAction(Box::new(TcGuiMessage::TcInterfaceMessage(
+                backend_name.to_string(),
+                namespace.to_string(),
+                interface_name.to_string(),
+                message.clone(),
+            )))
+        };
+        match message {
+            // The only emitter of RemoveTc in the frontend, so gating this one
+            // covers the whole clear path.
+            TcInterfaceMessage::ClearAllFeatures => {
+                Some(ConfirmRequest::clear_all_features(interface_name, replay()))
+            }
+            // Bringing an interface down can sever the operator's own access.
+            TcInterfaceMessage::InterfaceToggled(false) => {
+                Some(ConfirmRequest::disable_interface(interface_name, replay()))
             }
             _ => None,
         }
