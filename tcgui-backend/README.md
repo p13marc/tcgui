@@ -102,19 +102,21 @@ sudo ./target/release/tcgui-backend --verbose --exclude-loopback
 
 ## 📡 Communication Architecture
 
-### New Pub/Sub + Query/Reply Design
+### keyspace-v2
 
-The backend uses a modern communication architecture with separate patterns:
+Every key the backend publishes or serves follows the grammar
+`tcgui/v1/<origin>/<class>/tc/<subject…>`, where `origin` is this host's minted
+id (`h-<12 hex>`) and `tcgui` is the Zenoh session namespace.
 
-**Published Topics** (Backend → Frontend):
-- `tcgui/{backend}/interfaces/list` - Interface discovery updates
-- `tcgui/{backend}/bandwidth/{namespace}/{interface}` - Real-time bandwidth statistics
-- `tcgui/{backend}/interfaces/events` - Interface state changes  
-- `tcgui/{backend}/health` - Backend health status
+The subject and procedure vocabulary is **not duplicated here**: it lives in
+`tcgui-shared/registry/tc.toml`, is compiled into typed builders by
+`zenkey-build`, and is served verbatim on `@rpc/tc/introspect`. Read it with
+`zenctl topic list --base tcgui`, or from the file directly.
 
-**Query Services** (Frontend → Backend):
-- `tcgui/{backend}/query/tc` - Traffic control operations (query/reply)
-- `tcgui/{backend}/query/interface` - Interface control operations (query/reply)
+The backend publishes on the `state`, `telemetry` and `events` classes and
+serves the `@rpc` plane. State removals are `SampleKind::Delete` tombstones; on
+`@rpc`, a value reply always means success and a failure rides the reply-error
+channel with a namespaced `error/…` name.
 
 ### Message Types
 
