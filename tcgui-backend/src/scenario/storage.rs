@@ -1,15 +1,13 @@
 //! In-memory scenario store.
 //!
 //! Holds user-created scenarios for the life of the backend process. It
-//! deliberately does **not** persist across restarts: the previous
-//! implementation published to a `tcgui/storage/{backend}/scenarios/{id}` Zenoh
-//! key, but nothing in the deployment configures a Zenoh storage plugin, so
-//! every put went to the void and every get returned nothing — a silent
-//! data-loss path sitting off-grammar in the identity chunk position (RFC
-//! keyspace-v2 03 §1.2, the Sparkplug mistake). Durable, on-grammar persistence
-//! moves to `state/tc/scenario/{id}` in the keyspace-v2 cutover; until then an
-//! in-memory map is honest about its lifetime and keeps scenario CRUD working
-//! within a session instead of silently discarding writes.
+//! deliberately does **not** persist across restarts: the pre-cutover
+//! implementation wrote them to a Zenoh key that put a storage tier in the
+//! identity chunk position (RFC keyspace-v2 03 §1.2 — the Sparkplug mistake),
+//! and nothing in the deployment ever configured a storage plugin to back it,
+//! so every put went to the void and every get returned nothing. An in-memory
+//! map is honest about its lifetime and keeps scenario CRUD working within a
+//! session instead of silently discarding writes.
 
 use anyhow::Result;
 use std::collections::HashMap;
