@@ -21,12 +21,13 @@
 //! [`RemoteOrigin`]s learned from health documents and builds write keys from
 //! them — you cannot format a write key from a name you typed or a wildcard.
 
-use zenkey::AppProfile;
+use zenkey::{AppName, AppProfile, OriginSalt};
 
 /// tcgui's application profile (RFC 06 §1): the app name and the origin salt.
 /// The salt is the same domain-separation tag the pre-zenkey derivation used,
 /// so origins are stable across the migration. Changing it re-keys every fleet.
-pub static PROFILE: AppProfile = AppProfile::new("tcgui", "tcgui-host-id-v1");
+pub static PROFILE: AppProfile =
+    AppProfile::new(AppName::new("tcgui"), OriginSalt::new("tcgui-host-id-v1"));
 
 /// Stable per-host machine-id sources, in priority order.
 const MACHINE_ID_PATHS: [&str; 2] = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
@@ -85,7 +86,7 @@ fn read_or_create_fallback_id() -> Option<String> {
         .or_else(|| {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
         })?
-        .join(PROFILE.app());
+        .join(PROFILE.app().as_str());
     let path = dir.join("host-id");
 
     if let Ok(existing) = std::fs::read_to_string(&path) {
