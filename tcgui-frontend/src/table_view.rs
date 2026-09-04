@@ -308,6 +308,7 @@ mod tests {
             addresses: Vec::new(),
             qdisc_kind: None,
             link_speed_mbps: None,
+            ..Default::default()
         }
     }
 

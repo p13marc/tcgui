@@ -594,6 +594,7 @@ mod zenoh_communication_regression_tests {
                 addresses: Vec::new(),
                 qdisc_kind: None,
                 link_speed_mbps: None,
+                ..Default::default()
             });
         }
 
@@ -629,6 +630,7 @@ mod zenoh_communication_regression_tests {
             addresses: Vec::new(),
             qdisc_kind: None,
             link_speed_mbps: None,
+            ..Default::default()
         };
 
         // Should handle unicode correctly

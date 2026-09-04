@@ -1673,7 +1673,10 @@ pub struct NetworkNamespace {
 ///
 /// Represents a network interface within a specific namespace, including
 /// its current state and traffic control configuration status.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+/// `Default` exists so test fixtures can write `..Default::default()` — adding
+/// a field here should not mean editing seven construction sites across three
+/// crates. Production code sets every field explicitly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct NetworkInterface {
     /// Interface name (e.g., "eth0", "fo", "wlan0")
     pub name: String,
@@ -1705,10 +1708,46 @@ pub struct NetworkInterface {
     #[serde(default)]
     pub qdisc_kind: Option<String>,
     /// Physical link speed in Mbit/s reported by ethtool, when available
-    /// (`None` for virtual interfaces or namespaces we don't probe). Lets the
-    /// GUI show the link capacity and flag rate caps that exceed it.
+    /// (`None` for virtual interfaces that do not report one). Lets the GUI
+    /// show the link capacity and flag rate caps that exceed it.
     #[serde(default)]
     pub link_speed_mbps: Option<u32>,
+    /// Duplex mode reported by ethtool, when available. Comes from the same
+    /// `get_link_modes` call as `link_speed_mbps`, so it costs no extra round
+    /// trip — and half duplex on a link being shaped explains latency that the
+    /// netem numbers alone do not.
+    #[serde(default)]
+    pub duplex: Option<LinkDuplex>,
+    /// Wi-Fi signal strength in dBm, for associated wireless interfaces.
+    /// On wifi the *physical* link is usually the dominant impairment; without
+    /// this, users blame netem for the access point.
+    #[serde(default)]
+    pub wifi_signal_dbm: Option<i8>,
+    /// Wi-Fi transmit bitrate in units of 100 kbit/s (the kernel's own unit).
+    /// The wireless analogue of `link_speed_mbps`, which ethtool does not
+    /// report for wifi.
+    #[serde(default)]
+    pub wifi_tx_bitrate_100kbps: Option<u32>,
+}
+
+/// Duplex mode of a physical link.
+///
+/// Deliberately has no `Unknown` variant: nlink's `Duplex::Unknown` maps to
+/// `None` on [`NetworkInterface::duplex`], so "we could not tell" has exactly
+/// one spelling rather than two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum LinkDuplex {
+    Half,
+    Full,
+}
+
+impl std::fmt::Display for LinkDuplex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LinkDuplex::Half => write!(f, "half"),
+            LinkDuplex::Full => write!(f, "full"),
+        }
+    }
 }
 
 /// Classification of network interface types.
@@ -1716,11 +1755,12 @@ pub struct NetworkInterface {
 /// Used to categorize interfaces for display and operational purposes
 /// in the GUI. Different interface types may have different capabilities
 /// or restrictions for traffic control operations.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub enum InterfaceType {
     /// Physical hardware network interface (e.g., Ethernet, WiFi)
     Physical,
     /// Virtual interface created by software
+    #[default]
     Virtual,
     /// Virtual Ethernet pair interface (veth)
     Veth,
@@ -1860,6 +1900,46 @@ mod tests {
             key.as_str().ends_with("/config/x_x5f_myns/eth0"),
             "namespace was not slugged: {key}"
         );
+    }
+
+    /// The new interface fields are additive with `#[serde(default)]`, so a
+    /// 0.8 backend's payload still decodes against a 0.9 frontend. That is the
+    /// compatibility claim this crate makes; assert it rather than assume it.
+    #[test]
+    fn network_interface_decodes_without_the_enrichment_fields() {
+        let legacy = serde_json::json!({
+            "name": "eth0",
+            "index": 2,
+            "namespace": "default",
+            "is_up": true,
+            "is_oper_up": true,
+            "has_tc_qdisc": false,
+            "interface_type": "Physical",
+        });
+        let iface: NetworkInterface =
+            serde_json::from_value(legacy).expect("a pre-enrichment payload must still decode");
+        assert_eq!(iface.name, "eth0");
+        assert_eq!(iface.duplex, None);
+        assert_eq!(iface.wifi_signal_dbm, None);
+        assert_eq!(iface.wifi_tx_bitrate_100kbps, None);
+        assert_eq!(iface.link_speed_mbps, None);
+    }
+
+    /// `Eq` is load-bearing: `backend_manager` compares interface records to
+    /// decide whether anything changed. A float field would silently break
+    /// that, so the enrichment fields are integral by design.
+    #[test]
+    fn network_interface_stays_comparable() {
+        let a = NetworkInterface {
+            name: "eth0".to_string(),
+            duplex: Some(LinkDuplex::Full),
+            wifi_signal_dbm: Some(-42),
+            ..Default::default()
+        };
+        let mut b = a.clone();
+        assert_eq!(a, b);
+        b.duplex = Some(LinkDuplex::Half);
+        assert_ne!(a, b, "duplex change was not observable");
     }
 
     #[test]
