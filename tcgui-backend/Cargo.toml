@@ -50,7 +50,7 @@ thiserror = { workspace = true }
 clap = { workspace = true }
 
 # Filesystem utilities
-dirs = "6"
+dirs = "7"
 
 # Regex for pattern matching
 regex = { workspace = true }
