@@ -27,7 +27,7 @@ ulid = "3"
 
 # Backend-specific dependencies
 futures-util = "0.3"
-nlink = { version = "0.25", features = ["full"] }
+nlink = { version = "0.26", features = ["full"] }
 
 # Frontend-specific dependencies
 iced = { version = "0.14", features = ["tokio", "debug", "time-travel", "advanced", "sipper", "canvas", "svg"] }

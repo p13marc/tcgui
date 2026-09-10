@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- Upgraded `nlink` 0.25 → 0.26. No source change on the netlink paths: the
+  interface dump, the netem apply/replace/remove spine, the ethtool and
+  nl80211 enrichment probes, `StatsTracker`, the resync event streams and
+  `util::parse::get_rate` all keep their signatures and semantics. All six
+  root-gated live tests still pass against a real kernel.
+
+  Two things did move. **`schemars` 0.8 is gone from the tree** — nlink 0.26
+  moves to schemars 1.0, which is what this workspace already used, so the
+  duplicate collapses.
+
+  And `tcgui-backend` now sets `#![recursion_limit = "256"]`. nlink 0.26
+  `Box::pin`s `Connection::send_dump` to close the *layout*-depth recursion
+  class (nlink #315), which trades depth in one solver for depth in another:
+  proving `Send` for a future that awaits down the netlink request chain now
+  recurses past rustc's default limit of 128, and `tokio::spawn` needs
+  exactly that proof. The failure surfaces on an unrelated-looking
+  `tokio::spawn` in `scenario/zenoh_handlers.rs`. The limit belongs to the
+  calling crate — which is the point nlink's own changelog makes about who
+  can fix this class — and it is compile-time only, with no runtime cost.
 - **Adopted the `zenkey` convention crates (crates.io)**: the hand-rolled
   keyspace-v2 layer is now built on `zenkey` 0.2 + `zenkey-build`. The
   subject/procedure vocabulary lives in `tcgui-shared/registry/tc.toml`
