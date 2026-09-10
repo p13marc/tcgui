@@ -1853,37 +1853,84 @@ mod tests {
 
     /// Pin zenkey's escaping, because it is **wire format**.
     ///
-    /// zenkey 0.7 rewrote `chunk_slug` and changed the boundary sentinel from
-    /// `e` to `x`, silently re-keying every non-clean name — `ETH0` was
-    /// `e_x45__x54__x48_0` under 0.6. Nothing in this repo would have failed.
-    /// With this test, a future bump that moves the escaping fails `just ci`
-    /// instead of quietly re-keying a fleet.
+    /// The escaping has moved twice under us, and both times nothing in this
+    /// repo would have failed. 0.7 changed the boundary sentinel from `e` to
+    /// `x`, so `ETH0` went from `e_x45__x54__x48_0` to `x_x45__x54__x48_0`.
+    /// 0.8 (RFC 03 §2 v1.31) replaced the whole scheme, because the 0.7 one
+    /// was **not injective** — this crate found it (tcgui#39): the escaped
+    /// form of `_myns` was `x_x5f_myns`, which is itself a legal value, so a
+    /// namespace literally named `x_x5f_myns` shared a key with one named
+    /// `_myns`. The v1.31 rule reserves the prefix `x-` on both sides of the
+    /// boundary: a value passes through only if it is charset-legal *and*
+    /// does not start with `x-`; otherwise it is `x-` plus a body in which
+    /// every byte outside `[a-z0-9]` becomes `_xHH` with no closing
+    /// underscore.
     ///
-    /// The first four rows are the ones that matter operationally: every name a
-    /// normal deployment actually has is clean and passes through untouched.
+    /// The first four rows are the ones that matter operationally: every name
+    /// a normal deployment actually has is clean and passes through
+    /// untouched, so a normal deployment saw no wire change across any of it.
+    /// The last three rows are the collisions themselves — see
+    /// [`zenkey_slug_is_injective_and_reversible`].
     #[test]
     fn zenkey_slug_outputs_are_pinned() {
-        for (name, expected) in [
-            ("eth0", "eth0"),
-            ("eth0.100", "eth0.100"),
-            ("default", "default"),
-            ("myns", "myns"),
-            ("ETH0", "x_x45__x54__x48_0"),
-            ("_myns", "x_x5f_myns"),
-            ("eth0:0", "eth0_x3a_0"),
-            ("veth@if5", "veth_x40_if5"),
-            ("*", "x_x2a_x"),
-            ("**", "x_x2a__x2a_x"),
-            ("?", "x_x3f_x"),
-            ("#", "x_x23_x"),
-            ("$x", "x_x24_x"),
-            ("a b", "a_x20_b"),
-            ("café", "caf_xc3__xa9_x"),
-        ] {
+        for (name, expected) in SLUG_TABLE {
             assert_eq!(
                 zenkey::Chunk::slug(name).to_string(),
                 expected,
                 "zenkey's escaping moved for {name:?} — this is a wire change"
+            );
+        }
+    }
+
+    /// The pinned encoder outputs, shared by the two tests below.
+    const SLUG_TABLE: [(&str, &str); 18] = [
+        ("eth0", "eth0"),
+        ("eth0.100", "eth0.100"),
+        ("default", "default"),
+        ("myns", "myns"),
+        ("ETH0", "x-_x45_x54_x480"),
+        ("_myns", "x-_x5fmyns"),
+        ("eth0:0", "x-eth0_x3a0"),
+        ("veth@if5", "x-veth_x40if5"),
+        ("*", "x-_x2a"),
+        ("**", "x-_x2a_x2a"),
+        ("?", "x-_x3f"),
+        ("#", "x-_x23"),
+        ("$x", "x-_x24x"),
+        ("a b", "x-a_x20b"),
+        ("café", "x-caf_xc3_xa9"),
+        // The tcgui#39 collision pairs. `x_x5f_myns` is charset-legal and does
+        // not start with `x-`, so it passes through — and must therefore land
+        // somewhere `_myns` does not.
+        ("x_x5f_myns", "x_x5f_myns"),
+        ("x@b", "x-x_x40b"),
+        ("@b", "x-_x40b"),
+    ];
+
+    /// The property the pin table cannot express, and the one tcgui#39 was
+    /// actually about.
+    ///
+    /// A pinned encoder output only says "the bytes did not move". It says
+    /// nothing about whether two different names can reach the same bytes,
+    /// which is what was broken: under 0.7 the table above would have passed
+    /// with `_myns` and `x_x5f_myns` both slugging to `x_x5f_myns`. zenkey 0.8
+    /// ships `chunk_unslug` as the left inverse precisely so a consumer can
+    /// assert this rather than trust it.
+    #[test]
+    fn zenkey_slug_is_injective_and_reversible() {
+        use std::collections::HashSet;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        for (name, _) in SLUG_TABLE {
+            let chunk = zenkey::Chunk::slug(name).to_string();
+            assert_eq!(
+                zenkey::slug::chunk_unslug(&chunk).as_deref(),
+                Some(name),
+                "{name:?} did not survive the round trip through {chunk:?}"
+            );
+            assert!(
+                seen.insert(chunk.clone()),
+                "{name:?} collided with an earlier name on {chunk:?}"
             );
         }
     }
@@ -1897,7 +1944,7 @@ mod tests {
         let o = crate::identity::local_origin_from_seed("test");
         let key = tc::key(&o, &tc::Subject::config("_myns", "eth0"));
         assert!(
-            key.as_str().ends_with("/config/x_x5f_myns/eth0"),
+            key.as_str().ends_with("/config/x-_x5fmyns/eth0"),
             "namespace was not slugged: {key}"
         );
     }

@@ -26,6 +26,31 @@ All notable changes to this project will be documented in this file.
   now `x_x45__x54__x48_0`; `_myns` was `e_myns` and is now `x_x5f_myns`.
   Clean names (`eth0`, `eth0.100`, `default`) are byte-identical, so a normal
   deployment sees no wire change at all.
+- Upgraded `zenkey` / `zenkey-build` 0.7 → 0.8, which **re-keys escaped names
+  again** — and this time because of a bug this repo filed (tcgui#39). The 0.7
+  slugger was not injective: the escaped form of `_myns` was `x_x5f_myns`,
+  which is itself a legal value, so a namespace actually named `x_x5f_myns`
+  shared a key with one named `_myns`. Found here, slugging Linux device
+  names, where both spellings are legal.
+
+  zenkey 0.8 (RFC 03 §2 v1.31) reserves the prefix `x-` on both sides of the
+  boundary: a value passes through only if it is charset-legal *and* does not
+  start with `x-`; otherwise it is `x-` followed by a body in which every byte
+  outside `[a-z0-9]` becomes `_xHH`, with no closing underscore. So `ETH0` is
+  now `x-_x45_x54_x480` (`x_x45__x54__x48_0` under 0.7) and `_myns` is now
+  `x-_x5fmyns` (`x_x5f_myns` under 0.7), while `x_x5f_myns` passes through
+  untouched — the collision is gone.
+
+  As with 0.6 → 0.7: **clean names are byte-identical**, so `eth0`,
+  `eth0.100`, `default` and every lowercase ULID leaf keep their key, and a
+  normal deployment sees no wire change at all. Machine-id-derived host
+  origins are unchanged (12 hex digits is a clean value).
+
+  `zenkey_slug_outputs_are_pinned` is updated to the 0.8 table, and a new
+  `zenkey_slug_is_injective_and_reversible` asserts the property the pin table
+  could not express — that no two names reach the same chunk, and that
+  `chunk_unslug` (0.8's left inverse, shipped for exactly this) recovers each
+  one. A pinned output table would have passed happily through the 0.7 bug.
 - The `@rpc` procedures whose path carries `{ns}/{iface}` now declare
   `cardinality = 1024`, matching the `state` subjects that address the same
   interface population — `zenkey-build` 0.7 extends the key-population budget
