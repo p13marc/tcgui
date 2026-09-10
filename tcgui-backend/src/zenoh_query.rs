@@ -601,7 +601,7 @@ impl TcBackend {
     /// Crockford alphabet, so the leaf stays sortable and byte-identical to the
     /// `ulid` field in the payload.
     fn applied_ulid() -> String {
-        ulid::Ulid::new().to_string().to_lowercase()
+        ulid::Ulid::generate().to_string().to_lowercase()
     }
 
     /// Emit the immutable audit record for an applied/removed TC config.
