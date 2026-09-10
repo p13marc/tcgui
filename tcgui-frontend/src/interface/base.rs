@@ -326,7 +326,68 @@ impl TcInterface {
                 self.state.diagnostics_result = None;
                 Task::none()
             }
+
+            // Plug verbs are fire-and-observe: the authoritative answer arrives
+            // as a `state/tc/plug/{ns}/{iface}` document, so nothing here
+            // guesses at the resulting state. Only the status line moves.
+            TcInterfaceMessage::PlugRequested => {
+                self.state.add_status_message(
+                    format!("Plugging {} — traffic will stop", self.state.name),
+                    true,
+                );
+                Task::none()
+            }
+            TcInterfaceMessage::PlugReleaseOne => {
+                self.state.add_status_message(
+                    format!("Releasing the buffered packets on {}", self.state.name),
+                    true,
+                );
+                Task::none()
+            }
+            TcInterfaceMessage::PlugRelease => {
+                self.state
+                    .add_status_message(format!("Releasing the plug on {}", self.state.name), true);
+                Task::none()
+            }
+            TcInterfaceMessage::PlugRemove => {
+                self.state.add_status_message(
+                    format!("Removing the plug from {}", self.state.name),
+                    true,
+                );
+                Task::none()
+            }
+            TcInterfaceMessage::PlugLimitChanged(bytes) => {
+                self.state.plug_limit_bytes = Some(bytes);
+                Task::none()
+            }
         }
+    }
+
+    /// The buffer ceiling the user has chosen, if any.
+    pub fn plug_limit_bytes(&self) -> Option<u32> {
+        self.state.plug_limit_bytes
+    }
+
+    /// Whether a plug qdisc is currently installed on this interface.
+    ///
+    /// Installed is not the same as stalling — see [`Self::is_buffering`].
+    pub fn is_plugged(&self) -> bool {
+        self.state.plug.is_some()
+    }
+
+    /// Whether this interface is currently holding packets.
+    pub fn is_buffering(&self) -> bool {
+        self.state.plug.as_ref().is_some_and(|p| p.buffering)
+    }
+
+    /// Adopt a plug state document from the backend.
+    pub fn set_plug_state(&mut self, plug: Option<tcgui_shared::PlugState>) {
+        self.state.plug = plug;
+    }
+
+    /// The interface's plug state, for rendering.
+    pub fn plug_state(&self) -> Option<&tcgui_shared::PlugState> {
+        self.state.plug.as_ref()
     }
 
     /// Render the complete interface view
@@ -673,9 +734,59 @@ impl TcInterface {
             )
             .delay(tooltip_delay)
             .style(move |_| tooltip_style),
+            // PLUG is a button, never a checkbox. The netem toggles switch a
+            // parameter; this one stops the link the moment it lands, so it
+            // must not read like its neighbours — and when it is active the
+            // badge is coloured `error`, because a stalled interface must
+            // never be silent in the UI.
+            tooltip(
+                self.render_plug_badge(theme, zoom),
+                text(if self.is_buffering() {
+                    "Traffic is stalled — click to open the plug controls"
+                } else if self.is_plugged() {
+                    "Plug installed, traffic flowing"
+                } else {
+                    "Plug: hold all traffic until released"
+                }),
+                tooltip::Position::Top
+            )
+            .delay(tooltip_delay)
+            .style(move |_| tooltip_style),
         ]
         .spacing(scaled_spacing(4, zoom))
         .into()
+    }
+
+    /// The PLUG badge in the compact feature row.
+    fn render_plug_badge<'a>(
+        &'a self,
+        theme: &'a Theme,
+        zoom: f32,
+    ) -> Element<'a, TcInterfaceMessage> {
+        use iced::widget::button;
+
+        let (label, color) = if self.is_buffering() {
+            ("PLUG", theme.colors.error)
+        } else if self.is_plugged() {
+            ("PLUG", theme.colors.warning)
+        } else {
+            ("PLUG", theme.colors.text_muted)
+        };
+
+        // Already installed: the card carries the verbs, so the badge is inert.
+        // Not installed: this is the way in, and it is confirmation-gated.
+        let btn = button(
+            text(label)
+                .size(scaled(12, zoom))
+                .style(move |_| text::Style { color: Some(color) }),
+        )
+        .padding(scaled_spacing(2, zoom));
+
+        if self.is_plugged() {
+            btn.into()
+        } else {
+            btn.on_press(TcInterfaceMessage::PlugRequested).into()
+        }
     }
 
     /// Render bandwidth display with chart toggle
@@ -1075,6 +1186,11 @@ impl TcInterface {
         if self.state.features.rate_limit.enabled {
             cards.push(self.render_rate_limit_card(theme, zoom));
         }
+        // Always shown once a plug exists: an interface that is holding every
+        // packet must never be silent in the UI.
+        if self.state.plug.is_some() {
+            cards.push(self.render_plug_card(theme, zoom));
+        }
 
         if cards.is_empty() {
             return column![].into();
@@ -1199,6 +1315,109 @@ impl TcInterface {
             ));
 
         value_input::feature_card("Rate Limit", content, theme, zoom)
+    }
+
+    /// Render the plug (stall) card.
+    ///
+    /// Shown whenever a plug is installed, and reachable from the stall button
+    /// otherwise. Unlike the netem cards this one is a control surface, not a
+    /// parameter form: the plug is an epoch machine, so what matters is which
+    /// verb to send next and how much is currently held.
+    fn render_plug_card(&self, theme: &Theme, zoom: f32) -> Element<'_, TcInterfaceMessage> {
+        use iced::widget::{button, row, text};
+
+        let plug = self.state.plug.as_ref();
+        let buffering = plug.is_some_and(|p| p.buffering);
+
+        let status_color = if buffering {
+            theme.colors.error
+        } else {
+            theme.colors.text_muted
+        };
+        let status = match plug {
+            Some(p) if p.buffering => format!(
+                "BUFFERING — {} packets / {} bytes held",
+                p.buffered_packets, p.buffered_bytes
+            ),
+            Some(_) => "Installed, traffic flowing".to_string(),
+            None => "No plug installed".to_string(),
+        };
+
+        let mut content: Column<'_, TcInterfaceMessage> =
+            Column::new().spacing(scaled_spacing(2, zoom)).push(
+                text(status)
+                    .size(scaled(11, zoom))
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(status_color),
+                    }),
+            );
+
+        // The release verbs are never gated behind a confirmation — a dialog in
+        // front of the escape hatch is a bug, not a safety feature.
+        let mut verbs = row![].spacing(scaled_spacing(2, zoom));
+        if plug.is_some() {
+            verbs = verbs
+                .push(
+                    button(text("Release one").size(scaled(10, zoom)))
+                        .padding(scaled_spacing(3, zoom))
+                        .on_press(TcInterfaceMessage::PlugReleaseOne),
+                )
+                .push(
+                    button(text("Release").size(scaled(10, zoom)))
+                        .padding(scaled_spacing(3, zoom))
+                        .on_press(TcInterfaceMessage::PlugRelease),
+                )
+                .push(
+                    button(text("Remove plug").size(scaled(10, zoom)))
+                        .padding(scaled_spacing(3, zoom))
+                        .on_press(TcInterfaceMessage::PlugRemove),
+                );
+            if !buffering {
+                verbs = verbs.push(
+                    button(text("Stall again").size(scaled(10, zoom)))
+                        .padding(scaled_spacing(3, zoom))
+                        .on_press(TcInterfaceMessage::PlugRequested),
+                );
+            }
+        } else {
+            verbs = verbs.push(
+                button(text("Stall traffic").size(scaled(10, zoom)))
+                    .padding(scaled_spacing(3, zoom))
+                    .on_press(TcInterfaceMessage::PlugRequested),
+            );
+        }
+        content = content.push(verbs);
+
+        // Editing the ceiling on an installed plug pushes a SetLimit straight
+        // through; before one exists it only seeds the next Buffer.
+        content = content.push(value_input::plug_limit_input(
+            self.state.plug_limit_bytes.unwrap_or(1_500_000),
+            TcInterfaceMessage::PlugLimitChanged,
+            theme,
+            zoom,
+        ));
+
+        if let Some(p) = plug {
+            content = content.push(
+                text(format!(
+                    "limit {} bytes · at {}{}",
+                    p.limit_bytes,
+                    p.plug_parent,
+                    if p.netem_synthesized {
+                        " · netem added for the plug"
+                    } else {
+                        ""
+                    }
+                ))
+                .size(scaled(9, zoom))
+                .style({
+                    let muted = theme.colors.text_muted;
+                    move |_| iced::widget::text::Style { color: Some(muted) }
+                }),
+            );
+        }
+
+        value_input::feature_card("Plug", content, theme, zoom)
     }
 
     /// Render delay feature as a card

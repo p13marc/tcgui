@@ -41,6 +41,17 @@ pub struct InterfaceState {
     /// Wi-Fi transmit bitrate in units of 100 kbit/s.
     pub wifi_tx_bitrate_100kbps: Option<u32>,
 
+    /// The interface's plug (stall) state, from `state/tc/plug/{ns}/{iface}`.
+    ///
+    /// `None` means no plug is installed. `Some(state)` with
+    /// `buffering == false` means the plug is installed but released — a real,
+    /// distinct state, which is why it is not collapsed into a bool.
+    pub plug: Option<tcgui_shared::PlugState>,
+
+    /// The buffer ceiling the user has typed, in bytes. `None` asks the backend
+    /// for the kernel's own default (`txqueuelen × MTU`).
+    pub plug_limit_bytes: Option<u32>,
+
     /// User's desired interface enable state
     pub interface_enabled: bool,
 
@@ -96,6 +107,8 @@ impl InterfaceState {
             duplex: None,
             wifi_signal_dbm: None,
             wifi_tx_bitrate_100kbps: None,
+            plug: None,
+            plug_limit_bytes: None,
             interface_enabled: true,
             features: InterfaceFeatureStates::new(),
             bandwidth_stats: None,

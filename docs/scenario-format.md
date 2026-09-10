@@ -383,3 +383,25 @@ TC GUI includes several built-in scenarios in the `scenarios/` directory:
 | `fast-degradation` | Quick degradation for testing |
 
 These can be used as-is or as templates for custom scenarios.
+
+## The plug is not a step field
+
+Scenario steps carry the six netem features and nothing else. The plug qdisc is
+deliberately **not** among them.
+
+A step ends by moving on to the next one. A plug ends only when something
+releases it — so a step that installed one would routinely end with the
+interface still stalled, and a scenario that failed mid-run would leave it
+stalled indefinitely. The impairment features have no such asymmetry: the next
+step simply overwrites them.
+
+If a scenario ever needs a deliberate stall, the right shape is a distinct step
+*kind* with its own duration and an implicit release at step end, not a field on
+`tc_config`. That is a deliberate non-goal for now; drive the plug through
+`@rpc/tc/plug/{ns}/{iface}/set` or the GUI in the meantime.
+
+Note that a running scenario and a plug do interact in one place: a step that
+*removes* a netem parameter needs the qdisc recreated, which would take the
+plug's buffer with it. The backend refuses that apply with an error naming the
+plug rather than dropping the packets silently, so release the plug before
+running a scenario that narrows its impairments.

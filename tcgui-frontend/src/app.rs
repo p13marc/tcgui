@@ -195,6 +195,33 @@ impl TcGui {
             TcGuiMessage::TcStatisticsUpdate(tc_stats_update) => {
                 handle_tc_statistics_update(&mut self.backend_manager, tc_stats_update)
             }
+            // Plug state plane: Put carries the document, Delete is the
+            // tombstone that says the plug is gone.
+            TcGuiMessage::PlugStateUpdate(plug) => {
+                crate::message_handlers::handle_plug_state_update(&mut self.backend_manager, plug)
+            }
+            TcGuiMessage::PlugStateCleared {
+                backend_name,
+                namespace,
+                interface,
+            } => crate::message_handlers::handle_plug_state_cleared(
+                &mut self.backend_manager,
+                backend_name,
+                namespace,
+                interface,
+            ),
+            TcGuiMessage::PlugTc {
+                backend_name,
+                namespace,
+                interface,
+                operation,
+            } => crate::message_handlers::handle_plug_tc(
+                &self.query_manager,
+                backend_name,
+                namespace,
+                interface,
+                operation,
+            ),
             // A value reply now always means success (RFC keyspace-v2 05 §3),
             // so reaching here is confirmation, not something to surface — a
             // failure arrives as QueryError below instead. Successes are
@@ -334,6 +361,10 @@ impl TcGui {
             // Query channel setup
             TcGuiMessage::SetupTcQueryChannel(sender) => {
                 self.query_manager.setup_tc_query_channel(sender);
+                Task::none()
+            }
+            TcGuiMessage::SetupPlugQueryChannel(sender) => {
+                self.query_manager.setup_plug_query_channel(sender);
                 Task::none()
             }
             TcGuiMessage::SetupInterfaceQueryChannel(sender) => {
@@ -977,6 +1008,16 @@ impl TcGui {
                 ZenohEvent::TcConfigUpdate(tc_config_update) => {
                     TcGuiMessage::TcConfigUpdate(tc_config_update)
                 }
+                ZenohEvent::PlugStateUpdate(plug) => TcGuiMessage::PlugStateUpdate(plug),
+                ZenohEvent::PlugStateCleared {
+                    backend_name,
+                    namespace,
+                    interface,
+                } => TcGuiMessage::PlugStateCleared {
+                    backend_name,
+                    namespace,
+                    interface,
+                },
                 ZenohEvent::TcStatisticsUpdate(tc_stats_update) => {
                     TcGuiMessage::TcStatisticsUpdate(tc_stats_update)
                 }
@@ -1008,6 +1049,9 @@ impl TcGui {
                 },
                 ZenohEvent::TcQueryChannelReady(sender) => {
                     TcGuiMessage::SetupTcQueryChannel(sender)
+                }
+                ZenohEvent::PlugQueryChannelReady(sender) => {
+                    TcGuiMessage::SetupPlugQueryChannel(sender)
                 }
                 ZenohEvent::InterfaceQueryChannelReady(sender) => {
                     TcGuiMessage::SetupInterfaceQueryChannel(sender)
@@ -1139,6 +1183,11 @@ impl TcGui {
             // Bringing an interface down can sever the operator's own access.
             TcInterfaceMessage::InterfaceToggled(false) => {
                 Some(ConfirmRequest::disable_interface(interface_name, replay()))
+            }
+            // Installing a plug stalls the link the moment it lands. Only this
+            // verb is gated — never the releases.
+            TcInterfaceMessage::PlugRequested => {
+                Some(ConfirmRequest::plug_interface(interface_name, replay()))
             }
             _ => None,
         }

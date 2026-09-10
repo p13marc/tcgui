@@ -510,6 +510,44 @@ pub fn gap_input<'a>(
 }
 
 /// Rate limit in kbps: NumberInput only (wide range, needs precision)
+/// Buffer-ceiling input for the plug card, in bytes.
+///
+/// Bytes rather than a friendlier unit because that is exactly what
+/// `TCQ_PLUG_LIMIT` takes, and a plug that drops past its ceiling is the only
+/// thing standing between a stalled link and unbounded kernel memory — so the
+/// number the operator types is the number the kernel gets.
+pub fn plug_limit_input<'a>(
+    value: u32,
+    on_change: impl Fn(u32) -> TcInterfaceMessage + Clone + 'static,
+    theme: &Theme,
+    zoom: f32,
+) -> Element<'a, TcInterfaceMessage> {
+    let text_color = theme.colors.text_secondary;
+
+    row![
+        text("Limit:")
+            .size(scaled(TEXT_SIZE, zoom))
+            .width(scaled(42, zoom))
+            .style(move |_| iced::widget::text::Style {
+                color: Some(text_color)
+            }),
+        NumberInput::new(&value, 1024..=268_435_456, on_change)
+            .step(1024)
+            .set_size(scaled(TEXT_SIZE, zoom))
+            .padding(scaled_spacing(2, zoom))
+            .ignore_buttons(true)
+            .width(scaled(80, zoom)),
+        text("bytes")
+            .size(scaled(TEXT_SIZE, zoom))
+            .style(move |_| iced::widget::text::Style {
+                color: Some(text_color)
+            }),
+    ]
+    .spacing(scaled_spacing(2, zoom))
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
 pub fn rate_input<'a>(
     value: u32,
     on_change: impl Fn(u32) -> TcInterfaceMessage + Clone + 'static,

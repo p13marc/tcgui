@@ -74,6 +74,23 @@ impl ConfirmRequest {
         )
     }
 
+    /// Installing a plug — the one plug verb that stops traffic.
+    ///
+    /// The release verbs are deliberately **not** gated: a confirmation dialog
+    /// in front of the escape hatch is a bug, not a safety feature.
+    pub fn plug_interface(interface: &str, action: TcGuiMessage) -> Self {
+        Self::new(
+            "Stall traffic on this interface?",
+            format!(
+                "{interface} will stop forwarding immediately and hold packets \
+                 until you release it. If you are connected through it, you \
+                 will lose access to this host until then."
+            ),
+            "Stall traffic",
+            action,
+        )
+    }
+
     /// Stopping a running scenario mid-flight.
     pub fn stop_scenario(interface: &str, action: TcGuiMessage) -> Self {
         Self::new(
