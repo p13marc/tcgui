@@ -115,6 +115,7 @@ fn every_generated_key(o: &tcgui_shared::identity::LocalOrigin) -> Vec<String> {
         tc::key(o, &tc::Subject::preset("demo")).to_string(),
         tc::key(o, &tc::Subject::bandwidth("default", "eth0")).to_string(),
         tc::key(o, &tc::Subject::qdisc("default", "eth0")).to_string(),
+        tc::key(o, &tc::Subject::plug("default", "eth0")).to_string(),
         tc::key(o, &tc::Subject::applied("01jabcdefghijkmnpqrstvwxyz")).to_string(),
         tcgui_shared::topics::state_alive(o).to_string(),
     ];
@@ -137,16 +138,16 @@ fn every_family_is_covered() {
     let o = mint_local_origin();
     assert_eq!(
         tc::Family::ALL.len(),
-        10,
+        11,
         "a subject family was added or removed — extend every_generated_key()"
     );
     assert_eq!(
         tc::ProcedureId::ALL.len(),
-        7,
+        8,
         "a procedure was added or removed — extend every_generated_key()"
     );
-    // 10 families + 1 alive leaf + 7 procedures + 1 blob prefix
-    assert_eq!(every_generated_key(&o).len(), 19);
+    // 11 families + 1 alive leaf + 8 procedures + 1 blob prefix
+    assert_eq!(every_generated_key(&o).len(), 21);
 }
 
 /// (2) A consumer-shaped, concrete-key probe that genuinely uses the identity

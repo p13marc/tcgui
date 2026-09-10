@@ -208,6 +208,8 @@ pub mod schema {
             .json::<crate::BandwidthUpdate>("BandwidthUpdate")
             .json::<crate::TcStatisticsUpdate>("TcStatisticsUpdate")
             .json::<crate::TcAppliedEvent>("TcAppliedEvent")
+            .json::<crate::PlugState>("PlugState")
+            .json::<crate::PlugResponse>("PlugResponse")
             .json::<crate::TcResponse>("TcResponse")
             .json::<crate::InterfaceControlResponse>("InterfaceControlResponse")
             .json::<crate::scenario::ScenarioResponse>("ScenarioResponse")
@@ -347,6 +349,102 @@ pub struct TcStatisticsUpdate {
     pub stats_queue: Option<TcStatsQueue>,
     /// Rate estimator (bps/pps from kernel)
     pub stats_rate_est: Option<TcStatsRateEst>,
+}
+
+/// Plug (stall) request (Query)
+/// Procedure: `@rpc/tc/plug/{ns}/{iface}/set` — see `registry/tc.toml`.
+///
+/// Deliberately **not** a field on [`TcNetemConfig`]. Every netem parameter is
+/// declarative and idempotent — "the applied config equals the desired config"
+/// is what drives pending-change detection, preset matching and the
+/// capture/restore comparison — whereas a plug is an epoch machine whose verbs
+/// (`Buffer`, `ReleaseOne`) mean nothing when replayed. Folding it in would
+/// also put a traffic stall inside preset and scenario-step payloads, where
+/// selecting a preset would stall an interface and a step could end without
+/// ever releasing it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TcPlugRequest {
+    /// Target network namespace
+    pub namespace: String,
+    /// Target interface name
+    pub interface: String,
+    /// Plug operation to perform
+    pub operation: TcPlugOperation,
+}
+
+/// What to do to an interface's plug qdisc.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum TcPlugOperation {
+    /// Install the plug (if absent) and start a new buffering epoch.
+    ///
+    /// Installing a plug qdisc **starts buffering immediately** — this is the
+    /// operation that stalls the interface.
+    Buffer {
+        /// Buffer ceiling in bytes. `None` asks the backend to compute the
+        /// kernel's own default, `txqueuelen × MTU`. Past the ceiling the plug
+        /// drops rather than growing without bound.
+        limit_bytes: Option<u32>,
+    },
+    /// Release what is buffered now, then keep buffering new arrivals.
+    ReleaseOne,
+    /// Stop buffering and let everything through, leaving the qdisc installed.
+    ///
+    /// The way out of a plug.
+    Release,
+    /// Change the buffer ceiling without touching the epoch.
+    SetLimit {
+        /// New ceiling in bytes.
+        limit_bytes: u32,
+    },
+    /// Release, drain, and remove the plug qdisc entirely.
+    Remove,
+}
+
+/// Reply to a [`TcPlugRequest`].
+///
+/// A value reply always means success; a failure rides the reply-error channel
+/// with a namespaced `error/...` name (RFC keyspace-v2 05 §3).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlugResponse {
+    /// Human-readable outcome.
+    pub message: String,
+    /// The resulting state, or `None` once the plug has been removed.
+    pub state: Option<PlugState>,
+}
+
+/// Plug state for one interface.
+/// Subject: `state/tc/plug/{ns}/{iface}` — see `registry/tc.toml`.
+/// Removal is a `SampleKind::Delete` tombstone, never a `None` payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlugState {
+    /// Network namespace name
+    pub namespace: String,
+    /// Interface name
+    pub interface: String,
+    /// Backend that manages this interface
+    pub backend_name: String,
+    /// Whether the plug is currently holding packets.
+    ///
+    /// Not redundant with the document existing: "installed but released
+    /// indefinitely" is a real, distinct state. It is backend-owned truth —
+    /// `sch_plug` has no kernel dump op, so the epoch cannot be read back.
+    pub buffering: bool,
+    /// Effective buffer ceiling in bytes. Always concrete — the kernel cannot
+    /// be asked for its own default through nlink, so the backend computes
+    /// `txqueuelen × MTU` when the caller supplies none.
+    pub limit_bytes: u32,
+    /// Milliseconds since the epoch when the current epoch began.
+    pub since_ms: u64,
+    /// Bytes currently held, from the child qdisc's backlog.
+    pub buffered_bytes: u32,
+    /// Packets currently held, from the child qdisc's qlen.
+    pub buffered_packets: u32,
+    /// Whether the backend created the parent netem qdisc solely to host this
+    /// plug. If so, removing the plug also removes that netem.
+    pub netem_synthesized: bool,
+    /// The parent handle the plug is grafted at, e.g. `"1:1"` — recorded
+    /// because netem's major is kernel-assigned unless pinned.
+    pub plug_parent: String,
 }
 
 /// Traffic control configuration request (Query)

@@ -9,6 +9,7 @@ procedure	tc	diagnostics	read	-	DiagnosticsResponse
 procedure	tc	execution/{ns}/{iface}/set	write	-	ScenarioExecutionResponse
 procedure	tc	interface/{ns}/{iface}/set	write	-	InterfaceControlResponse
 procedure	tc	introspect	read	-	toml
+procedure	tc	plug/{ns}/{iface}/set	write	-	PlugResponse
 procedure	tc	scenario/set	write	-	ScenarioResponse
 subject	tc	applied/{ulid}	events	TcAppliedEvent
 subject	tc	bandwidth/{ns}/{iface}	telemetry	BandwidthUpdate
@@ -16,6 +17,7 @@ subject	tc	config/{ns}/{iface}	state	TcConfigUpdate
 subject	tc	execution/{ns}/{iface}	state	ScenarioExecutionUpdate
 subject	tc	health	state	BackendHealthStatus
 subject	tc	interface/{ns}/{iface}	state	NetworkInterface
+subject	tc	plug/{ns}/{iface}	state	PlugState
 subject	tc	preset/{id}	state	CustomPreset
 subject	tc	qdisc/{ns}/{iface}	telemetry	TcStatisticsUpdate
 subject	tc	scenario/{id}	state	NetworkScenario

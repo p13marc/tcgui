@@ -341,10 +341,33 @@ impl TcCommandManager {
             .ok()
             .flatten();
 
+        // A plug grafted under this netem does not survive a delete+add: the
+        // child goes with the parent, taking its buffer. Rather than stall
+        // silently or drop packets behind the operator's back, refuse the
+        // recreation and name the plug. The `replace` branch is safe — same
+        // kind, no NLM_F_EXCL, so the kernel takes the `qdisc_change` path and
+        // the grafted child survives (asserted in live_tc.rs).
+        let plugged = Self::qdisc_layout(&conn, interface)
+            .await
+            .ok()
+            .and_then(|(_, _, p)| p)
+            .is_some();
+
         match existing_netem {
             Some(current_opts) => {
                 // Use nlink's requires_recreation_for() to determine if we need delete+add
                 if current_opts.requires_recreation_for(&netem_config) {
+                    if plugged {
+                        return Err(TcguiError::TcCommandError {
+                            message: format!(
+                                "{}/{} is plugged; release the plug before removing netem \
+                                 parameters (this change needs the qdisc recreated, which \
+                                 would drop the buffered packets)",
+                                namespace, interface
+                            ),
+                        }
+                        .into());
+                    }
                     info!(
                         "Recreating netem qdisc on {}/{} (removing parameters)",
                         namespace, interface
@@ -491,6 +514,34 @@ impl TcCommandManager {
         // folds the ENOENT/ENODEV "nothing there" cases (and the undeletable
         // default-qdisc EINVAL) into a clean bool, so we no longer resolve the
         // ifindex or match on error predicates by hand.
+        // A plug grafted under the root netem holds packets. Deleting the root
+        // tears the child down with it and `qdisc_reset_queue` frees whatever
+        // it was holding — a silent packet loss with nothing in the logs. So
+        // release and let the backlog drain first; the removal below then
+        // takes down an empty plug.
+        if let Ok(Some((parent, backlog, _))) = Self::qdisc_layout(&conn, interface)
+            .await
+            .map(|(_, _, p)| p)
+            && backlog > 0
+        {
+            warn!(
+                "Releasing a plug holding {} bytes on {}/{} before removing TC config",
+                backlog, namespace, interface
+            );
+            if let Ok(ifindex) = Self::resolve_ifindex(&conn, interface).await {
+                let dev = nlink::netlink::InterfaceRef::index(ifindex);
+                let _ = conn.plug_release_indefinite(dev, parent).await;
+                for _ in 0..25 {
+                    match Self::qdisc_layout(&conn, interface).await {
+                        Ok((_, _, Some((_, b, _)))) if b > 0 => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+        }
+
         match conn.del_qdisc_if_exists(interface, TcHandle::ROOT).await {
             Ok(true) => Ok("TC config removed successfully".to_string()),
             Ok(false) => Ok("No TC config to remove".to_string()),
@@ -680,5 +731,339 @@ impl CapturedTcState {
     /// Check if there was any TC configuration
     pub fn had_tc_config(&self) -> bool {
         !self.qdisc_info.is_empty() && self.had_netem
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plug qdisc (stall / release)
+// ---------------------------------------------------------------------------
+
+/// Where a plug qdisc sits and what the backend knows about it.
+///
+/// `sch_plug` has **no kernel dump op** — `QdiscOptions` has no `Plug` variant
+/// because there is nothing to parse. So presence, backlog and qlen are
+/// readable from the kernel, but the epoch (buffering vs released) is not.
+/// That half is backend-owned truth, which is why it is carried here and
+/// published rather than re-derived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlugSnapshot {
+    /// The handle the plug is grafted under, i.e. netem's `<major>:1`.
+    pub parent: TcHandle,
+    /// Whether the backend believes packets are being held.
+    pub buffering: bool,
+    /// Buffer ceiling in bytes. Always concrete: the kernel cannot be asked
+    /// for its own default through nlink (see `plug_begin`), so when the caller
+    /// supplies none the backend computes `txqueuelen × MTU` itself.
+    pub limit_bytes: u32,
+    /// Whether the parent netem exists only to host this plug, and should be
+    /// removed with it.
+    pub netem_synthesized: bool,
+    /// Bytes currently held.
+    pub buffered_bytes: u32,
+    /// Packets currently held.
+    pub buffered_packets: u32,
+}
+
+impl TcCommandManager {
+    /// The handle a plug is grafted at, given the root netem's handle.
+    ///
+    /// netem is classful with exactly one leaf, so the plug lives at
+    /// `<netem major>:1`. **The major is not always 1**: `add_qdisc_by_index`
+    /// passes `handle = None`, so unless a handle is pinned the kernel assigns
+    /// one (`8001:` and up). Reading it back from the dump is what keeps this
+    /// correct for qdiscs this backend did not create.
+    fn plug_parent(root_handle: TcHandle) -> Result<TcHandle, TcguiError> {
+        let major = root_handle.major();
+        if major == 0 {
+            return Err(TcguiError::TcCommandError {
+                message: "root qdisc has no handle major; cannot address a child".to_string(),
+            });
+        }
+        Ok(TcHandle::new(major, 1))
+    }
+
+    /// Find the root qdisc and any plug child in a single dump.
+    ///
+    /// Returns `(root_kind, root_handle, plug_child)`.
+    async fn qdisc_layout(
+        conn: &Connection<Route>,
+        interface: &str,
+    ) -> Result<
+        (
+            Option<String>,
+            Option<TcHandle>,
+            Option<(TcHandle, u32, u32)>,
+        ),
+        TcguiError,
+    > {
+        let qdiscs = conn
+            .get_qdiscs_by_name(interface)
+            .await
+            .map_err(|e| tc_kernel_err("Failed to read qdiscs", &e))?;
+
+        let mut root_kind = None;
+        let mut root_handle = None;
+        let mut plug = None;
+        for q in &qdiscs {
+            if q.parent().is_root() {
+                root_kind = q.kind().map(str::to_string);
+                root_handle = Some(q.handle());
+            } else if q.kind() == Some("plug") {
+                plug = Some((q.parent(), q.backlog(), q.qlen()));
+            }
+        }
+        Ok((root_kind, root_handle, plug))
+    }
+
+    /// Probe an interface's plug, if it has one.
+    ///
+    /// Kernel truth only: presence and how much is held. The epoch is not
+    /// readable, so the caller supplies it.
+    pub async fn plug_probe(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+    ) -> Result<Option<(TcHandle, u32, u32)>, TcguiError> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+        let (_, _, plug) = Self::qdisc_layout(&conn, interface).await?;
+        Ok(plug)
+    }
+
+    /// Install the plug (if absent) and begin a buffering epoch.
+    ///
+    /// **This stalls the interface.** Installing a plug qdisc starts buffering
+    /// immediately; on an already-installed plug, `TCQ_PLUG_BUFFER` starts a
+    /// fresh epoch.
+    ///
+    /// netem stays at the root and keeps every impairment working — the plug is
+    /// its single leaf, so packets are held *after* being impaired. If the
+    /// interface has no qdisc (or only a kernel default), a bare netem is
+    /// synthesized to host the plug and recorded as such so removal can undo it.
+    /// A root qdisc that is neither is refused rather than destroyed: replacing
+    /// someone's `cake` or `htb` to install a stall is not this tool's call.
+    pub async fn plug_begin(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        limit_bytes: Option<u32>,
+    ) -> Result<PlugSnapshot, TcguiError> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+        let link = Self::resolve_link(&conn, interface).await?;
+        let ifindex = link.ifindex();
+        let (root_kind, root_handle, existing_plug) = Self::qdisc_layout(&conn, interface).await?;
+
+        // nlink's `PlugConfig::write_options` emits nothing when no limit is
+        // set, but `add_qdisc_by_index_full` still opens and closes the
+        // TCA_OPTIONS nest — so the kernel sees a *present, zero-length*
+        // attribute. `plug_init` reads that as `opt != NULL` with
+        // `nla_len(opt) < sizeof(struct tc_plug_qopt)` and returns EINVAL, so
+        // the plain `PlugConfig::new().build()` case cannot install a plug at
+        // all. Reported upstream; until it is fixed there is no way to ask the
+        // kernel for its own default, so compute the same value the kernel
+        // would have (`txqueuelen × MTU`) and always send a concrete limit.
+        let limit = limit_bytes.unwrap_or_else(|| {
+            link.txqlen()
+                .unwrap_or(1000)
+                .saturating_mul(link.mtu().unwrap_or(1500))
+                .max(64 * 1024)
+        });
+
+        let (major, netem_synthesized) = match root_kind.as_deref() {
+            Some("netem") => (
+                Self::plug_parent(root_handle.unwrap_or(TcHandle::ROOT))?.major(),
+                false,
+            ),
+            None | Some("noqueue") | Some("pfifo_fast") | Some("mq") | Some("pfifo")
+            | Some("bfifo") => {
+                // `replace`, not `add`: an `mq` root is present-but-replaceable,
+                // and replace covers the absent case too.
+                info!(
+                    "Synthesizing a netem root on {}/{} to host the plug",
+                    namespace, interface
+                );
+                conn.replace_qdisc_by_index_full(
+                    ifindex,
+                    TcHandle::ROOT,
+                    Some(TcHandle::major_only(1)),
+                    NetemConfig::new().build(),
+                )
+                .await
+                .map_err(|e| tc_kernel_err("Failed to add netem root for plug", &e))?;
+                (1, true)
+            }
+            Some(other) => {
+                return Err(TcguiError::TcCommandError {
+                    message: format!(
+                        "{}/{} has a '{}' root qdisc; refusing to replace it to install a plug",
+                        namespace, interface, other
+                    ),
+                });
+            }
+        };
+
+        let parent = TcHandle::new(major, 1);
+        let dev = nlink::netlink::InterfaceRef::index(ifindex);
+
+        match existing_plug {
+            Some((existing_parent, _, _)) if existing_parent == parent => {
+                // Already grafted — start a new epoch rather than re-adding.
+                conn.plug_buffer(dev, parent)
+                    .await
+                    .map_err(|e| tc_kernel_err("Failed to start a plug buffering epoch", &e))?;
+                conn.plug_set_limit(nlink::netlink::InterfaceRef::index(ifindex), parent, limit)
+                    .await
+                    .map_err(|e| tc_kernel_err("Failed to set the plug limit", &e))?;
+            }
+            Some((existing_parent, _, _)) => {
+                return Err(TcguiError::TcCommandError {
+                    message: format!(
+                        "{}/{} already has a plug at {} but the root netem is at {}:",
+                        namespace, interface, existing_parent, major
+                    ),
+                });
+            }
+            None => {
+                let cfg = nlink::netlink::tc::PlugConfig::new().limit(limit).build();
+                conn.add_qdisc_by_index_full(ifindex, parent, None, cfg)
+                    .await
+                    .map_err(|e| tc_kernel_err("Failed to graft the plug onto netem", &e))?;
+            }
+        }
+
+        let (_, _, plug) = Self::qdisc_layout(&conn, interface).await?;
+        let (buffered_bytes, buffered_packets) = plug.map(|(_, b, q)| (b, q)).unwrap_or((0, 0));
+
+        info!(
+            "Plug buffering on {}/{} at {} (limit {} bytes)",
+            namespace, interface, parent, limit
+        );
+        Ok(PlugSnapshot {
+            parent,
+            buffering: true,
+            limit_bytes: limit,
+            netem_synthesized,
+            buffered_bytes,
+            buffered_packets,
+        })
+    }
+
+    /// Release what is buffered now, then keep buffering.
+    pub async fn plug_release_one(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        parent: TcHandle,
+    ) -> Result<(), TcguiError> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+        let ifindex = Self::resolve_ifindex(&conn, interface).await?;
+        conn.plug_release_one(nlink::netlink::InterfaceRef::index(ifindex), parent)
+            .await
+            .map_err(|e| tc_kernel_err("Failed to release one plug epoch", &e))
+    }
+
+    /// Stop buffering and let everything through, leaving the qdisc installed.
+    pub async fn plug_release(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        parent: TcHandle,
+    ) -> Result<(), TcguiError> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+        let ifindex = Self::resolve_ifindex(&conn, interface).await?;
+        conn.plug_release_indefinite(nlink::netlink::InterfaceRef::index(ifindex), parent)
+            .await
+            .map_err(|e| tc_kernel_err("Failed to release the plug", &e))
+    }
+
+    /// Change the buffer ceiling without touching the epoch.
+    pub async fn plug_set_limit(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        parent: TcHandle,
+        limit_bytes: u32,
+    ) -> Result<(), TcguiError> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+        let ifindex = Self::resolve_ifindex(&conn, interface).await?;
+        conn.plug_set_limit(
+            nlink::netlink::InterfaceRef::index(ifindex),
+            parent,
+            limit_bytes,
+        )
+        .await
+        .map_err(|e| tc_kernel_err("Failed to set the plug limit", &e))
+    }
+
+    /// Release, drain, and remove the plug.
+    ///
+    /// Release comes **first**, so the held packets are delivered rather than
+    /// freed: deleting a qdisc resets its queue, which would drop the buffer
+    /// with nothing in the logs to say so. The drain is bounded — a link that
+    /// cannot absorb its own backlog must not block the RPC forever.
+    pub async fn plug_remove(
+        &self,
+        namespace: &str,
+        namespace_path: Option<&Path>,
+        interface: &str,
+        parent: TcHandle,
+        netem_synthesized: bool,
+    ) -> Result<(), TcguiError> {
+        let conn = Self::create_connection(namespace, namespace_path)?;
+        let ifindex = Self::resolve_ifindex(&conn, interface).await?;
+        let dev = nlink::netlink::InterfaceRef::index(ifindex);
+
+        conn.plug_release_indefinite(dev, parent)
+            .await
+            .map_err(|e| tc_kernel_err("Failed to release the plug before removing it", &e))?;
+
+        // Bounded drain: ~250ms, then remove regardless.
+        for _ in 0..25 {
+            match Self::qdisc_layout(&conn, interface).await {
+                Ok((_, _, Some((_, backlog, _)))) if backlog > 0 => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                _ => break,
+            }
+        }
+
+        conn.del_qdisc_by_index_full(ifindex, parent, None)
+            .await
+            .map_err(|e| tc_kernel_err("Failed to remove the plug qdisc", &e))?;
+
+        if netem_synthesized {
+            // The netem existed only to host the plug; leaving it behind would
+            // report a TC config on an interface the operator never configured.
+            let _ = conn.del_qdisc_if_exists(interface, TcHandle::ROOT).await;
+        }
+
+        info!("Plug removed from {}/{}", namespace, interface);
+        Ok(())
+    }
+
+    /// Resolve an interface name to its index on an already namespace-bound
+    /// connection.
+    async fn resolve_ifindex(conn: &Connection<Route>, interface: &str) -> Result<u32, TcguiError> {
+        Ok(Self::resolve_link(conn, interface).await?.ifindex())
+    }
+
+    /// Resolve an interface name to its link message on an already
+    /// namespace-bound connection.
+    async fn resolve_link(
+        conn: &Connection<Route>,
+        interface: &str,
+    ) -> Result<nlink::netlink::messages::LinkMessage, TcguiError> {
+        conn.get_link_by_name(interface)
+            .await
+            .map_err(|e| TcguiError::TcCommandError {
+                message: format!("Interface '{}' lookup failed: {}", interface, e),
+            })?
+            .ok_or_else(|| TcguiError::TcCommandError {
+                message: format!("Interface '{}' not found", interface),
+            })
     }
 }

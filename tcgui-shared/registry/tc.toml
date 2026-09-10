@@ -13,7 +13,7 @@
 # G6): ACL rules discriminate on path chunks, never selector parameters.
 
 [registry]
-version = "1.2"
+version = "1.3"
 app = "tcgui"
 convention = 1
 
@@ -103,6 +103,18 @@ since = "1.0"
 description = "per-interface qdisc/netem statistics"
 
 [[subject]]
+# Plug is backend-owned truth: `sch_plug` has no kernel dump op, so whether an
+# installed plug is buffering or released-indefinite cannot be read back. The
+# document is the record; removal is a Delete tombstone.
+path = "plug/{ns}/{iface}"
+class = "state"
+type = "PlugState"
+cardinality = 1024
+ttl_s = 60
+since = "1.3"
+description = "plug (stall) state for one interface; delete = not plugged"
+
+[[subject]]
 path = "applied/{ulid}"
 class = "events"
 type = "TcAppliedEvent"
@@ -121,6 +133,17 @@ reply = "TcResponse"
 idempotent = false
 since = "1.0"
 description = "apply or clear TC/netem on one interface"
+
+[[procedure]]
+path = "plug/{ns}/{iface}/set"
+kind = "write"
+fanout = "forbidden"
+# Same bounded interface population as the matching `state` subject (P5).
+cardinality = 1024
+reply = "PlugResponse"
+idempotent = false
+since = "1.3"
+description = "buffer / release-one / release / set-limit / remove on one interface's plug"
 
 [[procedure]]
 path = "interface/{ns}/{iface}/set"
