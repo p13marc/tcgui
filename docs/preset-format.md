@@ -286,3 +286,20 @@ tcgui-backend --no-default-presets \
     --preset-dir /etc/tcgui/presets \
     --preset-dir /home/user/presets
 ```
+
+## The plug is not a preset field
+
+Presets carry the six netem features and nothing else. The plug qdisc — which
+holds every packet on an interface until it is released — is deliberately
+**not** among them.
+
+A preset is a declarative snapshot: selecting one means "make the interface
+look like this", and applying the same preset twice is the same as applying it
+once. A plug is the opposite. Its operations are verbs (`buffer`,
+`release-one`, `release`) whose meaning depends on what came before, and the
+one that installs it stops traffic the moment it lands. A preset that stalled
+an interface on selection would be a foot-gun with no way to spell the release.
+
+Drive the plug through its own procedure instead: `@rpc/tc/plug/{ns}/{iface}/set`,
+or the **PLUG** control in the interface card, which is confirmation-gated on the
+way in and never on the way out.

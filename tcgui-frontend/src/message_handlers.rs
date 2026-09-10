@@ -353,6 +353,50 @@ pub fn handle_tc_statistics_update(
     Task::none()
 }
 
+/// Adopts a plug state document (Put) for one interface.
+pub fn handle_plug_state_update(
+    backend_manager: &mut BackendManager,
+    plug: tcgui_shared::PlugState,
+) -> Task<TcGuiMessage> {
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(&plug.backend_name)
+        && let Some(namespace_group) = backend_group.namespaces.get_mut(&plug.namespace)
+        && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&plug.interface)
+    {
+        tc_interface.set_plug_state(Some(plug));
+    }
+    Task::none()
+}
+
+/// Clears a plug state document (Delete tombstone) for one interface.
+pub fn handle_plug_state_cleared(
+    backend_manager: &mut BackendManager,
+    backend_name: String,
+    namespace: String,
+    interface: String,
+) -> Task<TcGuiMessage> {
+    if let Some(backend_group) = backend_manager.backends_mut().get_mut(&backend_name)
+        && let Some(namespace_group) = backend_group.namespaces.get_mut(&namespace)
+        && let Some(tc_interface) = namespace_group.tc_interfaces.get_mut(&interface)
+    {
+        tc_interface.set_plug_state(None);
+    }
+    Task::none()
+}
+
+/// Handles plug (stall) operations.
+pub fn handle_plug_tc(
+    query_manager: &QueryManager,
+    backend_name: String,
+    namespace: String,
+    interface: String,
+    operation: tcgui_shared::TcPlugOperation,
+) -> Task<TcGuiMessage> {
+    if let Err(e) = query_manager.plug_tc(backend_name, namespace, interface, operation) {
+        tracing::error!("Failed to drive the plug: {}", e);
+    }
+    Task::none()
+}
+
 /// Handles TC interface messages (user interactions with interface components).
 pub fn handle_tc_interface_message(
     backend_manager: &mut BackendManager,
@@ -1215,6 +1259,50 @@ pub fn handle_tc_interface_message(
             // DiagnosticsComplete and DismissDiagnostics are UI-only state updates
             TcInterfaceMessage::DiagnosticsComplete(_) => Task::none(),
             TcInterfaceMessage::DismissDiagnostics => Task::none(),
+
+            // Plug verbs each map to one imperative call. `PlugRequested` has
+            // already passed the confirmation gate in `app.rs` by the time it
+            // reaches here — it is the message the gate replays.
+            TcInterfaceMessage::PlugRequested => Task::done(TcGuiMessage::PlugTc {
+                backend_name: backend_name.clone(),
+                namespace: namespace.clone(),
+                interface: interface_name.clone(),
+                operation: tcgui_shared::TcPlugOperation::Buffer {
+                    limit_bytes: tc_interface.plug_limit_bytes(),
+                },
+            }),
+            TcInterfaceMessage::PlugReleaseOne => Task::done(TcGuiMessage::PlugTc {
+                backend_name: backend_name.clone(),
+                namespace: namespace.clone(),
+                interface: interface_name.clone(),
+                operation: tcgui_shared::TcPlugOperation::ReleaseOne,
+            }),
+            TcInterfaceMessage::PlugRelease => Task::done(TcGuiMessage::PlugTc {
+                backend_name: backend_name.clone(),
+                namespace: namespace.clone(),
+                interface: interface_name.clone(),
+                operation: tcgui_shared::TcPlugOperation::Release,
+            }),
+            TcInterfaceMessage::PlugRemove => Task::done(TcGuiMessage::PlugTc {
+                backend_name: backend_name.clone(),
+                namespace: namespace.clone(),
+                interface: interface_name.clone(),
+                operation: tcgui_shared::TcPlugOperation::Remove,
+            }),
+            // Editing the limit field is UI-only until a verb carries it; an
+            // installed plug gets it pushed through immediately.
+            TcInterfaceMessage::PlugLimitChanged(bytes) => {
+                if tc_interface.is_plugged() {
+                    Task::done(TcGuiMessage::PlugTc {
+                        backend_name: backend_name.clone(),
+                        namespace: namespace.clone(),
+                        interface: interface_name.clone(),
+                        operation: tcgui_shared::TcPlugOperation::SetLimit { limit_bytes: bytes },
+                    })
+                } else {
+                    Task::none()
+                }
+            }
         };
 
         let backend_copy = backend_name.clone();

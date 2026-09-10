@@ -3,7 +3,7 @@ use iced::task::{Never, Sipper, sipper};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use tcgui_shared::{
-    BackendHealthStatus, BandwidthUpdate, InterfaceControlResponse, NetworkInterface,
+    BackendHealthStatus, BandwidthUpdate, InterfaceControlResponse, NetworkInterface, PlugResponse,
     TcConfigUpdate, TcResponse, TcStatisticsUpdate, ZenohConfig,
     identity::RemoteOrigin,
     presets::CustomPreset,
@@ -17,8 +17,8 @@ use zenoh::sample::{Sample, SampleKind};
 use zenoh_ext::{AdvancedSubscriberBuilderExt, HistoryConfig, RecoveryConfig};
 
 use crate::messages::{
-    DiagnosticsQueryMessage, InterfaceControlQueryMessage, ScenarioExecutionQueryMessage,
-    ScenarioQueryMessage, TcQueryMessage, ZenohEvent,
+    DiagnosticsQueryMessage, InterfaceControlQueryMessage, PlugQueryMessage,
+    ScenarioExecutionQueryMessage, ScenarioQueryMessage, TcQueryMessage, ZenohEvent,
 };
 
 /// Extract a human-readable message from a Zenoh reply-error payload.
@@ -133,6 +133,24 @@ fn handle_state_sample(sample: Sample) -> Option<ZenohEvent> {
                 let mut update: TcConfigUpdate = deser_payload(&sample, "TC config update")?;
                 update.backend_name = sk.origin;
                 Some(ZenohEvent::TcConfigUpdate(update))
+            }
+        }
+
+        // The plug plane. This arm is load-bearing precisely because the match
+        // below ends in `_ => None`: without it a plug document would be
+        // received, decoded by nobody, and dropped — the GUI would show a
+        // flowing interface while the kernel held every packet.
+        tc::Subject::Plug { ns, iface } => {
+            if is_delete {
+                Some(ZenohEvent::PlugStateCleared {
+                    backend_name: sk.origin,
+                    namespace: ns.to_string(),
+                    interface: iface.to_string(),
+                })
+            } else {
+                let mut state: tcgui_shared::PlugState = deser_payload(&sample, "plug state")?;
+                state.backend_name = sk.origin;
+                Some(ZenohEvent::PlugStateUpdate(state))
             }
         }
 
@@ -326,6 +344,8 @@ impl ZenohManager {
                         // Create separate channels for TC queries, interface control queries, and scenario queries
                         let (tc_query_sender, mut tc_query_receiver) =
                             mpsc::unbounded_channel::<TcQueryMessage>();
+                        let (plug_query_sender, mut plug_query_receiver) =
+                            mpsc::unbounded_channel::<PlugQueryMessage>();
                         let (interface_control_sender, mut interface_control_receiver) =
                             mpsc::unbounded_channel::<InterfaceControlQueryMessage>();
                         let (scenario_query_sender, mut scenario_query_receiver) =
@@ -339,6 +359,9 @@ impl ZenohManager {
 
                         let _ = output
                             .send(ZenohEvent::TcQueryChannelReady(tc_query_sender))
+                            .await;
+                        let _ = output
+                            .send(ZenohEvent::PlugQueryChannelReady(plug_query_sender))
                             .await;
                         let _ = output
                             .send(ZenohEvent::InterfaceQueryChannelReady(
@@ -461,6 +484,59 @@ impl ZenohManager {
                                         Err(e) => {
                                             error!("Error receiving liveliness update: {}", e);
                                             break;
+                                        }
+                                    }
+                                }
+
+                                // Handle outgoing plug (stall) queries
+                                Some(plug_query) = plug_query_receiver.recv() => {
+                                    let origin = match RemoteOrigin::parse(&plug_query.backend_name) {
+                                        Ok(o) => o,
+                                        Err(_) => {
+                                            error!("Refusing plug query: '{}' is not a concrete origin", plug_query.backend_name);
+                                            continue;
+                                        }
+                                    };
+                                    let topic = tc::plug_ns_iface_set_key(&origin, &plug_query.request.namespace, &plug_query.request.interface);
+                                    let mut output_clone = output.clone();
+                                    let backend_name = plug_query.backend_name.clone();
+                                    match serde_json::to_string(&plug_query.request) {
+                                        Ok(payload) => {
+                                            match session.get(topic.as_str()).payload(payload).await {
+                                                Ok(replies) => {
+                                                    tokio::spawn(async move {
+                                                        while let Ok(reply) = replies.recv_async().await {
+                                                            match reply.into_result() {
+                                                                Ok(sample) => {
+                                                                    // A value reply means success; the
+                                                                    // authoritative state arrives on the
+                                                                    // plug state plane, so nothing is
+                                                                    // derived from the reply body here.
+                                                                    let payload_bytes = sample.payload().to_bytes();
+                                                                    if let Ok(payload_str) = std::str::from_utf8(&payload_bytes)
+                                                                        && let Ok(response) = serde_json::from_str::<PlugResponse>(payload_str) {
+                                                                            tracing::debug!("Plug operation succeeded on '{backend_name}': {}", response.message);
+                                                                        }
+                                                                }
+                                                                Err(e) => {
+                                                                    let error = reply_error_message(&e);
+                                                                    error!("Plug query reply error: {}", error);
+                                                                    let _ = output_clone.send(ZenohEvent::QueryError {
+                                                                        backend_name: backend_name.clone(),
+                                                                        error,
+                                                                    }).await;
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to send plug query to '{}': {}", plug_query.backend_name, e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to serialize plug request: {}", e);
                                         }
                                     }
                                 }

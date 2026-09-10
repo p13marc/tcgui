@@ -324,3 +324,311 @@ async fn live_tc_statistics_present_after_apply() -> nlink::Result<()> {
     assert!(stats.is_some(), "no statistics for a shaped interface");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Plug qdisc (issue: nlink 0.26 adoption)
+// ---------------------------------------------------------------------------
+//
+// These are the tests that justify the placement decision. The plug is grafted
+// as netem's single leaf rather than replacing netem at the root, and only a
+// real kernel can say whether that graft is legal, whether netem's parameters
+// survive it, and whether `replace` leaves the child alone. A mock would just
+// read our own bookkeeping back to us.
+//
+// Each is gated on `sch_plug` being available: it is a module on most distro
+// kernels, and a machine without it should skip rather than fail.
+
+/// Skip helper: `sch_plug` is a module, not always built in.
+fn plug_available() -> bool {
+    if nlink::lab::has_module("sch_plug") {
+        return true;
+    }
+    eprintln!("skipping: sch_plug is not available on this kernel");
+    false
+}
+
+/// **The test that justifies choosing a netem child over a netem replacement.**
+///
+/// `sch_plug` is classless, so it cannot host netem; netem is classful with
+/// exactly one leaf, so it can host the plug. If that graft were illegal the
+/// whole design would collapse back to "plug replaces netem and you lose every
+/// impairment while stalled". Assert the tree *and* that netem's parameters
+/// still read back.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_plug_installs_as_a_netem_child() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-graft", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let mut config = empty_config();
+    config.loss = loss(5.0);
+    tc.apply_tc_config_structured(ns.name(), "dummy0", &config)
+        .await
+        .expect("apply loss");
+
+    let snap = tc
+        .plug_begin(ns.name(), None, "dummy0", Some(64 * 1024))
+        .await
+        .expect("plug installs as a netem child");
+    assert!(snap.buffering, "plug did not report a buffering epoch");
+    assert!(
+        !snap.netem_synthesized,
+        "netem already existed; it must not be reported as synthesized"
+    );
+
+    let probed = tc
+        .plug_probe(ns.name(), None, "dummy0")
+        .await
+        .expect("probe")
+        .expect("plug is installed");
+    assert_eq!(probed.0, snap.parent, "plug is not at the recorded parent");
+
+    // The impairment must survive the graft — that is the whole point.
+    let opts = tc
+        .get_netem_options(ns.name(), "dummy0")
+        .await
+        .expect("read back")
+        .expect("netem is still the root qdisc");
+    assert!(
+        opts.loss().unwrap_or(0.0) > 0.0,
+        "loss was lost when the plug was grafted"
+    );
+    Ok(())
+}
+
+/// The way out of a plug, which is the property nlink 0.26 exists to provide:
+/// releasing leaves the qdisc installed and stops it holding packets.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_release_indefinite_is_the_way_out() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-release", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let snap = tc
+        .plug_begin(ns.name(), None, "dummy0", None)
+        .await
+        .expect("plug");
+    tc.plug_release(ns.name(), None, "dummy0", snap.parent)
+        .await
+        .expect("release must be reachable");
+
+    assert!(
+        tc.plug_probe(ns.name(), None, "dummy0")
+            .await
+            .expect("probe")
+            .is_some(),
+        "release removed the qdisc; it should only end the epoch"
+    );
+    Ok(())
+}
+
+/// A plug action against an interface with no plug must fail cleanly rather
+/// than creating one. `change_qdisc` sends handle 0 without `NLM_F_CREATE`, so
+/// the kernel answers ENOENT — pin that reading, because the whole control
+/// surface depends on it.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_plug_action_without_a_plug_is_a_clean_error() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-absent", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let err = tc
+        .plug_release_one(ns.name(), None, "dummy0", nlink::TcHandle::new(1, 1))
+        .await
+        .expect_err("releasing a plug that does not exist must fail");
+    // Must not have conjured one.
+    assert!(
+        tc.plug_probe(ns.name(), None, "dummy0")
+            .await
+            .expect("probe")
+            .is_none(),
+        "a failed release created a plug qdisc: {err}"
+    );
+    Ok(())
+}
+
+/// Non-obvious kernel behaviour the design leans on: applying an impairment
+/// *change* goes down the `replace` path, and `replace` on the same kind takes
+/// the kernel's `qdisc_change` route, which leaves the grafted child alone.
+/// If this ever stops being true, plugs would vanish whenever someone moved a
+/// slider.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_replace_preserves_the_plug_child() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-replace", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let mut config = empty_config();
+    config.loss = loss(5.0);
+    tc.apply_tc_config_structured(ns.name(), "dummy0", &config)
+        .await
+        .expect("apply loss");
+    let snap = tc
+        .plug_begin(ns.name(), None, "dummy0", None)
+        .await
+        .expect("plug");
+
+    // Raising loss adds no parameter, so this is the replace branch.
+    config.loss = loss(10.0);
+    tc.apply_tc_config_structured(ns.name(), "dummy0", &config)
+        .await
+        .expect("raising loss must be allowed while plugged");
+
+    let probed = tc
+        .plug_probe(ns.name(), None, "dummy0")
+        .await
+        .expect("probe")
+        .expect("the plug survived a netem replace");
+    assert_eq!(probed.0, snap.parent, "the plug moved");
+    Ok(())
+}
+
+/// The other half: a parameter *removal* needs the qdisc recreated, which the
+/// kernel implements as delete+add — and the child goes with the parent. That
+/// must be refused with a message naming the plug, not silently swallowed.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_recreation_while_plugged_is_refused() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-recreate", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let mut config = empty_config();
+    config.loss = loss(5.0);
+    config.delay = delay(20.0);
+    tc.apply_tc_config_structured(ns.name(), "dummy0", &config)
+        .await
+        .expect("apply loss+delay");
+    tc.plug_begin(ns.name(), None, "dummy0", None)
+        .await
+        .expect("plug");
+
+    // Dropping delay is the recreation branch.
+    config.delay = TcDelayConfig {
+        enabled: false,
+        base_ms: 0.0,
+        jitter_ms: 0.0,
+        correlation: 0.0,
+    };
+    let err = tc
+        .apply_tc_config_structured(ns.name(), "dummy0", &config)
+        .await
+        .expect_err("removing a parameter while plugged must be refused");
+    assert!(
+        err.to_string().contains("plug"),
+        "the refusal must name the plug, got: {err}"
+    );
+    assert!(
+        tc.plug_probe(ns.name(), None, "dummy0")
+            .await
+            .expect("probe")
+            .is_some(),
+        "the refused apply destroyed the plug anyway"
+    );
+    Ok(())
+}
+
+/// Removing the plug from an interface that had no qdisc must leave it as it
+/// was found — the synthesized netem goes too, or the GUI would report a TC
+/// config the operator never asked for.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_synthesized_netem_is_cleaned_up() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-synth", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let snap = tc
+        .plug_begin(ns.name(), None, "dummy0", None)
+        .await
+        .expect("plug on a bare interface");
+    assert!(
+        snap.netem_synthesized,
+        "a netem was created to host the plug but not recorded as synthesized"
+    );
+
+    tc.plug_remove(
+        ns.name(),
+        None,
+        "dummy0",
+        snap.parent,
+        snap.netem_synthesized,
+    )
+    .await
+    .expect("remove");
+
+    assert!(
+        tc.plug_probe(ns.name(), None, "dummy0")
+            .await
+            .expect("probe")
+            .is_none(),
+        "the plug is still installed"
+    );
+    let qdisc = tc
+        .check_existing_qdisc(ns.name(), "dummy0")
+        .await
+        .expect("read root qdisc");
+    assert!(
+        !qdisc.contains("netem"),
+        "the synthesized netem was left behind: {qdisc}"
+    );
+    Ok(())
+}
+
+/// Clearing an interface's TC config releases the plug before tearing the root
+/// down, so buffered packets are delivered rather than freed by
+/// `qdisc_reset_queue`. Asserts the observable outcome: both qdiscs gone.
+#[tokio::test]
+#[ignore = "requires root; run with `just test-live`"]
+async fn live_remove_tc_releases_before_deleting() -> nlink::Result<()> {
+    nlink::require_root!();
+    if !plug_available() {
+        return Ok(());
+    }
+    let ns = lab("tcgui-plug-clear", "dummy0")?;
+    let tc = TcCommandManager::new();
+
+    let mut config = empty_config();
+    config.loss = loss(5.0);
+    tc.apply_tc_config_structured(ns.name(), "dummy0", &config)
+        .await
+        .expect("apply loss");
+    tc.plug_begin(ns.name(), None, "dummy0", None)
+        .await
+        .expect("plug");
+
+    tc.remove_tc_config_in_namespace(ns.name(), "dummy0")
+        .await
+        .expect("clear must release the plug and remove both qdiscs");
+
+    assert!(
+        tc.plug_probe(ns.name(), None, "dummy0")
+            .await
+            .expect("probe")
+            .is_none(),
+        "the plug outlived the root qdisc"
+    );
+    Ok(())
+}

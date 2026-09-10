@@ -1,7 +1,7 @@
 use tcgui_shared::{
     BackendHealthStatus, BandwidthUpdate, DiagnosticsRequest, DiagnosticsResponse,
-    InterfaceControlRequest, InterfaceControlResponse, NetworkInterface, TcConfigUpdate, TcRequest,
-    TcResponse, TcStatisticsUpdate,
+    InterfaceControlRequest, InterfaceControlResponse, NetworkInterface, PlugResponse, PlugState,
+    TcConfigUpdate, TcPlugOperation, TcPlugRequest, TcRequest, TcResponse, TcStatisticsUpdate,
     presets::CustomPreset,
     scenario::{
         NetworkScenario, ScenarioExecutionRequest, ScenarioExecutionResponse,
@@ -39,6 +39,14 @@ pub struct TcQueryMessage {
     pub backend_name: String,
     pub request: TcRequest,
     pub response_sender: Option<mpsc::UnboundedSender<(String, TcResponse)>>,
+}
+
+/// Message for plug (stall) query operations
+#[derive(Debug, Clone)]
+pub struct PlugQueryMessage {
+    pub backend_name: String,
+    pub request: TcPlugRequest,
+    pub response_sender: Option<mpsc::UnboundedSender<(String, PlugResponse)>>,
 }
 
 /// Message for interface control query operations
@@ -80,6 +88,13 @@ pub enum TcGuiMessage {
     },
     TcConfigUpdate(TcConfigUpdate),
     TcStatisticsUpdate(TcStatisticsUpdate),
+    // State-plane plug upsert / tombstone.
+    PlugStateUpdate(PlugState),
+    PlugStateCleared {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     // State-plane per-preset upsert / removal (state/tc/preset/{id}).
     PresetUpsert {
         backend_name: String,
@@ -116,6 +131,7 @@ pub enum TcGuiMessage {
     },
     // Query channel setup
     SetupTcQueryChannel(mpsc::UnboundedSender<TcQueryMessage>),
+    SetupPlugQueryChannel(mpsc::UnboundedSender<PlugQueryMessage>),
     SetupInterfaceQueryChannel(mpsc::UnboundedSender<InterfaceControlQueryMessage>),
     SetupScenarioQueryChannel(mpsc::UnboundedSender<ScenarioQueryMessage>),
     SetupScenarioExecutionQueryChannel(mpsc::UnboundedSender<ScenarioExecutionQueryMessage>),
@@ -174,6 +190,15 @@ pub enum TcGuiMessage {
         backend_name: String,
         namespace: String,
         interface: String,
+    },
+    /// Drive one interface's plug qdisc. The verb is imperative, unlike every
+    /// netem parameter, which is why it rides its own procedure rather than an
+    /// `ApplyTc`.
+    PlugTc {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+        operation: TcPlugOperation,
     },
     EnableInterface {
         backend_name: String,
@@ -290,6 +315,13 @@ pub enum ZenohEvent {
     },
     TcConfigUpdate(TcConfigUpdate),
     TcStatisticsUpdate(TcStatisticsUpdate),
+    // State-plane plug upsert / tombstone.
+    PlugStateUpdate(PlugState),
+    PlugStateCleared {
+        backend_name: String,
+        namespace: String,
+        interface: String,
+    },
     // State-plane per-preset upsert / removal.
     PresetUpsert {
         backend_name: String,
@@ -318,6 +350,7 @@ pub enum ZenohEvent {
     },
     // Query channels
     TcQueryChannelReady(mpsc::UnboundedSender<TcQueryMessage>),
+    PlugQueryChannelReady(mpsc::UnboundedSender<PlugQueryMessage>),
     InterfaceQueryChannelReady(mpsc::UnboundedSender<InterfaceControlQueryMessage>),
     ScenarioQueryChannelReady(mpsc::UnboundedSender<ScenarioQueryMessage>),
     ScenarioExecutionQueryChannelReady(mpsc::UnboundedSender<ScenarioExecutionQueryMessage>),
@@ -398,6 +431,15 @@ pub enum TcInterfaceMessage {
 
     // Chart control
     ToggleChart,
+
+    // Plug (stall) control. `PlugRequested` is the one gated behind a
+    // confirmation — it stops traffic. The release verbs never are: a dialog in
+    // front of the escape hatch is a bug, not a safety feature.
+    PlugRequested,
+    PlugReleaseOne,
+    PlugRelease,
+    PlugRemove,
+    PlugLimitChanged(u32),
 
     // Diagnostics control
     StartDiagnostics,

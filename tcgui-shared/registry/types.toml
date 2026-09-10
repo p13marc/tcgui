@@ -32,6 +32,12 @@ kind = "json-schema"
 [types.TcAppliedEvent]
 kind = "json-schema"
 
+[types.PlugState]
+kind = "json-schema"
+
+[types.PlugResponse]
+kind = "json-schema"
+
 [types.TcResponse]
 kind = "json-schema"
 

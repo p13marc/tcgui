@@ -73,6 +73,17 @@ struct TcBackend {
     /// Operator-chosen display label — used only in the health document, never as a key.
     backend_name: String,
     tc_config_publishers: HashMap<String, AdvancedPublisher<'static>>, // namespace/interface -> publisher
+    /// Per-interface plug state publishers (`state/tc/plug/{ns}/{iface}`).
+    plug_publishers: HashMap<String, AdvancedPublisher<'static>>,
+    /// The backend's own view of each interface's plug, keyed `ns/iface`.
+    ///
+    /// `sch_plug` has no kernel dump op, so whether an installed plug is
+    /// buffering or released-indefinite is not readable back — this map is the
+    /// only place that truth lives, which is also why an orphan plug left by a
+    /// previous process has to be adopted rather than inferred.
+    plug_states: HashMap<String, tc_commands::PlugSnapshot>,
+    /// When each interface's current plug epoch began, keyed `ns/iface`.
+    plug_since_ms: HashMap<String, u64>,
     tc_stats_publishers: HashMap<String, Publisher<'static>>, // namespace/interface -> publisher (best-effort)
 }
 
@@ -249,6 +260,9 @@ impl TcBackend {
             local_origin,
             backend_name,
             tc_config_publishers: HashMap::new(),
+            plug_publishers: HashMap::new(),
+            plug_states: HashMap::new(),
+            plug_since_ms: HashMap::new(),
             tc_stats_publishers: HashMap::new(),
         })
     }
@@ -297,6 +311,19 @@ impl TcBackend {
             .await
             .map_err(|e| TcguiError::ZenohError {
                 message: format!("Failed to declare TC queryable: {}", e),
+            })?;
+
+        // The plug (stall) procedure. Same shape as the TC one, and `complete`
+        // is false for the same reason: the serve key wildcards {ns}/{iface}.
+        let plug_query_topic =
+            tc::rpc_serve_key(&self.local_origin, tc::ProcedureId::PlugNsIfaceSet);
+        let plug_queryable = self
+            .session
+            .declare_queryable(plug_query_topic.as_keyexpr())
+            .complete(false)
+            .await
+            .map_err(|e| TcguiError::ZenohError {
+                message: format!("Failed to declare plug queryable: {}", e),
             })?;
         info!(
             "[BACKEND] Backend '{}' TC query handler declared on: {}",
@@ -552,6 +579,21 @@ impl TcBackend {
         loop {
             tokio::select! {
                 // Handle TC queries
+                // Handle plug (stall) queries
+                query = plug_queryable.recv_async() => {
+                    match query {
+                        Ok(query) => {
+                            if let Err(e) = self.handle_plug_query(query).await {
+                                error!("Failed to handle plug query: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Plug queryable receive error: {}", e);
+                        }
+                    }
+                }
+
+                // Handle TC queries
                 query = tc_queryable.recv_async() => {
                     match query {
                         Ok(query) => {
@@ -753,6 +795,10 @@ impl TcBackend {
                                     .collect();
 
                                 self.cleanup_stale_publishers(&updated_interfaces).await;
+                    // A plug outlives the process that installed it, so the
+                    // periodic rescan is where one left by a previous instance
+                    // (or removed by hand with `tc qdisc del`) gets picked up.
+                    self.reconcile_orphan_plugs(&updated_interfaces).await;
                     if let Err(e) = self.publish_sensor_doc().await {
                         warn!("Failed to refresh sensor doc: {e}");
                     }

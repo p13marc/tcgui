@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Plug qdisc — stall and release an interface.** `sch_plug` holds every
+  packet until it is released; nlink 0.26 is the first release with a
+  library-side way to unstall one (`plug_buffer`, `plug_release_one`,
+  `plug_release_indefinite`, `plug_set_limit`), which is why tcgui never
+  exposed it before.
+
+  netem stays the root qdisc and the plug is grafted as its single leaf, so
+  packets are held *after* being impaired and every existing read path keeps
+  working. Verified against a real kernel, along with three things that are
+  not obvious: `replace` on the same kind leaves the grafted child alone (so
+  moving a slider does not destroy a plug); delete+add — the parameter-removal
+  path — *does* take the child with it, and is now refused with an error
+  naming the plug; and clearing an interface's TC config releases and drains
+  the plug first, because deleting the root would otherwise free the held
+  packets silently.
+
+  It is **not** a field on `TcNetemConfig`, and so not a preset or scenario
+  field either: netem parameters are declarative and idempotent, while a plug
+  is an epoch machine whose verbs mean nothing when replayed. A preset that
+  stalled an interface on selection, or a step that ended without releasing,
+  are defects waiting to be filed. It gets `@rpc/tc/plug/{ns}/{iface}/set` and
+  `state/tc/plug/{ns}/{iface}` instead.
+
+  In the GUI it is a **button, never a checkbox** — installing one stops the
+  link, so it must not read like its netem neighbours — gated behind a
+  confirmation on the way in and never on the way out. A stalled interface
+  shows a red `PLUG` badge with the bytes held.
+
+  A plug outlives the process that installed it, so the periodic rescan adopts
+  any plug with no in-memory record, logs it loudly and publishes its state. It
+  deliberately does not auto-release: silently unstalling a link would make the
+  impairment untrustworthy for exactly the tests it exists to run.
+
 ### Changed
 - Upgraded `nlink` 0.25 → 0.26. No source change on the netlink paths: the
   interface dump, the netem apply/replace/remove spine, the ethtool and

@@ -17,8 +17,8 @@ use zenoh_ext::{AdvancedPublisher, AdvancedPublisherBuilderExt, CacheConfig, Mis
 use tcgui_shared::registry::tc;
 use tcgui_shared::{
     BackendHealthStatus, BackendMetadata, InterfaceControlOperation, InterfaceControlRequest,
-    InterfaceControlResponse, NetworkInterface, TcNetemConfig, TcOperation, TcRequest, TcResponse,
-    errors::TcguiError,
+    InterfaceControlResponse, NetworkInterface, PlugResponse, PlugState, TcNetemConfig,
+    TcOperation, TcPlugOperation, TcPlugRequest, TcRequest, TcResponse, errors::TcguiError,
 };
 use zenkey::ConcreteOrigin as _;
 
@@ -809,6 +809,26 @@ impl TcBackend {
             }
         }
 
+        // Same LWW argument as the config key: a plug document left standing
+        // for a vanished NIC would show a late-joining GUI a stalled interface
+        // that no longer exists.
+        let stale_plugs: Vec<String> = self
+            .plug_publishers
+            .keys()
+            .filter(|key| !valid_keys.contains(*key))
+            .cloned()
+            .collect();
+        for key in stale_plugs {
+            info!("Interface {key} is gone — retracting its plug state");
+            self.plug_states.remove(&key);
+            self.plug_since_ms.remove(&key);
+            if let Some(publisher) = self.plug_publishers.remove(&key)
+                && let Err(e) = publisher.delete().await
+            {
+                warn!("Failed to publish plug tombstone for {key}: {e}");
+            }
+        }
+
         let stale_stats: Vec<String> = self
             .tc_stats_publishers
             .keys()
@@ -820,6 +840,348 @@ impl TcBackend {
             self.tc_stats_publishers.remove(&key);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plug (stall) query handler and state plane
+// ---------------------------------------------------------------------------
+
+impl TcBackend {
+    /// Reject a plug query on the reply-error channel.
+    async fn reply_plug_error(&self, query: &zenoh::query::Query, message: String) -> Result<()> {
+        self.reply_query_error(query, "error/plug/invalid-request", &message)
+            .await
+    }
+
+    /// Handle `@rpc/tc/plug/{ns}/{iface}/set`.
+    ///
+    /// Shaped exactly like [`Self::handle_tc_query`]: a decode failure replies
+    /// on the error channel rather than `?`-ing out (the caller only logs, so
+    /// bailing would leave the GUI to time out), a value reply always means
+    /// success, and a failure rides `reply_err` with a namespaced `error/...`
+    /// name.
+    #[instrument(skip(self, query), fields(backend_name = %self.backend_name))]
+    pub(crate) async fn handle_plug_query(&mut self, query: zenoh::query::Query) -> Result<()> {
+        let request: TcPlugRequest =
+            match tcgui_shared::rpc::decode_request(query.payload(), "plug") {
+                Ok(request) => request,
+                Err(fault) => {
+                    warn!("Rejecting malformed plug request: {}", fault.message);
+                    return self
+                        .reply_query_error(&query, &fault.name, &fault.message)
+                        .await;
+                }
+            };
+        info!("Received plug query: {:?}", request);
+
+        if let Err(reason) =
+            tcgui_shared::validation::validate_target(&request.namespace, &request.interface)
+        {
+            warn!(
+                "Rejecting plug request for {}/{}: {}",
+                request.namespace, request.interface, reason
+            );
+            return self
+                .reply_plug_error(&query, format!("Invalid request: {reason}"))
+                .await;
+        }
+
+        let result = self.apply_plug_operation(&request).await;
+
+        match result {
+            Ok(response) => {
+                // The state document follows the operation, so a GUI that
+                // missed the reply still converges. Removal is a Delete
+                // tombstone, never a `None` payload (RFC 04 §1.2).
+                self.publish_plug_state(
+                    &request.namespace,
+                    &request.interface,
+                    response.state.clone(),
+                )
+                .await;
+
+                let payload =
+                    serde_json::to_string(&response).map_err(|e| TcguiError::ZenohError {
+                        message: format!("Failed to serialize plug response: {e}"),
+                    })?;
+                let key = tc::plug_ns_iface_set_key(
+                    &self.local_origin,
+                    &request.namespace,
+                    &request.interface,
+                );
+                self.reply_value(&query, zenoh::key_expr::OwnedKeyExpr::from(key), payload)
+                    .await
+            }
+            Err(message) => {
+                warn!(
+                    "Plug operation failed on {}/{}: {}",
+                    request.namespace, request.interface, message
+                );
+                self.reply_query_error(&query, "error/plug/apply", &message)
+                    .await
+            }
+        }
+    }
+
+    /// Carry out one plug operation and describe the resulting state.
+    ///
+    /// The epoch (`buffering`) is backend-owned: `sch_plug` has no kernel dump
+    /// op, so it cannot be read back. Presence, backlog and qlen can, and are
+    /// re-probed after every operation rather than inferred.
+    async fn apply_plug_operation(
+        &mut self,
+        request: &TcPlugRequest,
+    ) -> std::result::Result<PlugResponse, String> {
+        let ns = &request.namespace;
+        let iface = &request.interface;
+
+        // Every verb except `Buffer` needs an existing plug to address.
+        let existing = self.plug_states.get(&format!("{ns}/{iface}")).cloned();
+
+        match &request.operation {
+            TcPlugOperation::Buffer { limit_bytes } => {
+                let snap = self
+                    .tc_manager
+                    .plug_begin(ns, None, iface, *limit_bytes)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let state = self.record_plug_state(ns, iface, &snap, true);
+                Ok(PlugResponse {
+                    message: format!("Buffering traffic on {ns}/{iface}"),
+                    state: Some(state),
+                })
+            }
+            TcPlugOperation::ReleaseOne => {
+                let mut snap = Self::require_plug(existing, ns, iface)?;
+                self.tc_manager
+                    .plug_release_one(ns, None, iface, snap.parent)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                snap.buffering = true; // release-one keeps buffering what comes next
+                let state = self.record_plug_state(ns, iface, &snap, true);
+                Ok(PlugResponse {
+                    message: format!("Released the buffered packets on {ns}/{iface}"),
+                    state: Some(state),
+                })
+            }
+            TcPlugOperation::Release => {
+                let snap = Self::require_plug(existing, ns, iface)?;
+                self.tc_manager
+                    .plug_release(ns, None, iface, snap.parent)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let state = self.record_plug_state(ns, iface, &snap, false);
+                Ok(PlugResponse {
+                    message: format!("Traffic flowing again on {ns}/{iface}"),
+                    state: Some(state),
+                })
+            }
+            TcPlugOperation::SetLimit { limit_bytes } => {
+                let mut snap = Self::require_plug(existing, ns, iface)?;
+                self.tc_manager
+                    .plug_set_limit(ns, None, iface, snap.parent, *limit_bytes)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                snap.limit_bytes = *limit_bytes;
+                let buffering = snap.buffering;
+                let state = self.record_plug_state(ns, iface, &snap, buffering);
+                Ok(PlugResponse {
+                    message: format!("Plug limit on {ns}/{iface} is now {limit_bytes} bytes"),
+                    state: Some(state),
+                })
+            }
+            TcPlugOperation::Remove => {
+                let snap = Self::require_plug(existing, ns, iface)?;
+                self.tc_manager
+                    .plug_remove(ns, None, iface, snap.parent, snap.netem_synthesized)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                self.plug_states.remove(&format!("{ns}/{iface}"));
+                Ok(PlugResponse {
+                    message: format!("Plug removed from {ns}/{iface}"),
+                    state: None,
+                })
+            }
+        }
+    }
+
+    /// The verbs other than `Buffer` address a plug that must already exist.
+    fn require_plug(
+        existing: Option<crate::tc_commands::PlugSnapshot>,
+        ns: &str,
+        iface: &str,
+    ) -> std::result::Result<crate::tc_commands::PlugSnapshot, String> {
+        existing.ok_or_else(|| format!("{ns}/{iface} has no plug installed by this backend"))
+    }
+
+    /// Update the in-memory snapshot and build the publishable state document.
+    fn record_plug_state(
+        &mut self,
+        ns: &str,
+        iface: &str,
+        snap: &crate::tc_commands::PlugSnapshot,
+        buffering: bool,
+    ) -> PlugState {
+        let key = format!("{ns}/{iface}");
+        let since_ms = if self
+            .plug_states
+            .get(&key)
+            .is_some_and(|prev| prev.buffering == buffering)
+        {
+            // Same epoch — keep the original start time.
+            self.plug_since_ms.get(&key).copied().unwrap_or_else(now_ms)
+        } else {
+            let now = now_ms();
+            self.plug_since_ms.insert(key.clone(), now);
+            now
+        };
+
+        let mut stored = snap.clone();
+        stored.buffering = buffering;
+        self.plug_states.insert(key, stored.clone());
+
+        PlugState {
+            namespace: ns.to_string(),
+            interface: iface.to_string(),
+            backend_name: self.backend_name.clone(),
+            buffering,
+            limit_bytes: stored.limit_bytes,
+            since_ms,
+            buffered_bytes: stored.buffered_bytes,
+            buffered_packets: stored.buffered_packets,
+            netem_synthesized: stored.netem_synthesized,
+            plug_parent: stored.parent.to_string(),
+        }
+    }
+
+    /// Publish (or tombstone) `state/tc/plug/{ns}/{iface}`.
+    ///
+    /// `None` is a `Delete`, never a `None` payload: the class is
+    /// last-writer-wins, so a JSON `null` would sit there forever looking like
+    /// a value (RFC 04 §1.2).
+    pub(crate) async fn publish_plug_state(
+        &mut self,
+        namespace: &str,
+        interface: &str,
+        state: Option<PlugState>,
+    ) {
+        let publisher = match self.get_plug_publisher(namespace, interface).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to get plug publisher for {namespace}/{interface}: {e}");
+                return;
+            }
+        };
+
+        match state {
+            Some(state) => match serde_json::to_string(&state) {
+                Ok(payload) => {
+                    if let Err(e) = publisher.put(payload).await {
+                        warn!("Failed to publish plug state for {namespace}/{interface}: {e}");
+                    }
+                }
+                Err(e) => warn!("Failed to serialize plug state: {e}"),
+            },
+            None => {
+                if let Err(e) = publisher.delete().await {
+                    warn!("Failed to tombstone plug state for {namespace}/{interface}: {e}");
+                }
+            }
+        }
+    }
+
+    /// Get or create the plug state publisher for one interface.
+    async fn get_plug_publisher(
+        &mut self,
+        namespace: &str,
+        interface: &str,
+    ) -> Result<&AdvancedPublisher<'static>> {
+        let key = format!("{}/{}", namespace, interface);
+
+        if !self.plug_publishers.contains_key(&key) {
+            let topic = tc::key(&self.local_origin, &tc::Subject::plug(namespace, interface));
+            info!(
+                "Creating plug state publisher for {key} on: {}",
+                topic.as_str()
+            );
+
+            let publisher = self
+                .session
+                .declare_publisher(zenoh::key_expr::OwnedKeyExpr::from(topic))
+                .cache(CacheConfig::default().max_samples(1))
+                .sample_miss_detection(
+                    MissDetectionConfig::default().heartbeat(Duration::from_millis(1000)),
+                )
+                .publisher_detection()
+                .await
+                .map_err(|e| TcguiError::ZenohError {
+                    message: format!("Failed to declare plug publisher: {}", e),
+                })?;
+
+            self.plug_publishers.insert(key.clone(), publisher);
+        }
+
+        Ok(self.plug_publishers.get(&key).unwrap())
+    }
+
+    /// Adopt any plug this backend did not install.
+    ///
+    /// A plug qdisc outlives the process that created it — qdiscs live in the
+    /// kernel — so after a crash or a `SIGKILL` an interface can be stalled
+    /// with nothing in the GUI to say so and no record to release it from.
+    /// This runs at discovery time: a plug with no in-memory record can only
+    /// have come from a previous instance, so log it loudly, adopt it, and
+    /// publish the state document. It is deliberately **not** auto-released —
+    /// silently unstalling a link would make the impairment untrustworthy for
+    /// exactly the tests it exists to run.
+    pub(crate) async fn reconcile_orphan_plugs(
+        &mut self,
+        interfaces: &HashMap<u32, NetworkInterface>,
+    ) {
+        let targets: Vec<(String, String)> = interfaces
+            .values()
+            .map(|i| (i.namespace.clone(), i.name.clone()))
+            .collect();
+
+        for (ns, iface) in targets {
+            let key = format!("{ns}/{iface}");
+            let probe = self.tc_manager.plug_probe(&ns, None, &iface).await;
+            match probe {
+                Ok(Some((parent, backlog, qlen))) if !self.plug_states.contains_key(&key) => {
+                    warn!(
+                        "Adopting an orphan plug on {ns}/{iface} at {parent} \
+                         ({backlog} bytes held) — left by a previous backend instance"
+                    );
+                    let snap = crate::tc_commands::PlugSnapshot {
+                        parent,
+                        buffering: true,
+                        limit_bytes: 0,
+                        netem_synthesized: false,
+                        buffered_bytes: backlog,
+                        buffered_packets: qlen,
+                    };
+                    let state = self.record_plug_state(&ns, &iface, &snap, true);
+                    self.publish_plug_state(&ns, &iface, Some(state)).await;
+                }
+                Ok(None) if self.plug_states.contains_key(&key) => {
+                    // Someone removed it out from under us (`tc qdisc del`).
+                    info!("Plug on {ns}/{iface} is gone; retracting its state document");
+                    self.plug_states.remove(&key);
+                    self.plug_since_ms.remove(&key);
+                    self.publish_plug_state(&ns, &iface, None).await;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Milliseconds since the Unix epoch, matching every other timestamp on the bus.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

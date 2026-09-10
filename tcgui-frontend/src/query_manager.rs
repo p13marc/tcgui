@@ -3,9 +3,12 @@
 //! This module handles TC and interface control query channels,
 //! providing a centralized way to send queries to backends.
 
-use crate::messages::{DiagnosticsQueryMessage, InterfaceControlQueryMessage, TcQueryMessage};
+use crate::messages::{
+    DiagnosticsQueryMessage, InterfaceControlQueryMessage, PlugQueryMessage, TcQueryMessage,
+};
 use tcgui_shared::{
-    DiagnosticsRequest, InterfaceControlOperation, InterfaceControlRequest, TcOperation, TcRequest,
+    DiagnosticsRequest, InterfaceControlOperation, InterfaceControlRequest, TcOperation,
+    TcPlugOperation, TcPlugRequest, TcRequest,
 };
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -18,6 +21,8 @@ pub struct QueryManager {
     interface_query_sender: Option<mpsc::UnboundedSender<InterfaceControlQueryMessage>>,
     /// Channel for sending diagnostics queries to specific backends
     diagnostics_query_sender: Option<mpsc::UnboundedSender<DiagnosticsQueryMessage>>,
+    /// Channel for sending plug (stall) queries to specific backends
+    plug_query_sender: Option<mpsc::UnboundedSender<PlugQueryMessage>>,
 }
 
 impl QueryManager {
@@ -27,6 +32,7 @@ impl QueryManager {
             tc_query_sender: None,
             interface_query_sender: None,
             diagnostics_query_sender: None,
+            plug_query_sender: None,
         }
     }
 
@@ -34,6 +40,41 @@ impl QueryManager {
     pub fn setup_tc_query_channel(&mut self, sender: mpsc::UnboundedSender<TcQueryMessage>) {
         info!("Setting up TC query channel for multi-backend communication");
         self.tc_query_sender = Some(sender);
+    }
+
+    /// Sets up the plug query channel.
+    pub fn setup_plug_query_channel(&mut self, sender: mpsc::UnboundedSender<PlugQueryMessage>) {
+        info!("Setting up plug query channel for multi-backend communication");
+        self.plug_query_sender = Some(sender);
+    }
+
+    /// Sends a plug (stall) query to a backend.
+    pub fn plug_tc(
+        &self,
+        backend_name: String,
+        namespace: String,
+        interface: String,
+        operation: TcPlugOperation,
+    ) -> Result<(), String> {
+        let Some(sender) = &self.plug_query_sender else {
+            let error_msg = "Plug query channel not available".to_string();
+            error!("{}", error_msg);
+            return Err(error_msg);
+        };
+        let message = PlugQueryMessage {
+            backend_name: backend_name.clone(),
+            request: TcPlugRequest {
+                namespace,
+                interface,
+                operation,
+            },
+            response_sender: None,
+        };
+        sender.send(message).map_err(|e| {
+            let error_msg = format!("Failed to send plug query to backend '{backend_name}': {e}");
+            error!("{}", error_msg);
+            error_msg
+        })
     }
 
     /// Sets up the interface query channel.
